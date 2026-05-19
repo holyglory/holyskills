@@ -1,0 +1,4 @@
+interface:
+  display_name: "Full Repo Audit"
+  short_description: "Audit source, UI journeys, and implementation gaps"
+  default_prompt: "Use $full-repo-audit to run the read-only manifest-verified repo audit when the runtime can satisfy the x-high lead gate; it records effort in a ledger, dispatches low-effort file and journey workers or disclosed worker fallback, checks source coverage, interface journeys, visual testability when applicable, and returns a prioritized implementation plan."
