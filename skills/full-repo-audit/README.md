@@ -9,7 +9,7 @@ Use this skill when you want a repository-wide audit that checks:
 - Architecture and product-flow risks.
 - Every queued source file, manually reviewed in deterministic batches.
 - UI controls, messages, routes, forms, menu items, and visible copy that imply missing or incorrect behavior.
-- User journeys through the UI, including navigation relevance, decision-making information, mobile/desktop visibility, and test-mode availability.
+- User journeys through the UI, including multi-journey relevance, route priority, decision-making information, information hierarchy, compact mobile/desktop fit, rare-detail hiding, and test-mode availability.
 - Visual journey testability when the repo has a rendered UI or visual tooling.
 - TODO, stub, placeholder, console-only, mocked-as-real, dead-ended, or partially implemented behavior.
 
@@ -45,7 +45,7 @@ The harness creates an audit output directory containing:
 - `reports/`: required returned worker reports.
 - `queue_complete.json`: queue-generation marker, not proof that the audit is finished.
 
-The final response from the skill should include coverage, architecture findings, interface findings, user journey findings, file-level findings, an implementation plan, and a verification plan.
+The final response from the skill should include coverage, architecture findings, interface findings, user journey findings, file-level findings, an implementation plan, and a verification plan. If no explicit user journeys exist, the audit should ask for confirmation or label UI/journey coverage as assumption-based rather than claiming the interface is user-friendly.
 
 ## Direct Harness Usage
 
@@ -54,20 +54,25 @@ The skill is normally run through Codex, but the bundled scripts can be used dir
 Run harness self-tests:
 
 ```bash
-python3 skills/full-repo-audit/scripts/self_test.py
+cd /path/to/full-repo-audit
+python3 scripts/self_test.py
 ```
 
 Generate an audit queue:
 
 ```bash
-python3 skills/full-repo-audit/scripts/build_audit_batches.py --repo /path/to/repo --out /tmp/full-repo-audit-run
+cd /path/to/full-repo-audit
+python3 scripts/build_audit_batches.py --repo /path/to/repo --out /tmp/full-repo-audit-run
 ```
 
 Verify saved reports:
 
 ```bash
-python3 skills/full-repo-audit/scripts/verify_audit_results.py --manifest /tmp/full-repo-audit-run/manifest.json --reports /tmp/full-repo-audit-run/reports
+cd /path/to/full-repo-audit
+python3 scripts/verify_audit_results.py --manifest /tmp/full-repo-audit-run/manifest.json --reports /tmp/full-repo-audit-run/reports
 ```
+
+When working from a repository that vendors this skill under `skills/full-repo-audit`, replace `scripts/...` above with `skills/full-repo-audit/scripts/...`.
 
 Useful builder options:
 

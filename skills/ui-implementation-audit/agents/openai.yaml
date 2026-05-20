@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI Implementation Audit"
+  short_description: "Compare UI code, screenshots, and first viewport priority"
+  default_prompt: "Use $ui-implementation-audit to run the read-only manifest-verified UI audit; it batches only interface source files, compares rendered desktop/mobile UI against mockups and journey requirements, checks first-viewport journey usefulness, records visual blockers, and returns a prioritized implementation plan."

@@ -9,6 +9,7 @@ import json
 import re
 import struct
 import sys
+import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from pathlib import Path, PurePosixPath
 
@@ -332,8 +333,10 @@ BUTTON_TAG_RE = re.compile(r"(?is)<button\b(.*?)>(.*?)</button>")
 SELF_CLOSING_BUTTON_RE = re.compile(r"(?is)<button\b(.*?)/>")
 COMPONENT_BUTTON_TAG_RE = re.compile(r"(?is)<[A-Z][A-Za-z0-9_.]*Button\b(.*?)>(.*?)</[A-Z][A-Za-z0-9_.]*Button>")
 SELF_CLOSING_COMPONENT_BUTTON_RE = re.compile(r"(?is)<[A-Z][A-Za-z0-9_.]*Button\b(.*?)/>")
+DISABLED_ATTR_PATTERN = r"""(?<![\w:-])disabled(?![\w:-])(?:\s*=\s*(?:{\s*true\s*}|["']disabled["']|["']true["']))?"""
+DISABLED_ATTR_RE = re.compile(DISABLED_ATTR_PATTERN, re.IGNORECASE)
 STATIC_DISABLED_CONTROL_RE = re.compile(
-    r"(?is)<(?:button|a|[A-Z][A-Za-z0-9_.]*Button)\b[^>]*\bdisabled(?:\s*=\s*(?:{\s*true\s*}|['\"]disabled['\"]|['\"]true['\"]))?[^>]*>"
+    rf"(?is)<(?:button|a|[A-Z][A-Za-z0-9_.]*Button)\b[^>]*{DISABLED_ATTR_PATTERN}[^>]*>"
 )
 ROLE_BUTTON_RE = re.compile(r"""(?is)<([A-Za-z][\w:.-]*)\b([^>]*)\brole\s*=\s*(?:"button"|'button'|{\s*["']button["']\s*})([^>]*)>(.*?)</\1>""")
 FORM_FIELD_TAG_RE = re.compile(r"(?is)<(input|select|textarea)\b([^>]*)>(.*?)</\1>|<(input)\b([^>]*)/?>")
@@ -1603,6 +1606,22 @@ def json_string_hints(text: str) -> list[str]:
     return hints
 
 
+def xml_element_text_hints(text: str, element_names: set[str]) -> list[str]:
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return []
+    hints: list[str] = []
+    for element in root.iter():
+        local_name = element.tag.rsplit("}", 1)[-1].lower()
+        if local_name not in element_names:
+            continue
+        value = " ".join(part.strip() for part in element.itertext() if part.strip())
+        if 2 <= len(value) <= 100:
+            hints.append(value)
+    return hints
+
+
 def message_catalog_hints(suffix: str, text: str) -> list[str]:
     if suffix in {".json", ".arb"}:
         return json_string_hints(text)
@@ -1614,6 +1633,10 @@ def message_catalog_hints(suffix: str, text: str) -> list[str]:
         return [match.group(1).strip() for match in APPLE_STRINGS_VALUE_RE.finditer(text)]
     if suffix == ".ftl":
         return [match.group(1).strip() for match in FTL_VALUE_RE.finditer(text)]
+    if suffix == ".resx":
+        return xml_element_text_hints(text, {"value"})
+    if suffix in {".xlf", ".xliff"}:
+        return xml_element_text_hints(text, {"source", "target"})
     return []
 
 
@@ -1725,7 +1748,7 @@ def has_event_handler(attrs: str) -> bool:
 
 
 def has_static_disabled_attr(attrs: str) -> bool:
-    return bool(re.search(r"""\bdisabled(?:\s*=\s*(?:{\s*true\s*}|["']disabled["']|["']true["']))?""", attrs, re.IGNORECASE))
+    return bool(DISABLED_ATTR_RE.search(attrs))
 
 
 def form_field_kind(match: re.Match[str]) -> tuple[str, str, str]:

@@ -1,0 +1,4 @@
+interface:
+  display_name: "User Journey Docs Audit"
+  short_description: "Audit docs for journey priority and UI readiness"
+  default_prompt: "Use $user-journey-docs-audit to inspect this repo, actively interview me about the app idea and user journeys, then report whether the Markdown/product docs define journey priority, first-viewport usefulness, mobile order, and enough detail to build and audit a rich, easy-to-use UI."

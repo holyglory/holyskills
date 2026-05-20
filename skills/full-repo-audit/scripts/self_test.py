@@ -268,8 +268,11 @@ description: Fixture skill contract.
     write(root / "locales" / "Localizable.strings", '"Save" = "Save";\n')
     write(root / "locales" / "app.arb", '{"save":"Save"}\n')
     write(root / "locales" / "ui.ftl", "save = Save\n")
-    write(root / "locales" / "Resources.resx", "<root></root>\n")
-    write(root / "locales" / "messages.xliff", "<xliff></xliff>\n")
+    write(root / "locales" / "Resources.resx", '<root><data name="save"><value>Save</value></data></root>\n')
+    write(
+        root / "locales" / "messages.xliff",
+        '<xliff version="2.0"><file id="ui"><unit id="save"><segment><source>Save</source><target>Save</target></segment></unit></file></xliff>\n',
+    )
     write(root / "messages" / "en.json", '{"cancel":"Cancel"}\n')
     write(root / "i18n" / "en.yaml", "save: Save\n")
     write(root / "ARCHITECTURE.md", "# Architecture\n")
@@ -702,6 +705,16 @@ def assert_manifest(manifest_path: Path) -> None:
         check(ledger["visual_journey_worker"]["status"] == "pending", "visual journey worker should be scaffolded")
         journey_prompt_text = (manifest_path.parent / "journey_audit.md").read_text(encoding="utf-8")
         visual_prompt_text = (manifest_path.parent / "visual_journey_audit.md").read_text(encoding="utf-8")
+        check(
+            "| Journey | Step | Files | Primary navigation/decision elements | Relevance estimate | Required information | Mobile/Desktop availability | Test mode evidence |"
+            in journey_prompt_text,
+            "journey source prompt should use verifier-required table headers",
+        )
+        check(
+            "| Journey | Viewport | Route/screen | Evidence | Navigation visibility | Decision information | Visual quality | Result |"
+            in visual_prompt_text,
+            "visual journey prompt should use verifier-required table headers",
+        )
         for required_field in (
             "- Files:",
             "- Evidence:",
@@ -1442,6 +1455,10 @@ def main() -> int:
         check(
             "dist/node_modules/dep/ignored.ts" not in large_pruned_hint["sample_paths"],
             "large pruned hint should prune nested excluded directories during bounded scans",
+        )
+        check(
+            "dist/node_modules/dep/ignored.ts" not in large_pruned_hint["source_like_sample_paths"],
+            "large pruned hint should prune nested excluded directories from source-like samples",
         )
 
         nested_ignored_fixture = base / "nested-ignored-fixture"
@@ -3038,6 +3055,44 @@ export function IconButton() {
 	            "interactive role without handler",
 	            "role button without click or keyboard handler",
 	        )
+        aria_disabled_fixture = base / "aria-disabled-fixture"
+        write(
+            aria_disabled_fixture / "src" / "components" / "AriaDisabledButton.tsx",
+            """const commit = () => window.dispatchEvent(new Event("save-fixture"));
+
+export function AriaDisabledButton() {
+  return <button aria-disabled="true" onClick={commit}>Save</button>;
+}
+""",
+        )
+        aria_disabled_output = base / "aria-disabled-output"
+        run(
+            [
+                sys.executable,
+                str(BUILD),
+                "--repo",
+                str(aria_disabled_fixture),
+                "--out",
+                str(aria_disabled_output),
+                "--batch-size",
+                "200",
+            ]
+        )
+        aria_disabled_complete = write_reports(
+            base / "aria-disabled-reports",
+            aria_disabled_output / "manifest.json",
+        )[-1]
+        complete_effort_ledger(aria_disabled_output)
+        run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(aria_disabled_output / "manifest.json"),
+                "--reports",
+                str(install_report(aria_disabled_output, aria_disabled_complete)),
+            ]
+        )
         native_ui_fixture = base / "native-ui-fixture"
         write(
             native_ui_fixture / "Views" / "MainWindow.axaml",
