@@ -342,7 +342,7 @@ Run ID: `{run_id}`
 Repo root: `{repo}`
 Batch ID: `batch_{batch_id:03d}`
 
-You are a low-effort worker auditing interface source implementation. Do not edit files. Inspect every owned unit below and compare source-defined UI behavior, visible text, layout, state handling, and responsive intent against the mockup/assets and journey requirements listed here and in `manifest.json`.
+You are a low-effort worker auditing interface source implementation. Do not edit files. Inspect every owned unit below and compare source-defined UI behavior, visible text, layout, state handling, responsive intent, implementation paths, and test evidence against the mockup/assets, required UI elements, features, and journey requirements listed here and in `manifest.json`.
 
 ## Files You Own
 
@@ -360,13 +360,13 @@ For ranged units, inspect the assigned range manually plus nearby imports/types/
 
 ## Review Rules
 
-- Define the journey priority contract before judging visual/source alignment: primary user goal, primary decision-making information, frequent actions, occasional controls, rare/admin/configuration controls, and expected desktop/mobile order.
-- Inventory visible labels, controls, fields, menus, route links, toasts, banners, empty/loading/error states, and layout containers.
+- Define the journey decision model before judging visual/source alignment: primary user goal, primary decision, required facts, warning/flag conditions, frequent actions, secondary/rare actions, and unconfirmed assumptions.
+- Inventory every required visible label, control, field, menu, route link, toast, banner, empty/loading/error state, layout container, and visual/test evidence.
 - Trace handlers, state, navigation, API/persistence, permissions, validation, and missing state branches when the UI promises behavior.
-- Compare implementation to mockup/journey evidence: hierarchy, density, spacing, imagery, typography intent, copy, responsiveness, and required decision information.
-- Flag settings/filter forms placed above primary content on mobile, desktop ordering copied directly into mobile when it breaks journey priority, overexposed rare/admin controls, and high-value content pushed below low-value configuration.
-- Do not mark source alignment clear just because it resembles a mockup; the first viewport must help the user make the primary decision.
-- Flag missing safe visual states or fixture paths when source implies heavy or production-only operations.
+- Compare implementation to mockup/journey evidence: hierarchy, density, spacing, imagery, typography intent, copy, responsiveness, required decision information, feature behavior, and test evidence.
+- Flag visible overload across desktop, native, and narrow/mobile surfaces: low-journey-relevance settings, filters, rare/admin controls, debug/raw detail, explanatory copy, or secondary metadata dominating the space needed for decision-driving content.
+- Do not mark source alignment clear just because it resembles a mockup; rendered viewports must help the user make the current journey decision.
+- Flag missing UI elements, unwired handlers, missing data/persistence paths, missing states, missing accessibility paths, and missing safe visual states or fixture paths when source implies heavy or production-only operations.
 
 ## Required Report
 
@@ -389,20 +389,20 @@ Briefly summarize the UI surfaces these files define.
 ## UI Source Inventory
 | Unit | File | Surface | Visible Element | Source Evidence | Expected Behavior | Actual Implementation | Responsive/State Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| exact unit id | repo-relative file | screen/component/style/message catalog | label/control/state/layout | source line/copy/style evidence | mockup/journey expectation or inferred standard | implemented/missing path | desktop/mobile/state notes |
+| exact unit id | repo-relative file | screen/component/style/message catalog | label/control/state/layout | source line/copy/style evidence | mockup/journey/feature/test expectation or inferred standard | implemented/missing path | desktop/mobile/state notes |
 
-## Journey Priority Contract
-| Surface | Primary user goal | Primary information | Frequent actions | Occasional controls | Rare/Admin/Configuration controls | Expected desktop order | Expected mobile order |
+## Journey Decision Model
+| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| screen/component | user goal | decision-making data | common action(s) | sometimes-needed controls | rare settings/admin/config controls | desktop information/action order | mobile information/action order |
+| screen/component | user goal | decision the user must make | facts needed for the decision | warning or flag conditions | common action(s) | occasional/rare/admin/config actions | assumptions needing confirmation |
 
-## First Viewport Journey Check
-| Viewport | First visible content | Primary decision data visible? | Low-frequency controls above content? | Low-frequency/header/control share | What can user decide from first viewport? | Result | Evidence |
+## Rendered Journey Usability
+| Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop/mobile | content visible before scroll | Yes/No/Not applicable | Yes/No | rough % or source-estimated share | decision enabled by first viewport | PASS/GAP/BLOCKED/NOT_APPLICABLE | source/CSS/DOM/screenshot/measurement evidence |
+| desktop/native/mobile | supported decision or blocker | facts/actions/warnings visible | details/settings/debug/config visible | inline/expander/menu/detail route/blocked | source/CSS/DOM/screenshot/measurement evidence | PASS/GAP/BLOCKED/NOT_APPLICABLE | source/CSS/DOM/screenshot/measurement evidence |
 
 ## Mockup And Journey Alignment
-Explain how the owned UI source aligns or conflicts with the listed mockups/assets and journey requirements. Mention missing target evidence if no relevant mockup or journey exists.
+Explain how the owned UI source aligns or conflicts with the listed mockups/assets, required UI elements, features, tests, and journey requirements. Mention missing target evidence if no relevant mockup or journey exists.
 
 ## Implementation Gap Findings
 Use `No findings.` or one block per gap:
@@ -411,8 +411,8 @@ Use `No findings.` or one block per gap:
 - Files: repo-relative files owned by this batch
 - Mockup/requirement evidence: asset, journey doc, route, or explicit absence
 - Interface evidence: source file, visible text, handler, style, or state
-- Expected behavior/standard: expected visual or journey behavior
-- Gap: concrete mismatch
+- Expected behavior/standard: expected visual, journey, feature, UI element, implementation, or test behavior
+- Gap: concrete mismatch, missing element, unwired path, or missing test evidence
 - Suggested implementation direction: specific fix direction
 
 ## No Gap Notes
@@ -430,7 +430,7 @@ Run ID: `{run_id}`
 Repo root: `{repo}`
 Worker: `mockup_asset_audit`
 
-Do not edit files. Inventory the design target from mockups/assets and journey requirement sources. Use image-viewing tools when available for raster assets; otherwise describe the blocker and rely on filenames/nearby docs only as fallback.
+Do not edit files. Inventory the design target from mockups/assets and journey requirement sources, including required screens, features, UI elements, states, implementation expectations, and test expectations. Use image-viewing tools when available for raster assets; otherwise describe the blocker and rely on filenames/nearby docs only as fallback.
 
 ## Mockup And Asset Inputs
 
@@ -455,13 +455,13 @@ List each mockup/design/asset input used, including whether it was visually insp
 List requirement docs/source used and the journeys/screens they imply.
 
 ## Expected Screens And Visual Requirements
-List expected screens, hierarchy, density, layout, typography, color, imagery, states, and desktop/mobile requirements. Include the journey priority contract for each important surface: primary goal, primary information, frequent actions, occasional controls, rare controls, and expected mobile/desktop order.
+List expected screens, hierarchy, density, layout, typography, color, imagery, states, UI elements, feature behavior, implementation expectations, test expectations, and desktop/mobile requirements. Include the journey decision model for each important surface: primary goal, primary decision, required facts, warning/flag conditions, frequent actions, secondary/rare actions, and unconfirmed assumptions.
 
 ## Findings
 Use `No findings.` or finding blocks with Priority, Files, Mockup/requirement evidence, Interface evidence, Expected behavior/standard, Gap, Suggested implementation direction. Use `Files: not-applicable` only for missing target assets or requirements.
 
 ## Open Questions
-List missing mockups, unclear journeys, or `None.`
+List missing mockups, unclear journeys, missing UI element/feature/test expectations, or `None.`
 """
 
 
@@ -473,7 +473,7 @@ Run ID: `{run_id}`
 Repo root: `{repo}`
 Worker: `visual_tooling_audit`
 
-Do not edit files. Identify how to render the implemented UI safely for screenshot comparison. Prefer Playwright, Cypress, Storybook, Vite/Next dev servers, browser MCP tools, native previews/simulators, test fixtures, mock data modes, or existing screenshot tests.
+Do not edit files. Identify how to render the implemented UI safely for screenshot comparison and how required screens, UI elements, states, and visual tests can be exercised. Prefer Playwright, Cypress, Storybook, Vite/Next dev servers, browser MCP tools, native previews/simulators, test fixtures, mock data modes, or existing screenshot tests.
 
 ## Interface Source Files
 
@@ -498,7 +498,7 @@ List exact detected tools/configs/scripts/routes/stories/specs or the absence of
 List exact commands, environment/test-mode requirements, and routes/screens to open; or explain why no safe render path exists.
 
 ## Desktop/Mobile Screenshot Plan
-List desktop and narrow mobile viewport checks to run, including target routes/screens, expected artifacts, and how to measure first viewport usefulness. Include planned DOM/viewport measurements for the share of the first mobile viewport occupied by navigation, headers, settings, filters, or controls.
+List desktop, native, and narrow mobile viewport checks to run, including target routes/screens, required UI elements/states, expected artifacts, rendered journey usefulness, readability/contrast evidence, and how to identify visible decision-driving content versus secondary/detail/debug/configuration content.
 
 ## Findings
 Use `No findings.` or finding blocks with Priority, Files, Mockup/requirement evidence, Interface evidence, Expected behavior/standard, Gap, Suggested implementation direction.
@@ -515,9 +515,9 @@ Run ID: `{run_id}`
 Repo root: `{repo}`
 Worker: `visual_comparison_audit`
 
-Do not edit files. Use available screenshot-capable tooling to compare the implemented UI against mockups/assets and user journey requirements. Prefer safe test/fixture/preview mode. If the UI cannot be rendered, create desktop and mobile `BLOCKED` rows with concrete tool/route evidence and report the missing visual harness as a finding.
+Do not edit files. Use available screenshot-capable tooling to compare the implemented UI against mockups/assets, required UI elements, feature behavior, tests, and user journey requirements. Prefer safe test/fixture/preview mode. If the UI cannot be rendered, create desktop and mobile `BLOCKED` rows with concrete tool/route evidence and report the missing visual harness as a finding.
 
-Before visual comparison, define the journey priority contract. A visual check is not clear merely because it matches a mockup, has correct data, or avoids overflow. The first mobile viewport must support the primary user journey unless the surface is itself primarily a data-entry form. If settings, filters, menus, target/configuration blocks, or other low-frequency controls push primary decision-making content below the fold, report a P1 journey-priority finding.
+Before visual comparison, define the journey decision model and required UI element set. A visual check is not clear merely because it matches a mockup, has correct data, or avoids overflow. Each rendered viewport must support the primary journey decision unless the surface is itself primarily a data-entry form. If settings, filters, menus, target/configuration blocks, raw/debug detail, explanatory copy, or other low-relevance content dominates the visible surface while the primary decision is unclear or buried, report a journey-usability finding.
 
 ## Mockup And Asset Evidence
 
@@ -535,15 +535,15 @@ Return exactly:
 ## Worker
 visual_comparison_audit
 
-## Journey Priority Contract
-| Surface | Primary user goal | Primary information | Frequent actions | Occasional controls | Rare/Admin/Configuration controls | Expected desktop order | Expected mobile order |
+## Journey Decision Model
+| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| route/screen | user goal | decision-making data | common action(s) | sometimes-needed controls | rare settings/admin/config controls | desktop information/action order | mobile information/action order |
+| route/screen | user goal | decision the user must make | facts needed for the decision | warning or flag conditions | common action(s) | occasional/rare/admin/config actions | assumptions needing confirmation |
 
-## First Viewport Journey Check
-| Viewport | First visible content | Primary decision data visible? | Low-frequency controls above content? | Low-frequency/header/control share | What can user decide from first viewport? | Result | Evidence |
+## Rendered Journey Usability
+| Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop/mobile | content visible before scroll | Yes/No/Not applicable | Yes/No | measured or estimated % | decision enabled by first viewport | PASS/GAP/BLOCKED/NOT_APPLICABLE | screenshot/tool/DOM/viewport evidence |
+| desktop/native/mobile | supported decision or blocker | facts/actions/warnings visible | details/settings/debug/config visible | inline/expander/menu/detail route/blocked | screenshot/tool/DOM/viewport evidence | PASS/GAP/BLOCKED/NOT_APPLICABLE | screenshot/tool/DOM/viewport evidence |
 
 ## Visual Comparison Checks
 | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
@@ -551,7 +551,7 @@ visual_comparison_audit
 | journey or screen | desktop/mobile | route/screen/story | asset or requirement | screenshot/trace/tool command or blocker evidence | visual/responsive differences | MATCHED/GAP/BLOCKED/NOT_APPLICABLE |
 
 ## Findings
-Use `No findings.` or finding blocks with Priority, Files, Mockup/requirement evidence, Interface evidence, Expected behavior/standard, Gap, Suggested implementation direction. If screenshot production is blocked, include a finding that names the missing safe visual path. If the first mobile viewport is dominated by low-frequency controls while primary decision content is below the fold, include a P1 finding.
+Use `No findings.` or finding blocks with Priority, Files, Mockup/requirement evidence, Interface evidence, Expected behavior/standard, Gap, Suggested implementation direction. If screenshot production is blocked, include a finding that names the missing safe visual path. If a required element/state is absent, content is overloaded/crowded/unreadable, or low-relevance detail dominates while the primary decision is unclear or buried, include a finding.
 
 ## Open Questions
 List visual blockers, missing mockups, unclear routes, or `None.`

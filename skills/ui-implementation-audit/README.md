@@ -3,7 +3,8 @@
 `ui-implementation-audit` is a Codex skill for checking whether a repo's
 implemented interface matches its mockups, visual assets, and user journey
 requirements. It combines source-level UI batching with rendered desktop/mobile
-visual checks and produces a prioritized implementation plan.
+visual checks and produces a prioritized implementation plan for missing UI,
+interaction, implementation, and test gaps.
 
 ## Target
 
@@ -11,10 +12,13 @@ Use this skill when you want to audit:
 
 - UI code against generated mockups, screenshots, Figma/ImageGen exports, brand
   assets, and product journey requirements.
-- Desktop and mobile screenshots against expected visual hierarchy, density,
-  spacing, imagery, states, and responsive fit.
-- Mobile first-viewport usefulness: the first screen must support the primary
-  user journey, not merely avoid overflow or resemble the mockup.
+- Required screens, controls, messages, states, handlers, data paths,
+  accessibility paths, and visual/test evidence.
+- Desktop, native, and mobile screenshots against expected visual hierarchy,
+  density, spacing, imagery, states, readability, overload risk, and responsive
+  fit.
+- Rendered journey usability: visible content must help the user make the
+  current journey decision, not merely avoid overflow or resemble the mockup.
 - Interface source files that define pages, screens, components, templates,
   styles, visible copy, native UI markup, and UI message catalogs.
 - Missing visual tooling or safe fixture paths that prevent real screenshot

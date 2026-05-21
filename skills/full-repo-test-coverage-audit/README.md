@@ -2,8 +2,9 @@
 
 `full-repo-test-coverage-audit` is a Codex skill for auditing whether a
 repository has meaningful tests for its functions, methods, UI journeys,
-integration paths, and important edge or failure cases. It produces a verified
-coverage record and a prioritized plan for closing test gaps.
+intended features, UI elements, integration paths, and important edge or
+failure cases. It produces a verified coverage record and a prioritized plan
+for closing test gaps.
 
 ## Target
 
@@ -15,6 +16,8 @@ Use this skill when you want to check:
   async behavior, permissions, persistence, and failure paths.
 - UI and user-journey coverage through component, integration, e2e, visual, or
   safe test-mode workflows.
+- Intended feature and UI element coverage, including handlers, state changes,
+  persistence paths, permission paths, failure paths, and required assertions.
 - Missing or weak tests without modifying the audited repository.
 
 The audited repository is kept read-only. Generated audit artifacts should live

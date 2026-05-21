@@ -18,8 +18,9 @@ REQUIRED_REFERENCES = {
     "references/journey_doc_template.md": [
         "# User Journey Documentation Template",
         "## Journey Inventory",
-        "## Journey Priority Contract",
-        "## First Viewport Requirements",
+        "## Journey Decision Model",
+        "## Information Relevance Inventory",
+        "## UI Handoff Constraints",
         "## Screen Requirements",
     ],
 }
@@ -83,20 +84,20 @@ The mobile screen should be compact and avoid horizontal overflow.
 """,
         )
         weak_mobile = run_inventory(weak_mobile_repo)
-        check(weak_mobile["priority_contract_doc_count"] == 0, "weak mobile docs should not provide a priority contract")
-        check(weak_mobile["first_viewport_doc_count"] == 0, "weak mobile docs should not provide first viewport requirements")
+        check(weak_mobile["decision_model_doc_count"] == 0, "weak mobile docs should not provide a decision model")
+        check(weak_mobile["information_relevance_doc_count"] == 0, "weak mobile docs should not provide information relevance requirements")
         check(not weak_mobile["ui_audit_handoff_ready"], "weak mobile docs should not be UI-audit handoff ready")
         check(
-            any("first visible content" in item for item in weak_mobile["ui_implementation_risk_signals"]),
-            "weak mobile docs should warn about missing first viewport decision content",
+            any("decision information" in item or "journey decision model" in item for item in weak_mobile["ui_implementation_risk_signals"]),
+            "weak mobile docs should warn about missing decision/relevance documentation",
         )
 
-        priority_gap_repo = tmp / "priority-gap"
+        density_gap_repo = tmp / "density-gap"
         write(
-            priority_gap_repo / "docs" / "metrics-dashboard.md",
+            density_gap_repo / "docs" / "metrics-dashboard.md",
             """# Metrics Dashboard Page
 
-Users can view live metrics and adjust display settings.
+Users can view a dense command center dashboard and adjust display settings.
 
 ## Mobile Screen
 
@@ -107,17 +108,17 @@ The page has a Settings panel and a primary metrics list.
 The mobile screen should be compact and have no horizontal overflow.
 """,
         )
-        priority_gap = run_inventory(priority_gap_repo)
-        check(priority_gap["priority_contract_doc_count"] == 0, "ambiguous docs should not accidentally count as priority-ready")
-        check(priority_gap["first_viewport_doc_count"] == 0, "ambiguous docs should not accidentally count as first-viewport-ready")
+        priority_gap = run_inventory(density_gap_repo)
+        check(priority_gap["decision_model_doc_count"] == 0, "ambiguous docs should not accidentally count as decision-ready")
+        check(priority_gap["information_relevance_doc_count"] == 0, "ambiguous docs should not accidentally count as relevance-ready")
         check(
-            any("settings/filters/configuration" in item for item in priority_gap["ui_implementation_risk_signals"]),
-            "ambiguous docs should warn when settings and primary content are mentioned without mobile order",
+            any("UI intent terms" in item for item in priority_gap["ui_implementation_risk_signals"]),
+            "ambiguous docs should warn when dense/dashboard intent lacks decision and relevance definitions",
         )
 
         complete_repo = tmp / "complete"
         write(
-            complete_repo / "docs" / "journey-priority.md",
+            complete_repo / "docs" / "journey-decision.md",
             """# Metrics Dashboard Journey Documentation
 
 ## App Idea
@@ -132,27 +133,56 @@ Primary value: high-priority metrics are available before configuration.
 | --- | --- | ---: | ---: | ---: | --- | --- |
 | Review live metrics | operations analyst | high | high | high | /metrics | user can decide current metric status |
 
-## Journey Priority Contract
+## Journey Decision Model
 
-| Surface | Primary user goal | Primary information | Frequent actions | Occasional controls | Rare/Admin/Configuration controls | Expected desktop order | Expected mobile order |
+| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unresolved assumptions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Metrics Dashboard | understand current live metrics quickly | high-priority metric list and latest chart | inspect metric details | adjust display filter | advanced settings configuration | chart and metrics before settings | high-priority metrics before settings/filter controls |
+| Metrics Dashboard | understand current live metrics quickly | decide current metric status | high-priority metric list, latest chart, latest update time | threshold warning and stale-data warning | inspect metric details | display filter and advanced settings configuration | none |
 
-## First Viewport Requirements
+## Information Relevance Inventory
 
-| Viewport | First visible content | Primary decision data | Low-frequency controls | Allowed control share | What can the user decide? |
+| Journey | Surface | Item | Relevance | Why it matters | Condition/frequency | Evidence source |
+| --- | --- | --- | --- | --- | --- | --- |
+| Review live metrics | Metrics Dashboard | high-priority metric list | critical-always | lets the analyst decide current status | always | product requirement |
+| Review live metrics | Metrics Dashboard | display filter | secondary-occasional | helps refine the view | occasional | product requirement |
+| Review live metrics | Metrics Dashboard | advanced settings configuration | rare-under-5-percent | supports admin tuning | rare | product requirement |
+
+## UI Handoff Constraints
+
+| Surface | Decisions the UI must support | Required evidence for UI audit | States to verify | Mockups/screenshots/assets | Unconfirmed assumptions |
 | --- | --- | --- | --- | --- | --- |
-| mobile | high-priority metrics and latest update | visible before scroll | settings and filters below primary content | under 25% before metrics | user can decide current metric status from the first viewport |
+| Metrics Dashboard | decide current metric status using live metrics, chart, and warning state | screenshot, DOM viewport measurement, and visual audit evidence | loading, empty, error, stale-data warning, threshold warning | metrics-dashboard mockup | none |
 
-## UI Audit Handoff
+## Feature Inventory
 
-Use the UI implementation audit with a mobile screenshot, mockup, and DOM viewport measurement to confirm high-priority metrics stay above settings/filter controls.
+Features and capabilities: metrics summary, live chart, inspect metric details, display filter, advanced settings configuration, threshold warning, empty state, loading state, and error recovery.
+
+## UI Element Inventory
+
+Required UI elements: metric cards, chart, inspect button, display filter control, settings menu, threshold banner, loading state, empty state, error toast, and retry button.
+
+## Implementation Expectations
+
+Handlers, API data path, persistence, validation, permission check, and state change behavior must be defined for the metric detail action, display filter, settings menu, and retry path.
+
+## Test Expectations
+
+Acceptance criteria, unit test, component test, e2e, visual test, fixture, and test mode expectations must cover metrics loading, empty data, threshold warning, filter persistence, permission denial, error retry, and constrained-screen journey usefulness.
+
+## UI Handoff Constraints
+
+Use the UI implementation audit with a mobile screenshot, mockup, and DOM/native viewport measurement to confirm the rendered surface supports the live-metric decision and keeps conditional settings from overwhelming that decision path.
 """,
         )
         complete = run_inventory(complete_repo)
         check(complete["journey_doc_count"] >= 1, "complete docs should count as journey docs")
-        check(complete["priority_contract_doc_count"] >= 1, "complete docs should count priority contract docs")
-        check(complete["first_viewport_doc_count"] >= 1, "complete docs should count first viewport docs")
+        check(complete["decision_model_doc_count"] >= 1, "complete docs should count decision model docs")
+        check(complete["information_relevance_doc_count"] >= 1, "complete docs should count information relevance docs")
+        check(complete["ui_handoff_constraint_doc_count"] >= 1, "complete docs should count UI handoff constraint docs")
+        check(complete["has_feature_inventory"], "complete docs should include feature inventory")
+        check(complete["has_ui_element_inventory"], "complete docs should include UI element inventory")
+        check(complete["has_implementation_expectations"], "complete docs should include implementation expectations")
+        check(complete["has_test_expectations"], "complete docs should include test expectations")
         check(complete["ui_audit_handoff_ready"], "complete docs should be UI-audit handoff ready")
         check(not complete["ui_implementation_risk_signals"], "complete docs should clear UI implementation risk signals")
 

@@ -32,8 +32,8 @@ BATCH_SECTIONS = [
     "batch summary",
     "file coverage",
     "ui source inventory",
-    "journey priority contract",
-    "first viewport journey check",
+    "journey decision model",
+    "rendered journey usability",
     "mockup and journey alignment",
     "implementation gap findings",
     "no gap notes",
@@ -60,8 +60,8 @@ TOOLING_SECTIONS = [
 VISUAL_SECTIONS = [
     "run id",
     "worker",
-    "journey priority contract",
-    "first viewport journey check",
+    "journey decision model",
+    "rendered journey usability",
     "visual comparison checks",
     "findings",
     "open questions",
@@ -84,27 +84,34 @@ FIRST_VIEWPORT_EVIDENCE_RE = re.compile(
     r"\b(screenshot|screen shot|png|jpg|jpeg|webp|trace|video|playwright|cypress|storybook|browser|preview|simulator|dom|viewport|measurement|measured|px|%|fold|scroll|source|css|blocked|unavailable|not applicable|no safe)\b",
     re.IGNORECASE,
 )
-JOURNEY_PRIORITY_COLUMNS = {
+JOURNEY_DECISION_COLUMNS = {
     "surface",
     "primary user goal",
-    "primary information",
+    "primary decision",
+    "required facts",
+    "warning/flag conditions",
     "frequent actions",
-    "occasional controls",
-    "rare/admin/configuration controls",
-    "expected desktop order",
-    "expected mobile order",
+    "secondary/rare actions",
+    "unconfirmed assumptions",
 }
-FIRST_VIEWPORT_COLUMNS = {
+RENDERED_USABILITY_COLUMNS = {
     "viewport",
-    "first visible content",
-    "primary decision data visible?",
-    "low-frequency controls above content?",
-    "low-frequency/header/control share",
-    "what can user decide from first viewport?",
-    "result",
+    "decision supported",
+    "visible decision-driving content",
+    "visible secondary/detail content",
+    "detail access pattern",
+    "readability/contrast evidence",
+    "layout quality result",
     "evidence",
 }
-FIRST_VIEWPORT_RESULT_VALUES = {"PASS", "GAP", "BLOCKED", "NOT_APPLICABLE"}
+USABILITY_RESULT_VALUES = {"PASS", "GAP", "BLOCKED", "NOT_APPLICABLE"}
+WEB_UI_EXTENSIONS = {".astro", ".css", ".html", ".jsx", ".mdx", ".scss", ".svelte", ".tsx", ".vue"}
+VISUAL_DANGER_RE = re.compile(
+    r"\b(overloaded?|crowded|cramped|unreadable|invisible|low[- ]contrast|clipped|cropped|truncated|"
+    r"overflow|hidden overflow|no scroll|without scroll|unscannable|ambiguous hierarchy|oversized|"
+    r"excessive detail|debug detail|raw status|dominates|dominating|buried|below the fold)\b",
+    re.IGNORECASE,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -298,6 +305,10 @@ def is_mobile_viewport(value: str) -> bool:
     return any(token in lowered for token in ("mobile", "narrow", "phone", "390", "375", "360", "320"))
 
 
+def mobile_viewport_required(manifest: dict) -> bool:
+    return any(Path(item).suffix.lower() in WEB_UI_EXTENSIONS for item in manifest.get("_source_hashes", {}))
+
+
 def is_negative(value: str) -> bool:
     lowered = value.lower()
     return bool(re.search(r"\b(no|not visible|below fold|below the fold|after scroll|hidden|cropped)\b", lowered))
@@ -308,89 +319,91 @@ def is_affirmative(value: str) -> bool:
     return bool(re.search(r"\b(yes|true|above|dominates|dominant|settings|filters|configuration|config|controls)\b", lowered))
 
 
-def has_p1_first_viewport_finding(findings: str) -> bool:
+def has_visual_danger_finding(findings: str) -> bool:
     for block in finding_blocks(findings):
-        if block.get("Priority") != "P1":
-            continue
         combined = " ".join(block.values()).lower()
-        if any(token in combined for token in ("first viewport", "above the fold", "below the fold", "journey priority", "mobile", "settings", "filters", "configuration")):
+        if VISUAL_DANGER_RE.search(combined) or any(
+            token in combined
+            for token in ("journey usability", "decision path", "rendered journey", "readability", "contrast", "scannable")
+        ):
             return True
     return False
 
 
-def verify_journey_priority_contract(path: Path, body: str) -> list[dict]:
+def verify_journey_decision_model(path: Path, body: str) -> list[dict]:
     issues: list[dict] = []
     rows = common.parse_markdown_table_dicts(body)
     if not rows:
-        return [{"path": str(path), "section": "Journey Priority Contract", "reason": "missing journey priority table"}]
+        return [{"path": str(path), "section": "Journey Decision Model", "reason": "missing journey decision table"}]
     for index, row in enumerate(rows, start=1):
-        missing_columns = sorted(JOURNEY_PRIORITY_COLUMNS - set(row))
+        missing_columns = sorted(JOURNEY_DECISION_COLUMNS - set(row))
         if missing_columns:
-            issues.append({"path": str(path), "section": "Journey Priority Contract", "row": index, "missing_columns": missing_columns})
+            issues.append({"path": str(path), "section": "Journey Decision Model", "row": index, "missing_columns": missing_columns})
             continue
-        for field in JOURNEY_PRIORITY_COLUMNS:
+        for field in JOURNEY_DECISION_COLUMNS:
             if not row.get(field, "").strip():
-                issues.append({"path": str(path), "section": "Journey Priority Contract", "row": index, "field": field, "reason": "empty"})
+                issues.append({"path": str(path), "section": "Journey Decision Model", "row": index, "field": field, "reason": "empty"})
     return issues
 
 
-def first_viewport_priority_failure(row: dict[str, str]) -> bool:
-    if not is_mobile_viewport(row.get("viewport", "")):
-        return False
-    primary_hidden = is_negative(row.get("primary decision data visible?", ""))
-    controls_above = is_affirmative(row.get("low-frequency controls above content?", ""))
-    share = parse_percentage(row.get("low-frequency/header/control share", ""))
-    controls_dominate = share is not None and share >= 25
-    content_text = " ".join(
-        row.get(field, "")
-        for field in (
-            "first visible content",
-            "low-frequency controls above content?",
-            "what can user decide from first viewport?",
-        )
-    ).lower()
-    low_value_content_first = any(token in content_text for token in ("setting", "filter", "configuration", "config", "target currency", "admin control"))
-    return primary_hidden and (controls_above or controls_dominate or low_value_content_first)
+def rendered_usability_failure(row: dict[str, str]) -> bool:
+    result = row.get("layout quality result", "").strip()
+    if result in {"GAP", "BLOCKED"}:
+        return True
+    combined = " ".join(row.values())
+    return bool(VISUAL_DANGER_RE.search(combined)) and result == "PASS"
 
 
-def verify_first_viewport_table(path: Path, body: str, findings: str, *, require_visual_evidence: bool = False) -> list[dict]:
+def verify_rendered_usability_table(
+    path: Path,
+    body: str,
+    findings: str,
+    *,
+    require_visual_evidence: bool = False,
+    require_mobile: bool = False,
+) -> list[dict]:
     issues: list[dict] = []
     rows = common.parse_markdown_table_dicts(body)
     if not rows:
-        return [{"path": str(path), "section": "First Viewport Journey Check", "reason": "missing first viewport table"}]
+        return [{"path": str(path), "section": "Rendered Journey Usability", "reason": "missing rendered journey usability table"}]
+    seen_desktop = False
     seen_mobile = False
     gap_or_blocked = False
-    priority_failure = False
+    danger_failure = False
     for index, row in enumerate(rows, start=1):
-        missing_columns = sorted(FIRST_VIEWPORT_COLUMNS - set(row))
+        missing_columns = sorted(RENDERED_USABILITY_COLUMNS - set(row))
         if missing_columns:
-            issues.append({"path": str(path), "section": "First Viewport Journey Check", "row": index, "missing_columns": missing_columns})
+            issues.append({"path": str(path), "section": "Rendered Journey Usability", "row": index, "missing_columns": missing_columns})
             continue
-        for field in FIRST_VIEWPORT_COLUMNS:
+        for field in RENDERED_USABILITY_COLUMNS:
             if not row.get(field, "").strip():
-                issues.append({"path": str(path), "section": "First Viewport Journey Check", "row": index, "field": field, "reason": "empty"})
-        result = row.get("result", "").strip()
-        if result not in FIRST_VIEWPORT_RESULT_VALUES:
-            issues.append({"path": str(path), "section": "First Viewport Journey Check", "row": index, "field": "Result", "expected": sorted(FIRST_VIEWPORT_RESULT_VALUES), "actual": result})
+                issues.append({"path": str(path), "section": "Rendered Journey Usability", "row": index, "field": field, "reason": "empty"})
+        result = row.get("layout quality result", "").strip()
+        if result not in USABILITY_RESULT_VALUES:
+            issues.append({"path": str(path), "section": "Rendered Journey Usability", "row": index, "field": "Layout quality result", "expected": sorted(USABILITY_RESULT_VALUES), "actual": result})
         if result in {"GAP", "BLOCKED"}:
             gap_or_blocked = True
+        if "desktop" in row.get("viewport", "").lower() or "native" in row.get("viewport", "").lower():
+            seen_desktop = True
         if is_mobile_viewport(row.get("viewport", "")):
             seen_mobile = True
         evidence = row.get("evidence", "")
         if evidence.strip() and not FIRST_VIEWPORT_EVIDENCE_RE.search(evidence):
-            issues.append({"path": str(path), "section": "First Viewport Journey Check", "row": index, "field": "Evidence", "reason": "must name screenshot, DOM/viewport measurement, source evidence, or a concrete blocker"})
+            issues.append({"path": str(path), "section": "Rendered Journey Usability", "row": index, "field": "Evidence", "reason": "must name screenshot, DOM/viewport measurement, source evidence, or a concrete blocker"})
         if require_visual_evidence and evidence.strip() and not (VISUAL_EVIDENCE_RE.search(evidence) or re.search(r"\b(dom|viewport|measurement|measured|px|%|fold)\b", evidence, re.IGNORECASE)):
-            issues.append({"path": str(path), "section": "First Viewport Journey Check", "row": index, "field": "Evidence", "reason": "visual first-viewport checks require screenshot/tool evidence, DOM measurement, viewport measurement, or a concrete blocker"})
-        if first_viewport_priority_failure(row):
-            priority_failure = True
-            if result != "GAP":
-                issues.append({"path": str(path), "section": "First Viewport Journey Check", "row": index, "field": "Result", "reason": "mobile first viewport priority failure must be marked GAP"})
-    if not seen_mobile:
-        issues.append({"path": str(path), "section": "First Viewport Journey Check", "reason": "mobile/narrow viewport row is required"})
+            issues.append({"path": str(path), "section": "Rendered Journey Usability", "row": index, "field": "Evidence", "reason": "visual journey checks require screenshot/tool evidence, DOM/native measurement, viewport measurement, or a concrete blocker"})
+        if rendered_usability_failure(row):
+            danger_failure = True
+            if result == "PASS" and VISUAL_DANGER_RE.search(" ".join(row.values())):
+                issues.append({"path": str(path), "section": "Rendered Journey Usability", "row": index, "field": "Layout quality result", "reason": "danger terms such as overload, unreadable text, clipping, overflow, or low contrast cannot be marked PASS without a finding"})
+    if not seen_desktop:
+        issues.append({"path": str(path), "section": "Rendered Journey Usability", "reason": "desktop/native viewport row is required"})
+    if require_mobile and not seen_mobile:
+        issues.append({"path": str(path), "section": "Rendered Journey Usability", "reason": "mobile/narrow viewport row is required for rendered web visual checks"})
     if gap_or_blocked and findings.strip() == "No findings.":
-        issues.append({"path": str(path), "section": "Findings", "reason": "GAP or BLOCKED first-viewport rows require a finding"})
-    if priority_failure and not has_p1_first_viewport_finding(findings):
-        issues.append({"path": str(path), "section": "Findings", "reason": "mobile first viewport priority failure requires a P1 journey-priority finding"})
+        issues.append({"path": str(path), "section": "Findings", "reason": "GAP or BLOCKED rendered journey usability rows require a finding"})
+    if danger_failure and not has_visual_danger_finding(findings):
+        issues.append({"path": str(path), "section": "Findings", "reason": "rendered journey usability danger terms require a visual/usability finding"})
     return issues
 
 
@@ -444,8 +457,8 @@ def verify_batch_report(path: Path, manifest: dict, batch_id: str) -> list[dict]
                 issues.append({"path": str(path), "section": "UI Source Inventory", "unit": unit, "field": field, "reason": "empty"})
 
     findings = bodies.get("implementation gap findings", "")
-    issues.extend(verify_journey_priority_contract(path, bodies.get("journey priority contract", "")))
-    issues.extend(verify_first_viewport_table(path, bodies.get("first viewport journey check", ""), findings))
+    issues.extend(verify_journey_decision_model(path, bodies.get("journey decision model", "")))
+    issues.extend(verify_rendered_usability_table(path, bodies.get("rendered journey usability", ""), findings))
     issues.extend(validate_findings(findings, expected_files, path, "Implementation Gap Findings"))
     for section in ("batch summary", "mockup and journey alignment", "no gap notes", "open questions"):
         if not bodies.get(section, "").strip():
@@ -469,13 +482,22 @@ def verify_aux_report(path: Path, manifest: dict, expected_sections: list[str], 
         if not bodies.get(section, "").strip():
             issues.append({"path": str(path), "section": section, "reason": "empty"})
     if worker == "visual_comparison_audit":
-        issues.extend(verify_journey_priority_contract(path, bodies.get("journey priority contract", "")))
-        issues.extend(verify_first_viewport_table(path, bodies.get("first viewport journey check", ""), bodies.get("findings", ""), require_visual_evidence=True))
-        issues.extend(verify_visual_comparison_table(path, bodies.get("visual comparison checks", ""), bodies.get("findings", "")))
+        require_mobile = mobile_viewport_required(manifest)
+        issues.extend(verify_journey_decision_model(path, bodies.get("journey decision model", "")))
+        issues.extend(
+            verify_rendered_usability_table(
+                path,
+                bodies.get("rendered journey usability", ""),
+                bodies.get("findings", ""),
+                require_visual_evidence=True,
+                require_mobile=require_mobile,
+            )
+        )
+        issues.extend(verify_visual_comparison_table(path, bodies.get("visual comparison checks", ""), bodies.get("findings", ""), require_mobile=require_mobile))
     return issues
 
 
-def verify_visual_comparison_table(path: Path, body: str, findings: str) -> list[dict]:
+def verify_visual_comparison_table(path: Path, body: str, findings: str, *, require_mobile: bool = False) -> list[dict]:
     issues: list[dict] = []
     rows = common.parse_markdown_table_dicts(body)
     if not rows:
@@ -492,6 +514,7 @@ def verify_visual_comparison_table(path: Path, body: str, findings: str) -> list
     viewports: set[str] = set()
     non_not_applicable = False
     blocked_or_gap = False
+    danger_failure = False
     for index, row in enumerate(rows, start=1):
         missing_columns = sorted(required - set(row))
         if missing_columns:
@@ -507,6 +530,17 @@ def verify_visual_comparison_table(path: Path, body: str, findings: str) -> list
             non_not_applicable = True
         if result in {"GAP", "BLOCKED"}:
             blocked_or_gap = True
+        if result == "MATCHED" and VISUAL_DANGER_RE.search(" ".join(row.values())):
+            danger_failure = True
+            issues.append(
+                {
+                    "path": str(path),
+                    "section": "Visual Comparison Checks",
+                    "row": index,
+                    "field": "Result",
+                    "reason": "danger terms such as overload, unreadable text, clipping, overflow, or low contrast cannot be marked MATCHED without a finding",
+                }
+            )
         viewport = row.get("viewport", "").lower()
         if "desktop" in viewport:
             viewports.add("desktop")
@@ -523,10 +557,18 @@ def verify_visual_comparison_table(path: Path, body: str, findings: str) -> list
                     "reason": "must name screenshot/trace/tool evidence or a concrete blocker",
                 }
             )
-    if non_not_applicable and {"desktop", "mobile"} - viewports:
-        issues.append({"path": str(path), "section": "Visual Comparison Checks", "reason": "desktop and mobile/narrow viewport rows are required when visual checks are applicable", "viewports_found": sorted(viewports)})
+    required_viewports = {"desktop", "mobile"} if require_mobile else {"desktop"}
+    if non_not_applicable and required_viewports - viewports:
+        reason = (
+            "desktop and mobile/narrow viewport rows are required for rendered web visual checks"
+            if require_mobile
+            else "desktop/native viewport row is required when visual checks are applicable"
+        )
+        issues.append({"path": str(path), "section": "Visual Comparison Checks", "reason": reason, "viewports_found": sorted(viewports)})
     if blocked_or_gap and findings.strip() == "No findings.":
         issues.append({"path": str(path), "section": "Findings", "reason": "GAP or BLOCKED visual rows require a finding"})
+    if danger_failure and not has_visual_danger_finding(findings):
+        issues.append({"path": str(path), "section": "Findings", "reason": "visual danger terms require a visual/usability finding"})
     return issues
 
 

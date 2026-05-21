@@ -93,7 +93,7 @@ Run ID: `{run_id}`
 Repo root: `{repo}`
 Batch ID: `batch_{batch_id:03d}`
 
-You are a low-effort worker auditing test coverage. Do not edit files. Inspect every owned unit below and report whether reasonable behavior targets have meaningful tests.
+You are a low-effort worker auditing test coverage. Do not edit files. Inspect every owned unit below and report whether reasonable behavior targets, intended features, UI elements, states, handlers, and journeys have meaningful tests.
 
 ## Files You Own
 
@@ -103,10 +103,10 @@ For ranged units, inspect the assigned range manually plus nearby imports/types/
 
 ## Review Rules
 
-- Identify reasonable test targets: exported/public functions, methods with behavior, reducers/hooks, API handlers, command/job entrypoints, domain services, UI state transitions, validation logic, and non-trivial private helpers.
+- Identify reasonable test targets: exported/public functions, methods with behavior, reducers/hooks, API handlers, command/job entrypoints, domain services, intended feature behavior, UI element behavior, UI state transitions, validation logic, and non-trivial private helpers.
 - Exclude only with rationale: types/interfaces, pure constants, generated code, static copy-only markup, trivial pass-throughs, and framework boilerplate with no repo-owned behavior.
 - For each target, look for existing test files, test names, fixtures, snapshots, stories, e2e specs, or explicit absence.
-- Assess happy path, invalid input, empty/null/boundary values, failure paths, async/concurrency, permissions, persistence, navigation, rollback, and integration boundaries when applicable.
+- Assess happy path, invalid input, empty/null/boundary values, failure paths, async/concurrency, permissions, persistence, navigation, rollback, integration boundaries, required UI states, and feature completion when applicable.
 
 ## Required Report
 
@@ -157,7 +157,7 @@ Run ID: `{run_id}`
 Repo root: `{repo}`
 Worker: `ui_test_coverage`
 
-Do not edit files. Audit whether important UI routes, controls, forms, states, and user journeys have meaningful component, integration, e2e, or visual coverage.
+Do not edit files. Audit whether intended UI routes, controls, forms, states, UI elements, feature paths, and user journeys have meaningful component, integration, e2e, or visual coverage.
 
 ## Interface-Relevant Files
 
@@ -175,7 +175,7 @@ ui_test_coverage
 List route maps, docs, tests, stories, specs, or source files used.
 
 ## UI Coverage Checks
-List routes/journeys/controls/states checked and existing test evidence.
+List routes/journeys/controls/states/features/UI elements checked and existing test evidence.
 
 ## Findings
 Use `No findings.` or finding blocks with Priority, Files, Target, Existing test evidence, Missing scenarios/boundaries, Suggested test direction.
@@ -193,7 +193,7 @@ Run ID: `{run_id}`
 Repo root: `{repo}`
 Worker: `visual_e2e_coverage`
 
-Do not edit files. Identify visual/e2e tooling and assess whether high-frequency UI journeys can be checked safely in test or fixture mode.
+Do not edit files. Identify visual/e2e tooling and assess whether high-frequency UI journeys, required screens, UI elements, and states can be checked safely in test or fixture mode.
 
 ## Interface-Relevant Files
 
@@ -213,7 +213,7 @@ visual_e2e_coverage
 List Playwright, Cypress, Storybook, browser/native preview, screenshots, or absence.
 
 ## Visual/E2E Coverage Checks
-List journeys checked or explain not applicable.
+List journeys, screens, UI elements, and states checked or explain not applicable.
 
 ## Findings
 Use `No findings.` or finding blocks with Priority, Files, Target, Existing test evidence, Missing scenarios/boundaries, Suggested test direction.

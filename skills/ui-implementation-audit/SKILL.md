@@ -1,6 +1,6 @@
 ---
 name: ui-implementation-audit
-description: Audit a repository's implemented user interface against mockup images, visual assets, and user journey requirements. Use when Codex needs to compare rendered desktop/mobile UI screenshots and UI source code against design assets, ImageGen mockups, Figma exports, screenshots, product journeys, or UX requirements, then produce a prioritized plan for closing visual, responsive, interaction, and journey gaps. Only interface-defining source files are queued in deterministic source batches.
+description: Audit a repository's implemented user interface against mockup images, visual assets, and user journey requirements. Use when Codex needs to compare rendered desktop/mobile UI screenshots and UI source code against design assets, ImageGen mockups, Figma exports, screenshots, product journeys, or UX requirements, then produce a prioritized plan for closing visual, responsive, interaction, journey, implementation, and test gaps. Only interface-defining source files are queued in deterministic source batches.
 ---
 
 # UI Implementation Audit
@@ -18,6 +18,13 @@ This skill exists because UI implementations often drift from generated mockups:
 spacing, density, hierarchy, responsive fit, visible states, and asset use must
 be checked with actual screenshots, not only source reading.
 
+Treat the intended interface as a complete contract: every required screen,
+journey step, UI element, visible message, interaction state, responsive layout,
+handler, data path, accessibility path, and visual/test evidence must be present.
+If a mockup, journey doc, product requirement, visible source promise, or
+user-confirmed intent implies an element or behavior, audit it as required and
+report anything missing, partial, unwired, visually wrong, or untested.
+
 ## Required Execution Model
 
 - Use high reasoning effort or higher for the lead audit. If the current lead
@@ -31,18 +38,18 @@ be checked with actual screenshots, not only source reading.
 - Always run the visual work when interface source files are queued:
   `mockup_asset_audit.md`, `visual_tooling_audit.md`, and
   `visual_comparison_audit.md`.
-- Before comparing screenshots to mockups, define a journey priority contract:
-  primary user goal, primary decision-making information, frequent actions,
-  occasional controls, rare/admin/configuration controls, and expected desktop
-  and mobile information order.
+- Before comparing screenshots to mockups, define a journey decision model:
+  primary user goal, primary decision, required facts, warning/flag conditions,
+  frequent actions, secondary/rare actions, and unconfirmed assumptions.
 - The visual comparison worker must try available rendered-surface tooling:
   Playwright, Cypress, Storybook, browser MCP tools, app/browser preview,
   native simulator/preview tools, or screenshot-capable test commands. It must
   check desktop and narrow mobile viewports when a web UI exists.
-- The visual comparison worker must answer what the user can decide from the
-  first mobile viewport. Except on pages whose primary purpose is data entry,
-  primary decision-making content must be visible before low-frequency settings,
-  filters, menus, or configuration panels dominate the screen.
+- The visual comparison worker must answer whether each rendered viewport
+  supports the current journey decision. Except on pages whose primary purpose
+  is data entry, visible content should mostly drive the current decision;
+  secondary detail, debug data, and rare configuration should be available
+  without dominating the main surface.
 - Prefer test, fixture, preview, mock-data, dry-run, or Storybook paths over
   production paths. If no safe visual path exists, report the blocker with
   evidence and include an implementation step to add one.
@@ -94,14 +101,16 @@ be checked with actual screenshots, not only source reading.
 3. **Lead visual orientation**
    - Read the mockup/design assets listed in `manifest.json`.
    - Read journey requirement sources before deciding visual priorities.
-   - Write the journey priority contract before inspecting screenshots:
-     primary goal, primary information, frequent actions, occasional controls,
-     rare/admin/configuration controls, and expected desktop/mobile order.
-   - Build a screen inventory: route/screen, target user, journey step, primary
+   - Write the journey decision model before inspecting screenshots: primary
+     goal, primary decision, required facts, warning/flag conditions, frequent
+     actions, secondary/rare actions, and unconfirmed assumptions.
+   - Build a complete screen inventory: route/screen, target user, journey step, primary
      decision, required information, primary actions, secondary/rare details,
-     and expected desktop/mobile layout.
-   - For every important mobile screen, define what must be useful in the first
-     viewport and what may be pushed behind scroll, tabs, menus, or expanders.
+     all required UI elements, states, and supported viewport constraints.
+   - For every important rendered viewport, define the decision it must support,
+     which visible content is decision-driving, which content is secondary/detail
+     or configuration, and whether details are reachable without overwhelming
+     the decision path.
    - Identify the safest way to render each high-priority screen.
 
 4. **Dispatch workers**
@@ -140,11 +149,11 @@ be checked with actual screenshots, not only source reading.
 6. **Synthesize the implementation plan**
    - Deduplicate source and visual findings.
    - Separate confirmed screenshot/source gaps from hypotheses and blockers.
-   - Treat first-viewport journey failures as real UI defects even when the
+   - Treat rendered journey-usability failures as real UI defects even when the
      page matches a mockup, has correct data, and has no horizontal overflow.
-   - Prioritize by user journey impact, visual mismatch severity, responsive
+   - Prioritize by user journey impact, missing required UI elements, visual mismatch severity, responsive
      breakage, accessibility, implementation risk, and dependency order.
-   - Include concrete implementation and verification steps for every gap.
+   - Include concrete implementation and verification steps for every missing or incomplete UI, interaction, state, accessibility, data, and test gap.
 
 ## Batch Worker Review Rules
 
@@ -156,14 +165,19 @@ For every owned interface source unit:
   permission, validation, loading/error/empty state, and responsive rules.
 - Compare source implementation against mockup/journey evidence from the prompt
   and manifest.
+- Confirm every required UI element has real implementation and verification
+  evidence; report missing handlers, missing persistence, missing state coverage,
+  missing accessibility, and missing visual/test coverage as gaps.
 - Flag visual and UX gaps: wrong hierarchy, missing content, wrong density,
   excessive decoration, missing states, dead controls, hidden primary action,
-  overexposed rare detail, layout overflow, cropped text, unreadable controls,
+  overexposed rare detail, layout overflow, cropped text, hidden overflow
+  without scrolling, unreadable controls, low-contrast or invisible theme text,
   missing asset use, accessibility gaps, and mismatched copy.
-- Flag settings/filter forms placed above primary content on mobile; repeated
-  desktop ordering that breaks mobile journey priority; overexposed rare/admin
-  controls; high-value content pushed below low-value configuration; and visual
-  similarity to a mockup that still fails journey usefulness.
+- Flag surfaces where low-journey-relevance content dominates the visible area:
+  settings/filter forms, rare/admin controls, debug/raw status detail,
+  explanatory copy, or secondary metadata that crowds out decision-driving
+  content. Do this across desktop, native, and narrow/mobile viewports rather
+  than only one mobile layout pattern.
 - For ranged units, use the exact unit id in coverage rows and inventory rows.
 
 ## Required Batch Report
@@ -176,8 +190,8 @@ Each batch report must contain exactly these top-level headings in order:
 ## Batch Summary
 ## File Coverage
 ## UI Source Inventory
-## Journey Priority Contract
-## First Viewport Journey Check
+## Journey Decision Model
+## Rendered Journey Usability
 ## Mockup And Journey Alignment
 ## Implementation Gap Findings
 ## No Gap Notes
@@ -191,15 +205,15 @@ Each batch report must contain exactly these top-level headings in order:
 Element`, `Source Evidence`, `Expected Behavior`, `Actual Implementation`, and
 `Responsive/State Notes`.
 
-`Journey Priority Contract` must include columns `Surface`, `Primary user goal`,
-`Primary information`, `Frequent actions`, `Occasional controls`,
-`Rare/Admin/Configuration controls`, `Expected desktop order`, and `Expected
-mobile order`.
+`Journey Decision Model` must include columns `Surface`, `Primary user goal`,
+`Primary decision`, `Required facts`, `Warning/flag conditions`, `Frequent
+actions`, `Secondary/rare actions`, and `Unconfirmed assumptions`.
 
-`First Viewport Journey Check` must include columns `Viewport`, `First visible
-content`, `Primary decision data visible?`, `Low-frequency controls above
-content?`, `Low-frequency/header/control share`, `What can user decide from
-first viewport?`, `Result`, and `Evidence`. Mobile/narrow rows are required.
+`Rendered Journey Usability` must include columns `Viewport`, `Decision
+supported`, `Visible decision-driving content`, `Visible secondary/detail
+content`, `Detail access pattern`, `Readability/contrast evidence`, `Layout
+quality result`, and `Evidence`. Desktop rows are required for native or desktop
+apps; desktop and mobile/narrow rows are required when a web UI can be rendered.
 
 Findings must use either `No findings.` or field blocks with:
 
@@ -214,8 +228,8 @@ Findings must use either `No findings.` or field blocks with:
 ## Visual Worker Requirements
 
 The visual comparison report is not complete if it only says the UI "looks
-good" or "matches the mockup." It must include `Journey Priority Contract`,
-`First Viewport Journey Check`, and `Visual Comparison Checks` tables with
+good" or "matches the mockup." It must include `Journey Decision Model`,
+`Rendered Journey Usability`, and `Visual Comparison Checks` tables with
 desktop and mobile/narrow rows when a web UI can be rendered. Evidence should
 name the command/tool and screenshot/trace/video/artifact path when available.
 If screenshots cannot be produced, the row result must be `BLOCKED` and the
@@ -225,24 +239,24 @@ For each rendered screen, check:
 
 - Match to mockup composition, spacing, density, typography, color, imagery,
   iconography, and information priority.
-- Desktop and mobile fit: no accidental horizontal scroll, overlap, cropped
-  decision data, unreadable compression, or primary action pushed below low
-  value content.
-- First mobile viewport usefulness: primary decision-making content is visible
-  before scroll unless the page is itself a data-entry form; low-frequency
-  settings, filters, menus, and configuration panels do not dominate before the
-  user can make the primary decision.
-- Estimate the percentage of the first mobile viewport occupied by navigation,
-  headers, settings, filters, and controls. If low-frequency controls consume
-  roughly 25-30% or more while primary content is below the fold, report a P1.
-- Answer: "What can the user decide from the first viewport?" If the answer is
-  only configuration choices while the primary data is below the fold, report a
-  journey-priority gap.
-- Flag mobile layouts that simply stack the desktop order and thereby put rare
-  or occasional controls before primary content.
+- Desktop, native, and mobile fit: no accidental horizontal scroll, overlap,
+  cropped decision data, hidden overflow without scrolling, unreadable
+  compression, or low-value content dominating the decision path.
+- Rendered journey usefulness: visible content should be dominated by facts,
+  warnings, and actions that help the user progress through the current journey.
+  Details, settings, filters, raw/debug status, and rare/admin controls may be
+  present, but they should not overwhelm the primary decision path.
+- Answer: "What decision can the user make from this rendered viewport?" If the
+  answer is unclear, only configuration-oriented, or buried under secondary
+  detail, report a journey-usability gap.
+- Flag broad layout problems: overload, crowding, ambiguous hierarchy, clipped
+  or truncated text, hidden overflow with no scroll path, oversized controls,
+  unreadable compression, low contrast, invisible dark-theme text, and any
+  visually present information that is not scannable enough to support the
+  journey.
 - Journey relevance: critical-always and primary-frequent content is prominent;
-  secondary content is available; rare-under-5-percent detail is hidden behind
-  menus, expanders, tabs, or drill-in views when space is tight.
+  secondary content is available; rare-under-5-percent detail is available
+  through an appropriate detail path when visible space is tight.
 - Interaction states: loading, empty, error, disabled, focus, hover/pressed,
   permission-denied, destructive confirmation, undo/rollback, and success.
 - Accessibility: labels, focus order, keyboard access, contrast risk, semantic
@@ -255,8 +269,8 @@ Return exactly these top-level headings:
 ```markdown
 ## Coverage
 ## Mockup And Requirement Inputs
-## Journey Priority Contract
-## First Viewport Journey Findings
+## Journey Decision Model
+## Rendered Journey Usability Findings
 ## Visual Audit Findings
 ## Source Implementation Findings
 ## Journey And Responsive Findings
@@ -268,7 +282,7 @@ Return exactly these top-level headings:
 Use this priority scale:
 
 - `P0`: Core journey unusable, data-loss/destructive risk, or runtime failure.
-- `P1`: Major mismatch from mockup/requirements or primary journey expectation.
+- `P1`: Major missing UI element, implementation path, test path, mismatch from mockup/requirements, or primary journey expectation.
 - `P2`: Important visual, responsive, accessibility, state, or maintainability
   gap.
 - `P3`: Polish, consistency, copy, or low-risk cleanup.

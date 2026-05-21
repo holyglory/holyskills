@@ -436,6 +436,13 @@ VISUAL_EVIDENCE_ARTIFACT_TERMS = (
     "trace",
     "video",
 )
+WEB_UI_EXTENSIONS = {".astro", ".css", ".html", ".jsx", ".mdx", ".scss", ".svelte", ".tsx", ".vue"}
+VISUAL_DANGER_RE = re.compile(
+    r"\b(overloaded?|crowded|cramped|unreadable|invisible|low[- ]contrast|clipped|cropped|truncated|"
+    r"overflow|hidden overflow|no scroll|without scroll|unscannable|ambiguous hierarchy|oversized|"
+    r"excessive detail|debug detail|raw status|dominates|dominating|buried|below the fold)\b",
+    re.IGNORECASE,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -1044,6 +1051,8 @@ def validate_journey_report(
         tooling_body = normalized_text(bodies.get("visual tooling", ""))
         checks_body_raw = bodies.get("visual journey checks", "")
         checks_body = normalized_text(checks_body_raw)
+        danger_failure = False
+        require_mobile = any(Path(rel_path).suffix.lower() in WEB_UI_EXTENSIONS for rel_path in interface_files)
         if not any(term in tooling_body for term in ("test mode", "fixture", "playwright", "cypress", "storybook", "browser", "not applicable", "no visual")):
             issues.append(
                 {
@@ -1094,14 +1103,14 @@ def validate_journey_report(
                     for viewport in viewports
                     for term in ("mobile", "narrow", "small", "phone")
                 )
-                if not has_desktop or not has_mobile:
+                if not has_desktop or (require_mobile and not has_mobile):
                     incomplete.append(
                         {
                             "journey": journey,
                             "viewports": sorted(viewports),
                             "missing": [
                                 label
-                                for label, ok in (("desktop", has_desktop), ("narrow mobile", has_mobile))
+                                for label, ok in (("desktop", has_desktop), ("narrow mobile", has_mobile or not require_mobile))
                                 if not ok
                             ],
                         }
@@ -1111,7 +1120,11 @@ def validate_journey_report(
                     {
                         "path": str(report_path),
                         "section": "visual journey checks",
-                        "reason": "visual report must include desktop and narrow-mobile viewport rows per journey unless checks are not applicable",
+                        "reason": (
+                            "visual report must include desktop and narrow-mobile viewport rows per journey unless checks are not applicable"
+                            if require_mobile
+                            else "visual report must include desktop/native viewport rows per journey unless checks are not applicable"
+                        ),
                         "journeys": incomplete,
                     }
                 )
@@ -1138,6 +1151,17 @@ def validate_journey_report(
                     for field in ("navigation visibility", "decision information", "visual quality", "result"):
                         if is_boilerplate_value(row.get(field, "")) or len(plain_cell(row.get(field, ""))) < 4:
                             row_issues.append({"row": index, "field": field, "actual": row.get(field, "")})
+                    result = normalized_text(row.get("result", ""))
+                    if result in {"pass", "passed", "matched"} and VISUAL_DANGER_RE.search(" ".join(row.values())):
+                        danger_failure = True
+                        row_issues.append(
+                            {
+                                "row": index,
+                                "field": "result",
+                                "reason": "visual danger terms such as overload, unreadable text, clipping, overflow, or low contrast cannot be marked pass without a finding",
+                                "actual": row.get("result", ""),
+                            }
+                        )
             if row_issues:
                 issues.append(
                     {
@@ -1145,6 +1169,14 @@ def validate_journey_report(
                         "section": "visual journey checks",
                         "reason": "visual rows must include non-boilerplate route, evidence, navigation, decision, quality, and result details",
                         "rows": row_issues,
+                    }
+                )
+            if danger_failure and not has_visual_danger_finding(bodies.get("findings", "")):
+                issues.append(
+                    {
+                        "path": str(report_path),
+                        "section": "findings",
+                        "reason": "visual danger terms require a visual/usability finding",
                     }
                 )
     return issues
@@ -2125,6 +2157,20 @@ def parse_finding_blocks(findings_body: str) -> list[dict]:
             }
         )
     return blocks
+
+
+def has_visual_danger_finding(findings_body: str) -> bool:
+    normalized = re.sub(r"[\s.]+", " ", findings_body.strip().lower()).strip()
+    if not normalized or normalized in NO_FINDINGS_SENTINELS:
+        return False
+    for block in parse_finding_blocks(findings_body):
+        text = normalized_text(block.get("text", ""))
+        if VISUAL_DANGER_RE.search(text) or any(
+            token in text
+            for token in ("journey usability", "decision path", "rendered journey", "readability", "contrast", "scannable")
+        ):
+            return True
+    return False
 
 
 def validate_findings_schema(findings_body: str) -> list[dict]:

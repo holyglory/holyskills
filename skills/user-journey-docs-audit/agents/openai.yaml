@@ -1,4 +1,4 @@
 interface:
   display_name: "User Journey Docs Audit"
-  short_description: "Audit docs for journey priority and UI readiness"
-  default_prompt: "Use $user-journey-docs-audit to inspect this repo, actively interview me about the app idea and user journeys, then report whether the Markdown/product docs define journey priority, first-viewport usefulness, mobile order, and enough detail to build and audit a rich, easy-to-use UI."
+  short_description: "Audit docs for journey decision readiness"
+  default_prompt: "Use $user-journey-docs-audit to inspect this repo, actively interview me about the app idea, users, journeys, feature set, UI element set, decision needs, implementation expectations, and tests, then report whether the Markdown/product docs define journey decision models, information relevance, UI handoff constraints, and enough detail to build and audit a rich, easy-to-use UI."

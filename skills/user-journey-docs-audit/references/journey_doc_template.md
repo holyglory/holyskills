@@ -32,41 +32,48 @@ Use this template when recommending docs to add or repair.
 - Route/screen sequence:
 - Primary decisions:
 - Required information per step:
+- Warning/flag conditions:
 - Primary actions:
 - Secondary/rare actions:
-- Details to hide behind menus/expanders:
-- Critical warnings that must stay visible:
+- Conditional or rare details and when they matter:
+- Unresolved UI assumptions:
 - Empty/loading/error/permission states:
 - Recovery and undo:
-- Mobile expectations:
+- Device/context constraints:
 - Accessibility expectations:
 - Acceptance criteria:
 - Analytics/support signals:
 
-## Journey Priority Contract
+## Journey Decision Model
 
-| Surface | Primary user goal | Primary information | Frequent actions | Occasional controls | Rare/Admin/Configuration controls | Expected desktop order | Expected mobile order |
+| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unresolved assumptions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Screen or route | User outcome this surface must support | Decision-making content users need first | Common actions | Sometimes-needed controls | Low-frequency settings, filters, admin, or configuration | Primary content/action order on desktop | Primary content/action order on mobile |
+| Screen or route | User outcome this surface must support | Decision the user must be able to make | Facts the UI must provide for that decision | Conditions that change urgency, safety, or next action | Common actions | Occasional, expert, destructive, admin, or configuration actions | Product or journey questions that remain open |
 
-## First Viewport Requirements
+## Information Relevance Inventory
 
-| Viewport | First visible content | Primary decision data | Low-frequency controls | Allowed control share | What can the user decide? |
+| Journey | Surface | Item | Relevance | Why it matters | Condition/frequency | Evidence source |
+| --- | --- | --- | --- | --- | --- | --- |
+| Journey name | Screen or route | Fact, control, status, warning, or detail | critical-always / primary-frequent / secondary-occasional / rare-under-5-percent | Decision or task this item supports | Always, frequent, conditional, rare, destructive, admin, or expert-only | Doc, user answer, metric, support signal, or source hint |
+
+## UI Handoff Constraints
+
+| Surface | Decisions the UI must support | Required evidence for UI audit | States to verify | Mockups/screenshots/assets | Unconfirmed assumptions |
 | --- | --- | --- | --- | --- | --- |
-| Mobile/narrow | Content visible before scroll | Data that must be visible before scroll | Settings/filters/configuration that may appear | Target share, usually below 25-30% if primary data is below | Concrete decision the user can make immediately |
+| Screen or route | Decisions and required facts from the journey model | Screenshot, rendered state, visual tree, DOM/native measurement, accessibility evidence, or blocker | Loading, empty, error, permission, success, warning, destructive, or recovery states | Relevant design artifacts | Open product/journey questions |
 
-### Example: Primary Metrics Dashboard
+### Example: Primary Decision Surface
 
-- Primary user goal: understand the most important live metrics quickly.
-- Primary information: high-priority metric list and latest update time.
-- Frequent actions: inspect a metric or continue the current workflow.
-- Occasional controls: adjust a display filter.
-- Rare/Admin/Configuration controls: advanced settings and configuration.
-- Expected mobile order: high-priority metrics first; settings/filter controls after primary content or behind a secondary control.
+- Primary user goal: decide whether the current item needs action.
+- Primary decision: act now, inspect detail, or continue monitoring.
+- Required facts: current status, latest update time, severity, and any threshold warning.
+- Frequent actions: perform the current workflow action or inspect the item.
+- Secondary/rare actions: adjust display preferences or open advanced configuration when needed.
+- UI handoff constraint: the implementation audit must verify that the rendered surface lets the user make this decision and that conditional detail is reachable without overwhelming the decision path.
 
 ## Screen Requirements
 
-| Screen | Journey | Critical info | Primary actions | Secondary actions | Rare details | Mobile fit requirement |
+| Screen | Journey | Critical info | Primary actions | Secondary actions | Rare details | Device/context constraints |
 | --- | --- | --- | --- | --- | --- | --- |
 
 ## QA And Acceptance

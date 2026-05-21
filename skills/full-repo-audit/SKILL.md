@@ -1,6 +1,6 @@
 ---
 name: full-repo-audit
-description: Run a full repository source-code, interface, and user-journey audit that combines an extra-high-effort lead architectural review with low-effort subagent batches that manually inspect every queued source file plus separate journey and visual UI workers. Use when the user asks to audit a repo for incomplete or partial features, TODO/stub behavior, industry-standard gaps, user-expectation gaps, architectural risk, UI controls or messages that imply unimplemented behavior, unclear user journeys, visual/test-mode gaps, or to produce a prioritized implementation plan from repository-wide findings.
+description: Run a full repository source-code, interface, and user-journey audit that combines an extra-high-effort lead architectural review with low-effort subagent batches that manually inspect every queued source file plus separate journey and visual UI workers. Use when the user asks to audit a repo for incomplete or partial features, TODO/stub behavior, industry-standard gaps, user-expectation gaps, architectural risk, UI controls or messages that imply unimplemented behavior, unclear user journeys, missing implementation or tests for the intended feature set, visual/test-mode gaps, UI assumption status, or to produce a prioritized implementation plan from repository-wide findings.
 ---
 
 # Full Repo Audit
@@ -8,6 +8,8 @@ description: Run a full repository source-code, interface, and user-journey audi
 ## Overview
 
 Run a multi-level audit: the lead agent performs the architectural, product-flow, and interface review; low-effort subagents manually inspect every source file in deterministic batches; separate UI journey workers inspect source-level journeys and visual testability. Use the harness script to create a coverage manifest and worker prompts, then reconcile all results before producing the final implementation plan.
+
+Treat documented product intent, confirmed user journeys, source-backed feature promises, visible UI elements, and expected tests as one complete product contract. Every intended journey, feature, route, control, state, handler, persistence path, permission path, error path, and verification path must be present, implemented, and tested; otherwise report the gap.
 
 ## Required Execution Model
 
@@ -55,20 +57,20 @@ Run a multi-level audit: the lead agent performs the architectural, product-flow
 
 3. **Run the lead architectural pass**
    - Inspect the repo structure, docs, package/build files, routes, schemas, tests, deployment config, entry points, and domain terminology.
-   - Identify intended product surfaces and feature families before reading subagent findings.
-   - Look for cross-cutting risks: missing integration paths, inconsistent state models, auth/permission drift, data migration gaps, error handling, observability, accessibility, security, performance, reliability, and test strategy.
+   - Identify intended product surfaces, feature families, UI elements, user journeys, and test expectations before reading subagent findings.
+   - Look for cross-cutting risks: missing integration paths, incomplete intended features, inconsistent state models, auth/permission drift, data migration gaps, error handling, observability, accessibility, security, performance, reliability, and test strategy.
    - Build an interface inventory from routes, pages, components, templates, command palettes, menus, forms, message catalogs, and visible copy.
    - Trace important controls and messages to handlers, state transitions, API calls, persistence, navigation, permission checks, and error/loading/empty states.
-   - Find the repo's clear user journey description(s). Treat journey discovery as the basis for UI relevance, not as a documentation-only check. If missing, draft the most reasonable frequent journeys from app intent, routes, visible copy, and code, mark them as `draft-needs-user-confirmation`, and ask the user to confirm the most frequent use cases before treating them as final. If the audit must continue without user input, downgrade UI/user-journey coverage to `journey assumptions unconfirmed`, carry the drafts as open questions and implementation-plan assumptions, and do not state that the interface is user-friendly.
+   - Find the repo's clear user journey description(s). Treat journey discovery as the basis for UI relevance, not as a documentation-only check. If missing, draft the most reasonable frequent journeys from app intent, routes, visible copy, and code, mark them as `draft-needs-user-confirmation`, and ask the user to confirm the most frequent use cases before treating them as final. If the audit must continue without user input, downgrade UI/user-journey coverage to `journey assumptions unconfirmed`, carry the drafts as open questions and implementation-plan assumptions, and do not state that the interface is user-friendly or convert source-inferred layout into product truth.
    - Audit all confirmed and drafted journeys, not only the single most obvious happy path. For each journey, identify the target user, goal, entry point, primary route sequence, critical decision points, rare/occasional details, destructive or heavy actions, and success/failure end states.
-   - For each screen or step in each journey, compare what the user currently sees against what they should see: most relevant information first, most probable navigation routes first, rare details hidden behind menus/expanders/details views, low-relevance content below the fold or behind secondary affordances, and critical warnings visible without drill-in.
-   - Check compactness and fit on mobile and desktop: critical-always and primary-frequent information must fit without accidental horizontal scroll, overlap, cropping, or pushing the main decision below low-value content. Scrolling is acceptable for secondary/rare detail, but not as the only way to reach always-needed decision information.
+   - For each screen or step in each journey, compare what the user currently sees against the journey decision model: primary decision, required facts, warning/flag conditions, frequent actions, secondary/rare actions, and unconfirmed assumptions. Do not invent a final layout from source hints alone.
+   - Check compactness and fit on desktop, native, and narrow/mobile surfaces: critical-always and primary-frequent information should remain usable without accidental horizontal scroll, overlap, cropping, unreadable compression, hidden overflow with no scroll path, or low-relevance content dominating the decision path.
 
 4. **Dispatch low-effort workers**
    - Open the generated `audit_index.md`.
    - For each `batch_###.md`, spawn one low-effort subagent and pass the entire prompt file content.
    - When generated, spawn a separate low-effort source journey worker with `journey_audit.md`. This worker checks journey documentation, drafts missing journeys, estimates UI element relevance, and traces navigation/decision information through UI source.
-   - When generated, spawn a separate low-effort visual journey worker with `visual_journey_audit.md`. This worker identifies Playwright/Cypress/Storybook/browser/native-preview tooling, uses test mode when available, and verifies or plans visual desktop/mobile journey checks.
+   - When generated, spawn a separate visual journey worker with `visual_journey_audit.md`. If the repo is UI-heavy or screenshots are available, the lead must review the visual findings directly or rerun the dedicated `ui-implementation-audit`; do not let low-effort visual notes be the only basis for declaring a UI usable.
    - Tell subagents not to edit files and to report coverage for every listed file.
    - Run in waves if the repo is large; keep a ledger of batch id, agent id, status, and returned checked files.
    - If subagents are unavailable, use manual fallback mode: process each `batch_###.md` and generated journey prompt yourself, save the required reports under `<audit-output>/reports/`, and keep the reduced coverage label through the final report.
@@ -89,7 +91,7 @@ Run a multi-level audit: the lead agent performs the architectural, product-flow
    - Deduplicate batch findings.
    - Separate confirmed issues from hypotheses and open questions.
    - Prioritize by user impact, correctness, security/reliability, blast radius, and implementation dependency order.
-   - Produce an implementation plan with concrete verification steps that reproduce or demonstrate each gap.
+   - Produce an implementation plan with concrete verification steps that reproduce or demonstrate each gap across the intended product contract.
 
 ## Subagent Result Requirements
 
@@ -106,7 +108,7 @@ Require each batch subagent to return:
 
 Reject or requeue a batch result if it omits files, claims broad conclusions without file-level inspection, or proposes edits without evidence.
 
-Require the journey source worker to return `Run ID`, `Worker`, `Journey Sources`, `Proposed Journeys`, `UI Source Journey Checks`, `Findings`, and `Open Questions`. Require `UI Source Journey Checks` to cover every confirmed and drafted journey and to compare current UI hierarchy against journey-derived relevance: critical information, primary navigation, secondary information, rare details, hidden/expanded content, and mobile/desktop fit. Require the visual journey worker to return `Run ID`, `Worker`, `Visual Tooling`, `Visual Journey Checks`, `Findings`, and `Open Questions`. Their `Findings` sections must use the same field schema as batch findings (`Files`, `Evidence`, `Interface evidence`, `Expected behavior/standard`, `Gap`, `Suggested direction`) or the exact clean sentinel `No findings.` If no explicit journey documentation exists, the journey source report must include draft journeys marked `draft-needs-user-confirmation`, and the final audit must either ask the user to confirm them or label UI/journey coverage as assumption-based.
+Require the journey source worker to return `Run ID`, `Worker`, `Journey Sources`, `Proposed Journeys`, `UI Source Journey Checks`, `Findings`, and `Open Questions`. Require `UI Source Journey Checks` to cover every confirmed and drafted journey and to compare current UI hierarchy against journey-derived relevance: critical information, primary navigation, secondary information, rare/detail/debug content, UI assumption status, and desktop/native/mobile fit. Require the visual journey worker to return `Run ID`, `Worker`, `Visual Tooling`, `Visual Journey Checks`, `Findings`, and `Open Questions`. Their `Findings` sections must use the same field schema as batch findings (`Files`, `Evidence`, `Interface evidence`, `Expected behavior/standard`, `Gap`, `Suggested direction`) or the exact clean sentinel `No findings.` If no explicit journey documentation exists, the journey source report must include draft journeys marked `draft-needs-user-confirmation`, and the final audit must either ask the user to confirm them or label UI/journey coverage as assumption-based.
 
 ## Final Audit Output
 
@@ -116,19 +118,19 @@ Return a concise but complete plan with exactly these top-level Markdown heading
 Repo root, audit output path, run id, source files queued, coverage units queued, files or units checked by subagents or manual fallback, files rechecked by the lead, journey workers run, scope warnings, exclusions, unchecked files or units, verifier result, subagent capability check result, ledger-recorded lead effort status, and per-batch/journey effort/fallback ledger.
 
 ## Architecture Findings
-Repo-wide design and product-flow gaps from the lead pass, or `No confirmed findings.`
+Repo-wide design, feature-completeness, and product-flow gaps from the lead pass, or `No confirmed findings.`
 
 ## Interface Findings
-Buttons, menu items, links, form fields, messages, command items, empty states, toasts, or labels that point to unimplemented, partial, misleading, wrongly wired, wrongly prioritized, or journey-mismatched behavior, or `No confirmed findings.`
+Buttons, menu items, links, form fields, messages, command items, empty states, toasts, or labels that point to missing, unimplemented, partial, untested, misleading, wrongly wired, wrongly prioritized, or journey-mismatched behavior, or `No confirmed findings.`
 
 ## User Journey Findings
-Missing or unclear journeys, unconfirmed drafted journeys, navigation relevance problems, information hierarchy mismatches, missing decision information, overexposed rare detail, hidden critical information, mobile/desktop compactness or visibility/cropping issues, missing test mode, unavailable visual test tooling, or `No confirmed findings.`
+Missing or unclear journeys, explicit UI assumption status (`confirmed`, `source-inferred`, or `missing`), unconfirmed drafted journeys, navigation relevance problems, information hierarchy mismatches, missing decision information, overexposed rare/detail/debug content, hidden critical information, desktop/native/mobile compactness or visibility/cropping/readability issues, missing test mode, unavailable visual test tooling, or `No confirmed findings.`
 
 ## File-Level Findings
 Confirmed issues from batch results, deduplicated and grouped by feature area, or `No confirmed findings.`
 
 ## Implementation Plan
-Ordered work items with expected behavior, affected files or modules, implementation steps, tests, and risk. Use `No implementation work recommended from this audit.` when clean.
+Ordered work items with expected behavior, affected files or modules, implementation steps, tests, and risk for completing the intended product contract. Use `No implementation work recommended from this audit.` when clean.
 
 ## Verification Plan
 Commands, browser/API checks, fixtures, or user workflows needed to prove each improvement. Include the exact verifier command and any commands already run.
@@ -147,13 +149,13 @@ During both lead and subagent review, inspect UI implementation as a source of p
 Look for:
 
 - Buttons, icon buttons, menu items, tabs, command palette items, links, and keyboard shortcuts with missing handlers, placeholder handlers, TODO handlers, console-only handlers, disabled dead ends, or handlers that do not persist/navigate/refresh.
-- Text fields, filters, selectors, toggles, uploads, settings, and forms whose values are ignored, only locally mocked, not validated, not saved, or not reflected in later UI/API behavior.
+- Text fields, filters, selectors, toggles, uploads, settings, and forms whose values are ignored, only locally mocked, not validated, not saved, or not reflected in UI/API behavior.
 - Toasts, banners, empty states, tooltips, helper text, onboarding copy, success/error messages, and labels that promise capabilities not implemented in code.
 - UI states that are missing or misleading: loading, empty, error, permission denied, offline, undo/redo, destructive confirmation, optimistic update rollback, or background job progress.
 - Navigation surfaces that expose unavailable routes, hidden admin-only paths without permission handling, orphaned pages, or pages not linked from expected menus.
 - Accessibility and interaction gaps that make an implemented feature behave as partially implemented: unlabeled controls, keyboard traps, focus loss, non-semantic buttons/links, or state conveyed only visually.
-- Journey relevance gaps: most-probable routes hidden behind lower-probability routes, critical-always information below low-value content, primary actions displaced by rare actions, rare details permanently consuming prime screen space, or details that should be hidden behind menus/expanders shown inline on dense screens.
-- Compactness and responsive-fit gaps: mobile screens where critical journey information does not fit, accidental horizontal scrolling, cropped decision data, overlapping content, large decorative or low-relevance areas that displace primary workflow content, or controls whose labels/states do not fit their containers.
+- Journey relevance gaps: most-probable routes hidden behind lower-probability routes, critical-always information buried under low-value content, primary actions displaced by rare actions, rare/detail/debug content permanently consuming prime screen space without journey rationale, or source-inferred UI assumptions treated as confirmed product truth.
+- Compactness and responsive-fit gaps: desktop, native, or mobile screens where critical journey information does not fit, accidental horizontal scrolling, cropped/truncated decision data, overlapping content, hidden overflow without a scroll path, unreadable contrast, invisible theme text, large decorative or low-relevance areas that displace primary workflow content, or controls whose labels/states do not fit their containers.
 
 For each interface finding, capture the visible label or message text, the journey(s) affected, the file that defines it, the expected implementation path, the actual implementation path, the current visible priority, the expected priority, and the missing, wrong, hidden, or overexposed behavior.
 
@@ -164,14 +166,14 @@ Audit whether the repo clearly describes the most important user journey(s) thro
 During the source journey pass, check:
 
 - Primary navigation and decision elements are visible, reachable, and visually prominent relative to less relevant elements. Estimate relevance as `critical-always`, `primary-frequent`, `secondary-occasional`, or `rare-under-5-percent`.
-- Users have enough information on each screen, on mobile and desktop, to make weighted decisions. Always-needed information should be visible; rare information should be reachable within one click/tap through menus, expandables, or details views; warning/threshold information must be visible without requiring expansion.
-- Important information is not cropped, hidden behind accidental overflow, or displaced by lower-relevance content. Less important information should not poison dense screens unless free space is available.
+- Users have enough information on each screen, on desktop, native, and mobile surfaces, to make the documented journey decision. Rare or conditional information should remain reachable through an appropriate detail path; warning/threshold information must be available at the decision point.
+- Important information is not cropped, hidden behind accidental overflow, unreadable, or displaced by lower-relevance content. Dense screens should mean compact decision support, not always-visible raw/detail/debug material.
 - Most probable navigation routes for the journey are first, easiest, or most prominent; less probable routes are secondary, grouped, menued, or lower in the layout.
-- Rarely needed detail is hidden behind expanders, menus, tabs, accordions, details panels, or drill-in routes when screen space is tight; critical or warning detail is never hidden that way.
-- Critical journey information and primary actions fit on mobile and desktop without overlap, accidental horizontal scrolling, unreadable compression, or being pushed below decorative or low-relevance content.
+- Rarely needed detail has an appropriate access path when screen space is tight; critical or warning detail is never hidden from the decision point.
+- Critical journey information and primary actions fit on desktop, native, and mobile surfaces without overlap, accidental horizontal scrolling, unreadable compression, low contrast, invisible theme text, or being buried under decorative or low-relevance content.
 - Heavy or side-effecting UI actions can be exercised in a test mode, fixture mode, mock data mode, dry run, preview mode, or other safe visual path.
 
-During the visual journey pass, use available visual tooling such as Playwright, Cypress, Storybook, browser MCP tools, native UI preview tools, or screenshots. Prefer test mode; use production mode only when the user explicitly requested it or the journey has no heavy/side-effecting operations. Check desktop and narrow mobile viewports for journey completion, real navigation rather than abstracted mocks, visible decision information, route priority, information hierarchy, compactness, menu/expander placement for rare detail, theme consistency, readable font sizes, sufficient color contrast, non-cropped content, and unnecessary horizontal scrolling. When visual checks are applicable, include the command/tool used and screenshot, trace, recording, or other artifact evidence in the report. For CLI, library, plugin, or skill packages that expose only metadata/Markdown and no repo-owned rendered UI surface, mark visual checks as `not applicable` with evidence instead of treating host-owned rendering as a repo defect.
+During the visual journey pass, use available visual tooling such as Playwright, Cypress, Storybook, browser MCP tools, native UI preview tools, or screenshots. Prefer test mode; use production mode only when the user explicitly requested it or the journey has no heavy/side-effecting operations. Check desktop, native, and narrow mobile viewports for journey completion, real navigation rather than abstracted mocks, visible decision information, route priority, information hierarchy, rendered journey usefulness, theme consistency, readable font sizes, sufficient color contrast, non-cropped/non-truncated content, scroll paths for overflow, and unnecessary horizontal scrolling. When visual checks are applicable, include the command/tool used and screenshot, trace, recording, or other artifact evidence in the report. For CLI, library, plugin, or skill packages that expose only metadata/Markdown and no repo-owned rendered UI surface, mark visual checks as `not applicable` with evidence instead of treating host-owned rendering as a repo defect.
 
 ## Harness
 

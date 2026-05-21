@@ -729,6 +729,14 @@ def assert_manifest(manifest_path: Path) -> None:
             "screenshot, trace, recording, or other artifact" in visual_prompt_text,
             "visual journey prompt should require command/tool and visual artifact evidence when applicable",
         )
+        check(
+            "UI assumption status" in journey_prompt_text and "source-inferred" in journey_prompt_text,
+            "journey source prompt should require explicit UI assumption status",
+        )
+        check(
+            "overload" in visual_prompt_text or "overloaded" in visual_prompt_text,
+            "visual journey prompt should require broad layout overload checks",
+        )
 
     files = {item["rel_path"]: item for item in manifest["source_files"]}
     expected_files = {
@@ -2414,6 +2422,42 @@ None.
                 str(canonical_complete),
             ]
         )
+        write(
+            visual_report_path,
+            f"""## Run ID
+{output_manifest['run_id']}
+
+## Worker
+visual_journey
+
+## Visual Tooling
+- Ran command `npx playwright test --project=chromium` for {interface_mentions}; screenshots saved at `artifacts/fixture-desktop.png` and `artifacts/fixture-mobile.png`.
+
+## Visual Journey Checks
+| Journey | Viewport | Route/screen | Evidence | Navigation visibility | Decision information | Visual quality | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Fixture audit | desktop | Fixture UI | Playwright command with screenshot `artifacts/fixture-desktop.png` for {interface_mentions} | primary actions visible | decision labels visible | overloaded unreadable text with hidden overflow | pass |
+| Fixture audit | narrow mobile | Fixture UI | Playwright command with screenshot `artifacts/fixture-mobile.png` for {interface_mentions} | primary actions visible | decision labels visible | readable contrast and no horizontal scroll | pass |
+
+## Findings
+No findings.
+
+## Open Questions
+None.
+""",
+        )
+        visual_danger_result = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--reports",
+                str(canonical_complete),
+            ],
+            expect=1,
+        )
+        check_output(visual_danger_result, "visual danger terms require a visual/usability finding")
         write(visual_report_path, original_visual_report)
         invalid_sha_report = reports_dir / "reports" / "invalid-sha" / "batch_001.md"
         first_hash = output_manifest["source_files"][0]["sha256"]

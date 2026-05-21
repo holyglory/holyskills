@@ -183,11 +183,12 @@ def make_currency_rates_fixture(root: Path) -> None:
         """# Currency Rates Journey
 
 Primary user goal: quickly decide current exchange rates for the currencies used most often.
-Primary information: the most-used live rates list.
+Primary decision: decide current exchange rates for the currencies used most often.
+Required facts: the most-used live rates list.
 Frequent action: inspect a rate and continue cost tracking.
 Occasional control: adjust target currency.
 Rare control: advanced target/settings configuration.
-Expected mobile order: most-used live rates first, target currency/settings after the decision content.
+UI audit handoff: verify the rendered surface supports the rate decision and does not let target/settings controls overwhelm the decision path.
 """,
     )
     write_bytes(root / "design" / "mockups" / "currency-rates-mobile.png", PNG_1X1)
@@ -291,16 +292,16 @@ Dashboard UI source and styles for visual comparison.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 {chr(10).join(inventory)}
 
-## Journey Priority Contract
-| Surface | Primary user goal | Primary information | Frequent actions | Occasional controls | Rare/Admin/Configuration controls | Expected desktop order | Expected mobile order |
+## Journey Decision Model
+| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| dashboard | review urgent incidents first | active incident summary and severity | resolve incident | navigation to reports | archive export details | nav, active incident, action, archive detail | active incident and resolve action before archive or settings |
+| dashboard | review urgent incidents first | decide which incident to resolve | active incident summary and severity | urgent severity and stale status | resolve incident | navigation to reports and archive export details | none |
 
-## First Viewport Journey Check
-| Viewport | First visible content | Primary decision data visible? | Low-frequency controls above content? | Low-frequency/header/control share | What can user decide from first viewport? | Result | Evidence |
+## Rendered Journey Usability
+| Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop | navigation and active incident hero | Yes | No | 12% | user can decide which incident to resolve | PASS | source order and CSS grid evidence |
-| mobile | active incident summary and Resolve incident action | Yes | No | 10% | user can decide which incident to resolve | PASS | source order and responsive CSS evidence |
+| desktop | decide which incident to resolve | navigation and active incident hero | archive detail | inline secondary aside | source order and CSS grid evidence | PASS | source order and CSS grid evidence |
+| mobile | decide which incident to resolve | active incident summary and Resolve incident action | archive detail | secondary content after primary action | source order and responsive CSS evidence | PASS | source order and responsive CSS evidence |
 
 ## Mockup And Journey Alignment
 Source exposes the dashboard screen, primary action, navigation, and rare archive detail referenced by the journey docs.
@@ -381,16 +382,16 @@ None.
 ## Worker
 visual_comparison_audit
 
-## Journey Priority Contract
-| Surface | Primary user goal | Primary information | Frequent actions | Occasional controls | Rare/Admin/Configuration controls | Expected desktop order | Expected mobile order |
+## Journey Decision Model
+| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| dashboard | review urgent incidents first | active incident summary and severity | resolve incident | navigation to reports | archive export details | nav, active incident, action, archive detail | active incident and resolve action before archive or settings |
+| dashboard | review urgent incidents first | decide which incident to resolve | active incident summary and severity | urgent severity and stale status | resolve incident | navigation to reports and archive export details | none |
 
-## First Viewport Journey Check
-| Viewport | First visible content | Primary decision data visible? | Low-frequency controls above content? | Low-frequency/header/control share | What can user decide from first viewport? | Result | Evidence |
+## Rendered Journey Usability
+| Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop | navigation and active incident hero | Yes | No | 12% | user can decide which incident to resolve | PASS | playwright screenshot artifact desktop.png and DOM viewport measurement 12% controls |
-| mobile | active incident summary and Resolve incident action | Yes | No | 10% | user can decide which incident to resolve | PASS | playwright screenshot artifact mobile.png and DOM viewport measurement 10% controls |
+| desktop | decide which incident to resolve | navigation and active incident hero | archive detail | inline secondary aside | playwright screenshot artifact desktop.png and DOM viewport measurement | PASS | playwright screenshot artifact desktop.png and DOM viewport measurement 12% controls |
+| mobile | decide which incident to resolve | active incident summary and Resolve incident action | archive detail | secondary content after primary action | playwright screenshot artifact mobile.png and DOM viewport measurement | PASS | playwright screenshot artifact mobile.png and DOM viewport measurement 10% controls |
 
 ## Visual Comparison Checks
 | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
@@ -418,10 +419,10 @@ def write_currency_priority_visual_report(out: Path, *, include_p1: bool) -> Non
         findings = f"""- Priority: P1
 - Files: {source_file}
 - Mockup/requirement evidence: docs/currency-rates-journey.md requires most-used live rates before target/settings controls on mobile.
-- Interface evidence: mobile screenshot currency-rates-mobile.png and DOM viewport measurement show Target Currency settings consume 82% of the first viewport while Most-used rates start below the fold.
-- Expected behavior/standard: mobile first viewport should show primary decision-making rate data before occasional target settings.
-- Gap: the target/settings block dominates the first mobile viewport and pushes most-used rates below the fold.
-- Suggested implementation direction: reorder mobile layout so most-used live rates appear first and collapse target settings behind a secondary control.
+- Interface evidence: mobile screenshot currency-rates-mobile.png and DOM viewport measurement show Target Currency settings dominate the visible surface while Most-used rates are buried below secondary controls.
+- Expected behavior/standard: rendered journey surface should let users decide current rates without secondary target settings overwhelming that decision path.
+- Gap: the target/settings block dominates the visible surface and buries most-used rates.
+- Suggested implementation direction: make most-used live rates the dominant decision-driving content and move target settings into a secondary detail path.
 """
     write(
         out / "reports" / "visual_comparison_audit.md",
@@ -431,22 +432,22 @@ def write_currency_priority_visual_report(out: Path, *, include_p1: bool) -> Non
 ## Worker
 visual_comparison_audit
 
-## Journey Priority Contract
-| Surface | Primary user goal | Primary information | Frequent actions | Occasional controls | Rare/Admin/Configuration controls | Expected desktop order | Expected mobile order |
+## Journey Decision Model
+| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| currency rates | decide current most-used live rates quickly | most-used live rates list | inspect rates | target currency adjustment | target/settings configuration | rates and chart, then controls | most-used live rates before target/settings controls |
+| currency rates | decide current most-used live rates quickly | decide current exchange rates | most-used live rates list | stale rate warning | inspect rates | target currency adjustment and target/settings configuration | none |
 
-## First Viewport Journey Check
-| Viewport | First visible content | Primary decision data visible? | Low-frequency controls above content? | Low-frequency/header/control share | What can user decide from first viewport? | Result | Evidence |
+## Rendered Journey Usability
+| Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop | rates chart and most-used rates beside settings | Yes | No | 18% | user can decide current rates | PASS | playwright screenshot currency-rates-desktop.png and DOM viewport measurement 18% controls |
-| mobile | Target Currency settings form and Apply settings button | No, most-used rates are below the fold | Yes, target/settings controls are above content | 82% | user can only configure target currency, not decide a rate | {first_viewport_result} | playwright screenshot currency-rates-mobile.png and DOM viewport measurement 82% controls before fold |
+| desktop | decide current rates | rates chart and most-used rates | target settings | inline secondary panel | playwright screenshot currency-rates-desktop.png and DOM viewport measurement | PASS | playwright screenshot currency-rates-desktop.png and DOM viewport measurement 18% secondary controls |
+| mobile | only target currency configuration is supported; rate decision is buried | Target Currency settings form and Apply settings button | target/settings controls dominate while most-used rates are buried | secondary controls dominate visible surface | playwright screenshot currency-rates-mobile.png and DOM viewport measurement | {first_viewport_result} | playwright screenshot currency-rates-mobile.png and DOM viewport measurement 82% controls before rates |
 
 ## Visual Comparison Checks
 | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
 | --- | --- | --- | --- | --- | --- | --- |
 | Currency rates decision | desktop | /currency-rates | docs/currency-rates-journey.md | playwright screenshot currency-rates-desktop.png | Desktop still exposes primary rates | MATCHED |
-| Currency rates decision | mobile | /currency-rates | docs/currency-rates-journey.md | playwright screenshot currency-rates-mobile.png and DOM viewport measurement | Target Currency block consumes first viewport before most-used rates | {visual_result} |
+| Currency rates decision | mobile | /currency-rates | docs/currency-rates-journey.md | playwright screenshot currency-rates-mobile.png and DOM viewport measurement | Target Currency block dominates the visible surface and buries most-used rates | {visual_result} |
 
 ## Findings
 {findings}
@@ -506,12 +507,12 @@ def main() -> int:
         write_currency_priority_visual_report(currency_out, include_p1=False)
         currency_priority_result = verify(currency_out, expect=1)
         check(
-            "mobile first viewport priority failure requires a P1 journey-priority finding" in currency_priority_result.stdout,
-            "currency rates mobile first-viewport regression should require a P1 journey-priority finding",
+            "rendered journey usability danger terms require a visual/usability finding" in currency_priority_result.stdout,
+            "currency rates rendered usability regression should require a visual/usability finding",
         )
         write_currency_priority_visual_report(currency_out, include_p1=True)
         currency_priority_fixed = verify(currency_out)
-        check("ok: true" in currency_priority_fixed.stdout, "P1 journey-priority finding should satisfy first-viewport regression")
+        check("ok: true" in currency_priority_fixed.stdout, "visual/usability finding should satisfy rendered usability regression")
 
         out_of_scope_out = tmp / "out-of-scope-out"
         build(ui_fixture, out_of_scope_out, "--batch-size", "1")

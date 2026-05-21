@@ -1,13 +1,15 @@
 ---
 name: full-repo-test-coverage-audit
-description: Run a full repository test coverage audit that combines a high-effort lead architectural test-strategy review with low-effort file-batch workers checking whether every reasonable function, method, UI journey, and high-level behavior has meaningful unit, integration, visual, or e2e coverage. Use when the user asks to audit test coverage, find missing tests, assess scenario and edge-case coverage, or produce an implementation plan for closing test gaps across a repo.
+description: Run a full repository test coverage audit that combines a high-effort lead architectural test-strategy review with low-effort file-batch workers checking whether every reasonable function, method, UI journey, feature, UI element, and high-level behavior has meaningful unit, integration, visual, or e2e coverage. Use when the user asks to audit test coverage, find missing tests, assess scenario and edge-case coverage, or produce an implementation plan for closing test gaps across a repo.
 ---
 
 # Full Repo Test Coverage Audit
 
 ## Overview
 
-Run a read-only, manifest-verified audit of test coverage. The lead agent reviews the repo architecture, test strategy, UI/user journeys, and high-level behavior. Low-effort workers inspect deterministic file batches and manually identify reasonable test targets, existing test evidence, missing scenarios, boundary cases, failure paths, and recommended test types.
+Run a read-only, manifest-verified audit of test coverage. The lead agent reviews the repo architecture, test strategy, UI/user journeys, intended feature set, UI element set, and high-level behavior. Low-effort workers inspect deterministic file batches and manually identify reasonable test targets, existing test evidence, missing scenarios, boundary cases, failure paths, and recommended test types.
+
+Treat documented product intent, confirmed user journeys, source-backed feature promises, visible UI elements, and expected tests as one complete product contract. Every intended journey, feature, route, control, state, handler, persistence path, permission path, error path, and verification path needs meaningful coverage; otherwise report the gap.
 
 ## Required Execution Model
 
@@ -44,7 +46,7 @@ Run a read-only, manifest-verified audit of test coverage. The lead agent review
 
 For every owned file or range:
 
-- Identify reasonable test targets: exported/public functions, methods with behavior, reducers/hooks, API handlers, command/job entrypoints, domain services, state transitions, permission checks, validation logic, and non-trivial private helpers with branching or side effects.
+- Identify reasonable test targets: exported/public functions, methods with behavior, reducers/hooks, API handlers, command/job entrypoints, domain services, intended feature behavior, UI element behavior, state transitions, permission checks, validation logic, and non-trivial private helpers with branching or side effects.
 - Exclude only with rationale: types/interfaces, pure constants, generated code, static copy-only markup, trivial pass-throughs, and framework boilerplate with no repo-owned behavior.
 - For each target, check existing tests by naming files, test names, fixtures, snapshots, visual stories, or explicit absence.
 - Assess scenario depth: happy path, invalid input, empty/null/boundary values, error paths, async/concurrency behavior, permissions, persistence, navigation, rollback, and integration boundaries as applicable.
@@ -80,7 +82,7 @@ Each batch report must contain exactly these top-level headings in order:
 
 ## UI And Journey Coverage
 
-The UI test coverage worker checks whether important routes, controls, forms, empty/error/loading states, permission states, and common user journeys have component, integration, e2e, or visual coverage. If no explicit journey documentation exists, draft likely journeys from routes and visible source, mark them `draft-needs-user-confirmation`, and keep them as assumptions.
+The UI test coverage worker checks whether intended routes, controls, forms, UI elements, empty/error/loading states, permission states, feature paths, and user journeys have component, integration, e2e, or visual coverage. If no explicit journey documentation exists, draft likely journeys from routes and visible source, mark them `draft-needs-user-confirmation`, and keep them as assumptions.
 
 The visual/e2e coverage worker identifies Playwright, Cypress, Storybook, native preview, screenshot, or browser tooling. For CLI, library, plugin, or skill packages with no repo-owned rendered UI surface, mark visual checks as `not applicable` with evidence rather than reporting a defect.
 
@@ -100,6 +102,6 @@ Return exactly these top-level headings:
 Prioritize gaps with:
 
 - `P0`: Missing coverage for security/data-loss/runtime-failure behavior or an untested core path likely to fail silently.
-- `P1`: Missing coverage for major user journeys, business logic, integration boundaries, permission behavior, or failure paths.
+- `P1`: Missing coverage for major user journeys, intended features, required UI elements, business logic, integration boundaries, permission behavior, or failure paths.
 - `P2`: Missing edge, boundary, accessibility, performance, reliability, or maintainability coverage.
 - `P3`: Low-risk cleanup, naming, fixture, or documentation test improvement.

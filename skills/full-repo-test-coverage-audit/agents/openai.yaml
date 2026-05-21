@@ -1,4 +1,4 @@
 interface:
   display_name: "Full Repo Test Coverage Audit"
   short_description: "Audit repo-wide test coverage gaps"
-  default_prompt: "Use $full-repo-test-coverage-audit to run the read-only manifest-verified test coverage audit when the runtime can satisfy the high-effort lead gate; it dispatches low-effort file batches plus UI journey and visual coverage workers when applicable, then returns a prioritized plan to close unit, integration, e2e, edge-case, and failure-path gaps."
+  default_prompt: "Use $full-repo-test-coverage-audit to run the read-only manifest-verified test coverage audit when the runtime can satisfy the high-effort lead gate; it dispatches low-effort file batches plus UI journey and visual coverage workers when applicable, then returns a prioritized plan to close unit, integration, e2e, feature, UI element, edge-case, and failure-path gaps."

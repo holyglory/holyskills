@@ -1,6 +1,9 @@
 # Full Repo Audit Skill
 
-`full-repo-audit` is a Codex skill for auditing an entire repository for incomplete features, partially wired behavior, interface promises that do not match implementation, unclear user journeys, and architecture or quality gaps. It produces a verified coverage record and a prioritized implementation plan.
+`full-repo-audit` is a Codex skill for auditing an entire repository against the
+complete intended product: user journeys, feature set, UI elements,
+implementation paths, tests, architecture, and quality. It produces a verified
+coverage record and a prioritized implementation plan.
 
 ## Target
 
@@ -8,8 +11,10 @@ Use this skill when you want a repository-wide audit that checks:
 
 - Architecture and product-flow risks.
 - Every queued source file, manually reviewed in deterministic batches.
+- Intended journeys, features, routes, controls, states, handlers, persistence
+  paths, permissions, and tests that should exist.
 - UI controls, messages, routes, forms, menu items, and visible copy that imply missing or incorrect behavior.
-- User journeys through the UI, including multi-journey relevance, route priority, decision-making information, information hierarchy, compact mobile/desktop fit, rare-detail hiding, and test-mode availability.
+- User journeys through the UI, including multi-journey relevance, route priority, decision-making information, information hierarchy, compact desktop/native/mobile fit, UI assumption status, rare/detail/debug content risk, readability, and test-mode availability.
 - Visual journey testability when the repo has a rendered UI or visual tooling.
 - TODO, stub, placeholder, console-only, mocked-as-real, dead-ended, or partially implemented behavior.
 
@@ -45,7 +50,12 @@ The harness creates an audit output directory containing:
 - `reports/`: required returned worker reports.
 - `queue_complete.json`: queue-generation marker, not proof that the audit is finished.
 
-The final response from the skill should include coverage, architecture findings, interface findings, user journey findings, file-level findings, an implementation plan, and a verification plan. If no explicit user journeys exist, the audit should ask for confirmation or label UI/journey coverage as assumption-based rather than claiming the interface is user-friendly.
+The final response from the skill should include coverage, architecture findings,
+interface findings, user journey findings, feature and test completeness
+findings, file-level findings, an implementation plan, and a verification plan.
+If no explicit user journeys exist, the audit should ask for confirmation or
+label UI/journey coverage as assumption-based rather than claiming the interface
+is user-friendly.
 
 ## Direct Harness Usage
 

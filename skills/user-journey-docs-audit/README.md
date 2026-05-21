@@ -1,16 +1,24 @@
 # User Journey Docs Audit
 
-`user-journey-docs-audit` checks whether a repo has enough product and development documentation to build an app that is genuinely easy to use, not just feature-complete.
+`user-journey-docs-audit` checks whether a repo has enough product and
+development documentation to build an app that is genuinely easy to use and
+complete: journeys, features, UI elements, implementation expectations, and
+tests are all spelled out.
 
-Use it before UI implementation, redesign, or a full-repo interface audit when the app idea, target users, priority journeys, screen hierarchy, mobile constraints, or acceptance criteria are unclear.
+Use it before UI implementation, redesign, or a full-repo interface audit when
+the app idea, target users, journey set, feature set, UI element set, screen
+decision needs, device constraints, implementation expectations, tests, or
+acceptance criteria are unclear.
 
 ## What It Audits
 
 - App idea, user groups, expertise, context, and mistake cost.
+- Complete feature inventory, required UI element inventory, implementation
+  expectations, and test expectations.
 - Complete journey inventory, including frequent, rare, failure, permission, onboarding, recovery, and power-user paths.
-- Per-journey screen requirements: primary information, probable navigation routes, critical warnings, secondary detail, and rare detail that should live behind menus, expanders, tabs, or drill-in routes.
-- Journey priority contracts for UI implementation: primary goal, decision-making information, frequent actions, occasional controls, rare/admin/configuration controls, and expected desktop/mobile order.
-- First-viewport documentation, especially on mobile: what appears before scroll, whether primary decision data is visible, how much space low-frequency controls may consume, and what the user can decide immediately.
+- Per-journey decision model: primary decision, required facts, warning/flag conditions, frequent actions, secondary/rare actions, and unresolved assumptions.
+- Information relevance inventory for UI implementation: critical-always, primary-frequent, secondary-occasional, rare-under-5-percent, conditional, destructive, and expert-only information/actions.
+- UI handoff constraints for the implementation audit: screens/routes/states to verify, evidence expected from screenshots or rendered surfaces, and assumptions that remain unconfirmed.
 - Mobile and desktop fit for critical information and actions.
 - Accessibility, states, acceptance criteria, QA hooks, analytics/support clues, and implementation readiness.
 
@@ -18,7 +26,7 @@ Use it before UI implementation, redesign, or a full-repo interface audit when t
 
 The skill must actively interview the user when journey information is missing or ambiguous. It should not silently infer journeys and call the docs complete. If the user cannot answer during the run, the report must label those journeys as `journey assumptions unconfirmed`.
 
-For UI handoff, the skill should flag a P1 when docs leave mobile priority ambiguous enough that implementers might put settings, filters, target/configuration panels, or other low-frequency controls above primary decision content.
+For UI handoff, the skill should flag a P1 when docs use terms such as `dense`, `dashboard`, `command center`, `overview`, or `compact` without defining the decisions, information relevance, action frequency, and assumptions behind those terms.
 
 ## Helper Command
 

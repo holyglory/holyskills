@@ -21,34 +21,34 @@ Use this reference when judging whether docs are strong enough to support an eas
 - Which journeys are most frequent, most valuable, and most risky.
 - Which information is required at each step.
 - Which actions are primary, secondary, rare, destructive, or expert-only.
-- Which details should be visible, hidden, expandable, searchable, or moved to drill-in views.
+- Which details are required, conditional, rare, destructive, or expert-only and why the user needs them.
 - Which states must exist: loading, empty, error, success, partial success, denied, offline, retry, undo, and recovery.
 - Which constraints apply: mobile, accessibility, latency, permissions, security, data loss, stress, expertise, and localization.
 
 ## Signs Of Excellent Journey Docs
 
-- A new designer can sketch the main screens without asking what matters most.
+- A new designer can choose an interface structure without asking what matters most.
 - A new engineer can implement states and routes without inventing user intent.
 - QA can write scenario tests, edge tests, and mobile checks from the docs alone.
 - Support can understand what users were trying to do when they failed.
-- Product can defend why something is visible, hidden, first, grouped, or deprioritized.
+- Product can defend why something is critical, frequent, conditional, rare, destructive, or expert-only.
 
 ## Common Gaps
 
 - Docs list features but not user goals.
 - Docs describe screens but not decisions users make on those screens.
 - The happy path is documented but empty/error/permission/destructive paths are absent.
-- Mobile is mentioned but no compactness or information-priority expectations are defined.
+- Device constraints are mentioned but the required decisions and information needs are not defined.
 - Rare details are treated as equal to critical information.
 - Navigation names are internal system terms rather than user language.
-- Docs say "dashboard", "settings", or "admin" without defining what users need there.
+- Docs say "dense", "dashboard", "command center", "overview", "compact", "settings", or "admin" without defining what decisions users make there.
 - Accessibility is reduced to color contrast and ignores keyboard, focus, labels, and understandable language.
 
 ## Documentation Failures That Create Wrong UI
 
-- Feature lists without journey priority let implementers treat settings, filters, and primary content as equal.
-- Desktop-first ordering can be copied directly to mobile, pushing primary decision content below low-frequency controls.
-- Mockups or screenshots are not enough unless the docs explain why the first viewport supports the user's main decision.
-- Mobile requirements that only say "compact" or "no horizontal overflow" miss the more important question: what can the user decide before scrolling?
-- Overexposed configuration is a documentation defect when docs do not say which controls are frequent, occasional, rare, or admin-only.
-- A UI implementation audit needs a handoff contract: primary goal, primary information, action frequency, rare controls, expected mobile order, first visible content, and evidence expectations.
+- Feature lists without a journey decision model let implementers treat settings, filters, and primary content as equal.
+- Layout language copied from source, screenshots, or mockups can become false product truth when docs do not define the underlying user decisions.
+- Mockups or screenshots are not enough unless the docs explain which decisions, facts, warnings, actions, and states they are meant to support.
+- Requirements that only say "compact", "dense", or "no horizontal overflow" miss the more important question: what decision must the user make in that context?
+- Overexposed configuration is a documentation risk when docs do not say which controls are frequent, occasional, rare, admin-only, or conditional.
+- A UI implementation audit needs handoff constraints: primary goal, primary decision, required facts, action frequency, rare/conditional details, states to verify, and evidence expectations.

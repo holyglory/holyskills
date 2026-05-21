@@ -1705,7 +1705,7 @@ def render_journey_source_prompt(repo: Path, run_id: str, entries: list[FileEntr
 Repo root: `{repo}`
 Run ID: `{run_id}`
 
-You are a separate low-effort worker focused on user journeys through the UI. Do not edit files. Use the interface-relevant source files below, plus repo docs/routes/config when needed, to determine whether the app describes clear user journey(s) and whether the UI source supports those journeys.
+You are a separate low-effort worker focused on user journeys through the UI. Do not edit files. Use the interface-relevant source files below, plus repo docs/routes/config when needed, to determine whether the app describes complete user journey(s), required feature/UI elements, and test expectations, and whether the UI source supports them.
 
 ## Interface-Relevant Files
 
@@ -1713,14 +1713,15 @@ You are a separate low-effort worker focused on user journeys through the UI. Do
 
 ## Tasks
 
-1. Find any explicit user journey, onboarding, workflow, route map, product-flow description, analytics note, support/common-task doc, or source-backed route flow in the repo.
+1. Find any explicit user journey, feature inventory, UI element inventory, onboarding, workflow, route map, product-flow description, analytics note, support/common-task doc, test expectation, or source-backed route flow in the repo.
 2. If journey documentation is missing or incomplete, draft all reasonable frequent journey(s) from app intent, routes, visible copy, and code. Mark each as `draft-needs-user-confirmation`; do not treat drafted journeys as confirmed product truth.
-3. Walk the UI source along every confirmed or drafted journey. For each visible navigation element, action, decision element, field, summary, detail, warning, and empty/error/loading state you mention, estimate relevance for that journey: `critical-always`, `primary-frequent`, `secondary-occasional`, or `rare-under-5-percent`.
-4. Compare what the user currently sees against what they should see for that journey: most relevant information first, most probable navigation routes first, primary actions prominent, secondary actions grouped or lower priority, and rare details hidden behind menus/expanders/details views when space is tight.
-5. Check whether each journey step gives users enough information on mobile and desktop to make weighted decisions. Always-needed information should be visible; rare information should stay available within one click/tap; threshold warnings/notices must be visible without expansion.
-6. Check compactness and responsive fit: critical journey information and primary actions should fit without accidental horizontal scroll, overlap, cropping, unreadable compression, or displacement by decorative/low-relevance content.
+3. Walk the UI source along every confirmed or drafted journey. For each required feature, visible navigation element, action, decision element, field, summary, detail, warning, and empty/error/loading state you mention, estimate relevance for that journey: `critical-always`, `primary-frequent`, `secondary-occasional`, or `rare-under-5-percent`.
+4. Record UI assumption status for each journey/surface as `confirmed`, `source-inferred`, or `missing`. Do not convert source-inferred layout into product truth.
+5. Compare what the user currently sees against the journey decision model: primary decision, required facts, warning/flag conditions, frequent actions, secondary/rare actions, and unconfirmed assumptions.
+6. Check whether each journey step gives users enough information on desktop, native, and mobile surfaces to make the documented decision. Rare or conditional information should remain reachable through an appropriate detail path; threshold warnings/notices must be available at the decision point.
+7. Check compactness and responsive fit: critical journey information and primary actions should fit without accidental horizontal scroll, overlap, cropping, truncation, hidden overflow without a scroll path, unreadable compression, low contrast, invisible theme text, or displacement by decorative/low-relevance content.
 7. Check whether the interface exposes a test mode or lightweight fixture path for visually exercising the journey without heavy load or production side effects.
-8. Report concrete gaps with file evidence and visible copy when possible. Treat unconfirmed journeys as open questions or assumption-based coverage, not as clean UI proof.
+8. Report concrete gaps with file evidence and visible copy when possible, including missing UI elements, unwired implementation paths, or missing test evidence. Treat unconfirmed journeys as open questions or assumption-based coverage, not as clean UI proof.
 
 ## Required Output
 
@@ -1736,7 +1737,7 @@ journey_source
 List source files/docs/routes that define or imply the journeys.
 
 ## Proposed Journeys
-List every confirmed journey and every `draft-needs-user-confirmation` journey. Include target user, goal, entry point, route/screen sequence, primary decision points, rare detail needs, and success/failure end states.
+List every confirmed journey and every `draft-needs-user-confirmation` journey. Include target user, goal, entry point, route/screen sequence, primary decision points, required feature/UI elements, rare detail needs, UI assumption status (`confirmed`, `source-inferred`, or `missing`), test expectations, and success/failure end states.
 
 ## UI Source Journey Checks
 Use a Markdown table with exactly these columns:
@@ -1750,7 +1751,7 @@ Use P0/P1/P2/P3 finding blocks with the exact fields below, or `No findings.`:
 - Evidence: concrete source, route, visible-copy, journey, or test-mode detail
 - Interface evidence: visible label/control/message text when applicable, or `Not applicable`
 - Expected behavior/standard: expected user journey behavior or standard
-- Gap: what is unclear, incomplete, inaccessible, missing, or wrongly prioritized
+- Gap: what is unclear, incomplete, inaccessible, missing, unimplemented, untested, or wrongly prioritized
 - Suggested direction: concise fix direction
 
 ## Open Questions
@@ -1764,7 +1765,7 @@ def render_visual_journey_prompt(repo: Path, run_id: str, entries: list[FileEntr
 Repo root: `{repo}`
 Run ID: `{run_id}`
 
-You are a separate low-effort worker focused on visual journey verification. Do not edit files. If the repo has a test mode, fixture mode, Playwright/browser automation, MCP browser tooling, or another safe visual test path, use or recommend that test mode before any production/heavy-load path. If no visual tool or no test mode is available, report the blocker as a finding or open question with evidence.
+You are a separate low-effort worker focused on visual journey verification. Do not edit files. Check the visual surface against complete journey, feature, UI element, and test expectations. If the repo has a test mode, fixture mode, Playwright/browser automation, MCP browser tooling, or another safe visual test path, use or recommend that test mode before any production/heavy-load path. If no visual tool or no test mode is available, report the blocker as a finding or open question with evidence.
 
 For CLI, library, plugin, or skill packages that expose only metadata/Markdown and no repo-owned rendered UI surface, mark visual desktop/mobile checks as `not applicable` with evidence instead of treating host-owned rendering as a repo defect. Still report a finding if the package promises a visual surface, ships screenshots/previews, or contains UI source without a safe visual test path.
 
@@ -1776,12 +1777,12 @@ For CLI, library, plugin, or skill packages that expose only metadata/Markdown a
 
 1. Identify available visual test tooling: Playwright, Cypress, Storybook, browser MCP tools, native UI preview/test harnesses, screenshots, or documented local dev/test mode.
 2. Prefer test mode or fixture data. Use production mode only when the user explicitly instructed it or no side-effecting/heavy path is involved.
-3. For each confirmed or drafted high-frequency journey, verify or plan a visual walk through desktop and narrow mobile viewports.
-4. Check that navigation and primary decision elements are visible, relevant, accessible, and prioritized ahead of less probable routes.
-5. Check that enough decision-making information is visible, critical information is not cropped or hidden, rare information is reachable within one click/tap through menus/expanders/details views, and threshold warnings are visible without drilling in.
-6. Check compactness: critical journey information and primary actions should fit on mobile and desktop without overlap, accidental horizontal scroll, unreadable compression, or being pushed below decorative/low-relevance content.
-7. Check theme consistency, readable font sizes, contrast, text/background colors, cropped content, menu/expander usability, and whether heavy-load actions can be avoided in test mode.
-8. When visual checks are applicable, cite the command/tool you used and at least one screenshot, trace, recording, or other artifact path/evidence in `Visual Tooling` or the `Evidence` column. If no repo-owned rendered UI exists, explicitly mark checks `not applicable` with evidence.
+3. For each confirmed or drafted high-frequency journey, verify or plan a visual walk through desktop and narrow mobile viewports, including required UI elements, critical states, and expected test evidence.
+4. Check that navigation and primary decision elements are visible, relevant, accessible, and prioritized ahead of less probable routes, while recording whether the UI assumption is confirmed or only source-inferred.
+5. Check that enough decision-making information is visible, critical information is not cropped/hidden/unreadable, rare information is reachable through an appropriate detail path, and threshold warnings are available at the decision point.
+6. Check compactness: critical journey information and primary actions should fit on desktop, native, and mobile surfaces without overlap, accidental horizontal scroll, hidden overflow without scrolling, unreadable compression, low contrast, invisible theme text, or being buried under decorative/detail/debug/low-relevance content.
+7. Check broad layout quality: overload, crowding, ambiguous hierarchy, clipped/truncated text, oversized controls, unscannable information, theme consistency, readable font sizes, contrast, text/background colors, scrollability for overflow, menu/detail usability, and whether heavy-load actions can be avoided in test mode.
+8. When visual checks are applicable, cite the command/tool you used and at least one screenshot, trace, recording, or other artifact path/evidence in `Visual Tooling` or the `Evidence` column. If required screens, elements, states, or visual tests are missing, report them as gaps. If no repo-owned rendered UI exists, explicitly mark checks `not applicable` with evidence.
 
 ## Required Output
 
@@ -1808,7 +1809,7 @@ Use P0/P1/P2/P3 finding blocks with the exact fields below, or `No findings.`:
 - Evidence: concrete visual-tooling, source, route, screenshot/trace/artifact, or not-applicable detail
 - Interface evidence: visible label/control/message text when applicable, or `Not applicable`
 - Expected behavior/standard: expected visual journey behavior or standard
-- Gap: what is unclear, incomplete, inaccessible, missing, cropped, unreadable, or visually unverified
+- Gap: what is unclear, incomplete, inaccessible, missing, unimplemented, untested, overloaded, crowded, clipped, truncated, low-contrast, hidden by overflow, unreadable, or visually unverified
 - Suggested direction: concise fix direction
 
 ## Open Questions
@@ -1858,6 +1859,7 @@ For each file, check:
 - Is anything stubbed, TODO-only, unreachable, mocked as real behavior, dead-ended, or only partially wired?
 - Could the implementation violate common industry expectations for correctness, reliability, security, accessibility, performance, maintainability, or testability?
 - Could a user reasonably expect behavior that this code does not fully provide?
+- Does this code fully provide the intended feature, UI element, journey step, state, handler, persistence path, permission path, and test evidence it implies?
 - Are errors, loading states, permissions, data validation, migrations, observability, or edge cases missing?
 - Are tests absent or too shallow for the behavior this file owns?
 
@@ -1895,8 +1897,8 @@ Use one subsection per issue:
 - Files: `path`
 - Evidence: concrete code detail, symbol, route, state, TODO, or behavior
 - Interface evidence: visible label/control/message text when applicable
-- Expected behavior/standard: expected behavior or standard this code should meet
-- Gap: what is incomplete, partial, non-standard, or likely surprising
+- Expected behavior/standard: expected behavior, feature, UI element, journey, or test standard this code should meet
+- Gap: what is incomplete, partial, missing, unimplemented, untested, non-standard, or likely surprising
 - Suggested direction: concise fix direction
 
 ## No Finding Notes
@@ -2495,7 +2497,7 @@ All source files queued exactly once: **{str(invariant).lower()}**
 9. If the verifier reports missing reports or ledger/report drift after an interrupted run, treat the verifier and manifest as authoritative: rerun the missing batch/journey prompts, save the exact report filenames, update `effort_ledger.json`, and rerun the verifier before final synthesis.
 10. Requeue missing or unchecked files before final synthesis.
 11. Validate high-impact findings directly before placing them in the implementation plan.
-12. Include interface and journey findings for controls, fields, menu items, routes, visible decision information, and messages that imply missing or wrong behavior.
+12. Include interface and journey findings for controls, fields, menu items, routes, visible decision information, messages, intended features, implementation paths, and tests that imply missing or wrong behavior.
 
 ## Batches
 

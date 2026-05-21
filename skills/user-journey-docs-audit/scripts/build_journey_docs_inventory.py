@@ -78,51 +78,102 @@ UX_TERMS = {
     "accessibility",
     "responsive",
     "mobile",
-    "progressive disclosure",
     "empty",
     "loading",
     "error",
     "undo",
 }
-PRIORITY_CONTRACT_TERMS = {
+DECISION_MODEL_TERMS = {
+    "action frequency",
     "decision data",
     "decision-making information",
-    "expected desktop order",
-    "expected mobile order",
+    "journey decision model",
+    "primary decision",
+    "primary user goal",
+    "required facts",
+    "required information",
+    "unconfirmed assumptions",
+    "unresolved assumptions",
+    "warning conditions",
+    "warning/flag conditions",
+}
+INFORMATION_RELEVANCE_TERMS = {
+    "action frequency",
+    "conditional",
+    "critical-always",
     "frequent action",
     "frequent actions",
-    "journey priority",
-    "journey priority contract",
-    "low-frequency controls",
-    "mobile order",
+    "information relevance",
     "occasional controls",
-    "primary decision",
-    "primary information",
-    "primary user goal",
+    "primary-frequent",
+    "rare detail",
     "rare controls",
+    "rare-under-5-percent",
     "rare/admin/configuration controls",
+    "secondary-occasional",
 }
-FIRST_VIEWPORT_TERMS = {
-    "above the fold",
-    "before scroll",
-    "below the fold",
-    "first mobile viewport",
-    "first screen",
-    "first visible content",
-    "first viewport",
-    "primary decision data visible",
-    "what can the user decide",
-    "without scrolling",
-}
-UI_AUDIT_HANDOFF_TERMS = {
+UI_HANDOFF_CONSTRAINT_TERMS = {
     "dom measurement",
+    "evidence expectations",
     "mockup",
+    "rendered state",
     "screenshot",
+    "states to verify",
+    "ui audit constraint",
+    "ui audit constraints",
     "test mode",
     "ui audit handoff",
+    "ui handoff constraints",
     "ui implementation audit",
     "viewport measurement",
     "visual audit",
+}
+FEATURE_TERMS = {
+    "capability",
+    "capabilities",
+    "feature",
+    "features",
+    "feature inventory",
+    "requirement",
+    "requirements",
+}
+UI_ELEMENT_TERMS = {
+    "banner",
+    "button",
+    "control",
+    "controls",
+    "field",
+    "form",
+    "menu",
+    "screen",
+    "state",
+    "toast",
+    "ui element",
+    "ui elements",
+}
+IMPLEMENTATION_EXPECTATION_TERMS = {
+    "api",
+    "data path",
+    "handler",
+    "implementation expectation",
+    "implementation expectations",
+    "permission",
+    "persistence",
+    "state change",
+    "validation",
+}
+TEST_EXPECTATION_TERMS = {
+    "acceptance criteria",
+    "component test",
+    "e2e",
+    "fixture",
+    "qa",
+    "test",
+    "test expectation",
+    "test expectations",
+    "test mode",
+    "unit test",
+    "visual test",
 }
 LOW_FREQUENCY_CONTROL_TERMS = {
     "admin",
@@ -148,6 +199,14 @@ MOBILE_SCREEN_TERMS = {
     "screen",
     "viewport",
 }
+UI_INTENT_TERMS = {
+    "command center",
+    "compact",
+    "dashboard",
+    "dense",
+    "expert ui",
+    "overview",
+}
 ROUTE_HINT_RE = re.compile(r"(?:route|path|href|to)\s*[:=]\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 
@@ -160,14 +219,14 @@ class DocRecord:
     app_idea_hits: int
     journey_hits: int
     ux_hits: int
-    priority_contract_hits: int
-    first_viewport_hits: int
-    ui_audit_handoff_hits: int
+    decision_model_hits: int
+    information_relevance_hits: int
+    ui_handoff_constraint_hits: int
     likely_journey_doc: bool
     likely_product_doc: bool
-    likely_priority_contract_doc: bool
-    likely_first_viewport_doc: bool
-    likely_ui_audit_handoff_doc: bool
+    likely_decision_model_doc: bool
+    likely_information_relevance_doc: bool
+    likely_ui_handoff_constraint_doc: bool
 
 
 @dataclass
@@ -267,36 +326,39 @@ def is_likely_product_doc(rel_path: str, text: str, app_hits: int) -> bool:
     return (has_product_language and structural_score >= 2) or app_hits >= 4
 
 
-def is_likely_priority_contract_doc(rel_path: str, text: str) -> bool:
+def is_likely_decision_model_doc(rel_path: str, text: str) -> bool:
     if is_operational_doc(rel_path, text):
         return False
     lowered = text.lower()
+    explicit_model = has_any_term(lowered, {"journey decision model", "primary decision"})
     has_goal = has_any_term(lowered, {"primary user goal", "primary goal", "goal"})
-    has_information = has_any_term(lowered, {"primary information", "decision data", "decision-making information", "primary decision"})
-    has_action_frequency = has_any_term(lowered, {"frequent action", "frequent actions", "occasional controls", "rare controls", "rare/admin/configuration controls"})
-    has_order = has_any_term(lowered, {"expected mobile order", "mobile order", "expected desktop order", "desktop order"})
-    explicit_contract = has_any_term(lowered, {"journey priority contract", "journey priority"})
-    return explicit_contract or (has_goal and has_information and has_action_frequency and has_order)
+    has_decision = has_any_term(lowered, {"primary decision", "decision data", "decision-making information"})
+    has_required_facts = has_any_term(lowered, {"required facts", "required information", "warning conditions", "warning/flag conditions"})
+    has_action_frequency = has_any_term(
+        lowered,
+        {"action frequency", "frequent action", "frequent actions", "occasional controls", "rare controls", "rare/admin/configuration controls"},
+    )
+    return explicit_model or (has_goal and has_decision and has_required_facts and has_action_frequency)
 
 
-def is_likely_first_viewport_doc(rel_path: str, text: str) -> bool:
+def is_likely_information_relevance_doc(rel_path: str, text: str) -> bool:
     if is_operational_doc(rel_path, text):
         return False
     lowered = text.lower()
-    explicit_viewport = has_any_term(lowered, FIRST_VIEWPORT_TERMS)
-    has_decision = has_any_term(lowered, {"primary decision data visible", "what can the user decide", "primary information", "decision data"})
-    has_controls = has_any_term(lowered, {"low-frequency controls", "settings", "filters", "configuration", "rare controls"})
-    return explicit_viewport and has_decision and has_controls
+    explicit_relevance = has_any_term(lowered, {"information relevance", "critical-always", "primary-frequent", "secondary-occasional", "rare-under-5-percent"})
+    has_decision = has_any_term(lowered, {"primary decision", "decision data", "required facts", "required information"})
+    has_frequency = has_any_term(lowered, {"action frequency", "frequent", "occasional", "rare", "conditional"})
+    return explicit_relevance or (has_decision and has_frequency)
 
 
-def is_likely_ui_audit_handoff_doc(rel_path: str, text: str) -> bool:
+def is_likely_ui_handoff_constraint_doc(rel_path: str, text: str) -> bool:
     if is_operational_doc(rel_path, text):
         return False
     lowered = text.lower()
-    return has_any_term(lowered, {"ui implementation audit", "ui audit handoff"}) or (
-        has_any_term(lowered, {"mockup", "screenshot", "viewport measurement"})
-        and is_likely_priority_contract_doc(rel_path, text)
-        and is_likely_first_viewport_doc(rel_path, text)
+    return has_any_term(lowered, {"ui handoff constraints", "ui implementation audit", "ui audit handoff"}) or (
+        has_any_term(lowered, {"mockup", "screenshot", "viewport measurement", "rendered state", "states to verify"})
+        and is_likely_decision_model_doc(rel_path, text)
+        and is_likely_information_relevance_doc(rel_path, text)
     )
 
 
@@ -304,7 +366,7 @@ def classify_doc(rel_path: str, text: str) -> str:
     lowered = rel_path.lower()
     if "readme" in lowered:
         return "readme"
-    if any(term in lowered for term in ("journey", "workflow", "flow", "persona", "product", "spec")):
+    if any(term in lowered for term in ("journey", "workflow", "flow", "persona", "product", "spec", "feature", "requirement")):
         return "product-doc"
     if any(term in lowered for term in ("architecture", "design", "adr")):
         return "architecture-doc"
@@ -322,14 +384,14 @@ def doc_record(repo: Path, path: Path) -> DocRecord:
     app_hits = count_terms(text, APP_IDEA_TERMS)
     journey_hits = count_terms(text, JOURNEY_TERMS)
     ux_hits = count_terms(text, UX_TERMS)
-    priority_hits = count_terms(text, PRIORITY_CONTRACT_TERMS)
-    first_viewport_hits = count_terms(text, FIRST_VIEWPORT_TERMS)
-    handoff_hits = count_terms(text, UI_AUDIT_HANDOFF_TERMS)
+    decision_model_hits = count_terms(text, DECISION_MODEL_TERMS)
+    relevance_hits = count_terms(text, INFORMATION_RELEVANCE_TERMS)
+    handoff_hits = count_terms(text, UI_HANDOFF_CONSTRAINT_TERMS)
     likely_journey = is_likely_journey_doc(rel, text, journey_hits)
     likely_product = is_likely_product_doc(rel, text, app_hits)
-    likely_priority = is_likely_priority_contract_doc(rel, text)
-    likely_first_viewport = is_likely_first_viewport_doc(rel, text)
-    likely_handoff = is_likely_ui_audit_handoff_doc(rel, text)
+    likely_decision_model = is_likely_decision_model_doc(rel, text)
+    likely_relevance = is_likely_information_relevance_doc(rel, text)
+    likely_handoff = is_likely_ui_handoff_constraint_doc(rel, text)
     return DocRecord(
         path=rel,
         kind=classify_doc(rel, text),
@@ -337,14 +399,14 @@ def doc_record(repo: Path, path: Path) -> DocRecord:
         app_idea_hits=app_hits,
         journey_hits=journey_hits,
         ux_hits=ux_hits,
-        priority_contract_hits=priority_hits,
-        first_viewport_hits=first_viewport_hits,
-        ui_audit_handoff_hits=handoff_hits,
+        decision_model_hits=decision_model_hits,
+        information_relevance_hits=relevance_hits,
+        ui_handoff_constraint_hits=handoff_hits,
         likely_journey_doc=likely_journey,
         likely_product_doc=likely_product,
-        likely_priority_contract_doc=likely_priority,
-        likely_first_viewport_doc=likely_first_viewport,
-        likely_ui_audit_handoff_doc=likely_handoff,
+        likely_decision_model_doc=likely_decision_model,
+        likely_information_relevance_doc=likely_relevance,
+        likely_ui_handoff_constraint_doc=likely_handoff,
     )
 
 
@@ -375,41 +437,72 @@ def build_inventory(repo: Path) -> dict:
         missing_signals.append("No strong user journey/workflow/persona documentation detected.")
     if sum(doc.ux_hits for doc in docs) < 3:
         missing_signals.append("Very little UI/UX hierarchy, navigation, responsive, or accessibility documentation detected.")
-    priority_contract_doc_count = sum(1 for doc in docs if doc.likely_priority_contract_doc)
-    first_viewport_doc_count = sum(1 for doc in docs if doc.likely_first_viewport_doc)
-    ui_audit_handoff_doc_count = sum(1 for doc in docs if doc.likely_ui_audit_handoff_doc)
-    doc_texts = [read_text(repo / doc.path).lower() for doc in docs]
+    decision_model_doc_count = sum(1 for doc in docs if doc.likely_decision_model_doc)
+    information_relevance_doc_count = sum(1 for doc in docs if doc.likely_information_relevance_doc)
+    ui_handoff_constraint_doc_count = sum(1 for doc in docs if doc.likely_ui_handoff_constraint_doc)
+    doc_texts = []
+    for doc in docs:
+        text = read_text(repo / doc.path).lower()
+        if not is_operational_doc(doc.path, text):
+            doc_texts.append(text)
     has_mobile_screen_docs = any(has_any_term(text, MOBILE_SCREEN_TERMS) for text in doc_texts)
     has_low_frequency_controls = any(has_any_term(text, LOW_FREQUENCY_CONTROL_TERMS) for text in doc_texts)
     has_primary_content = any(has_any_term(text, PRIMARY_CONTENT_TERMS) for text in doc_texts)
-    if docs and priority_contract_doc_count == 0:
-        missing_signals.append("No journey priority contract documentation detected.")
+    has_ui_intent_terms = any(has_any_term(text, UI_INTENT_TERMS) for text in doc_texts)
+    has_feature_inventory = any(has_any_term(text, FEATURE_TERMS) for text in doc_texts)
+    has_ui_element_inventory = any(has_any_term(text, UI_ELEMENT_TERMS) for text in doc_texts)
+    has_implementation_expectations = any(has_any_term(text, IMPLEMENTATION_EXPECTATION_TERMS) for text in doc_texts)
+    has_test_expectations = any(has_any_term(text, TEST_EXPECTATION_TERMS) for text in doc_texts)
+    if docs and not has_feature_inventory:
+        missing_signals.append("No complete feature inventory documentation detected.")
+    if docs and not has_ui_element_inventory:
+        missing_signals.append("No required UI element inventory documentation detected.")
+    if docs and not has_implementation_expectations:
+        missing_signals.append("No implementation expectation documentation detected.")
+    if docs and not has_test_expectations:
+        missing_signals.append("No test expectation documentation detected.")
+    if docs and not (
+        has_feature_inventory and has_ui_element_inventory and has_implementation_expectations and has_test_expectations
+    ):
         ui_implementation_risk_signals.append(
-            "Docs do not define primary goal, primary decision information, action frequency, rare controls, and desktop/mobile order for UI implementation."
+            "Docs do not fully define required features, UI elements, implementation expectations, and test expectations."
         )
-    if has_mobile_screen_docs and first_viewport_doc_count == 0:
-        missing_signals.append("No first-viewport usefulness documentation detected for mobile or responsive screens.")
+    if docs and decision_model_doc_count == 0:
+        missing_signals.append("No journey decision model documentation detected.")
         ui_implementation_risk_signals.append(
-            "Docs mention mobile/screens but do not define first visible content, primary decision data, or what the user can decide before scrolling."
+            "Docs do not define primary goal, primary decision, required facts, warning/flag conditions, action frequency, rare details, and unresolved assumptions for UI implementation."
         )
-    if has_mobile_screen_docs and has_low_frequency_controls and has_primary_content and first_viewport_doc_count == 0:
+    if docs and information_relevance_doc_count == 0:
+        missing_signals.append("No information relevance inventory documentation detected.")
         ui_implementation_risk_signals.append(
-            "Docs mention mobile screens plus settings/filters/configuration and primary content, but do not state that primary decision content appears before low-frequency controls."
+            "Docs do not classify decision information, warnings, actions, and details as critical, frequent, secondary, rare, conditional, or expert-only."
         )
-    if hints and priority_contract_doc_count == 0:
+    if has_mobile_screen_docs and has_low_frequency_controls and has_primary_content and information_relevance_doc_count == 0:
         ui_implementation_risk_signals.append(
-            "Source hints expose UI surfaces, but docs do not provide the journey priority contract; source hints must not substitute for product truth."
+            "Docs mention constrained screens plus settings/filters/configuration and primary content, but do not define the decision/relevance model; the UI audit must judge rendered placement rather than inheriting a layout guess."
         )
-    ui_audit_handoff_ready = bool(priority_contract_doc_count and first_viewport_doc_count and ui_audit_handoff_doc_count)
+    if has_ui_intent_terms and (decision_model_doc_count == 0 or information_relevance_doc_count == 0):
+        ui_implementation_risk_signals.append(
+            "Docs use UI intent terms such as dense, dashboard, command center, overview, compact, or expert UI without defining the decisions, relevance, action frequency, and assumptions behind that intent."
+        )
+    if hints and decision_model_doc_count == 0:
+        ui_implementation_risk_signals.append(
+            "Source hints expose UI surfaces, but docs do not provide a journey decision model; source hints must not substitute for product truth."
+        )
+    ui_audit_handoff_ready = bool(decision_model_doc_count and information_relevance_doc_count and ui_handoff_constraint_doc_count)
     return {
         "repo_root": str(repo),
         "doc_count": len(docs),
         "journey_doc_count": sum(1 for doc in docs if doc.likely_journey_doc),
         "product_doc_count": sum(1 for doc in docs if doc.likely_product_doc),
-        "priority_contract_doc_count": priority_contract_doc_count,
-        "first_viewport_doc_count": first_viewport_doc_count,
-        "ui_audit_handoff_doc_count": ui_audit_handoff_doc_count,
+        "decision_model_doc_count": decision_model_doc_count,
+        "information_relevance_doc_count": information_relevance_doc_count,
+        "ui_handoff_constraint_doc_count": ui_handoff_constraint_doc_count,
         "ui_audit_handoff_ready": ui_audit_handoff_ready,
+        "has_feature_inventory": has_feature_inventory,
+        "has_ui_element_inventory": has_ui_element_inventory,
+        "has_implementation_expectations": has_implementation_expectations,
+        "has_test_expectations": has_test_expectations,
         "source_hint_count": len(hints),
         "docs": [asdict(doc) for doc in sorted(docs, key=lambda item: item.path)],
         "source_hints": [asdict(hint) for hint in sorted(hints, key=lambda item: item.path)[:100]],
@@ -424,8 +517,13 @@ def print_markdown(inventory: dict) -> None:
     print(f"Docs: **{inventory['doc_count']}**")
     print(f"Likely journey docs: **{inventory['journey_doc_count']}**")
     print(f"Likely product docs: **{inventory['product_doc_count']}**")
-    print(f"Journey priority docs: **{inventory['priority_contract_doc_count']}**")
-    print(f"First viewport docs: **{inventory['first_viewport_doc_count']}**")
+    print(f"Journey decision model docs: **{inventory['decision_model_doc_count']}**")
+    print(f"Information relevance docs: **{inventory['information_relevance_doc_count']}**")
+    print(f"UI handoff constraint docs: **{inventory['ui_handoff_constraint_doc_count']}**")
+    print(f"Feature inventory present: **{str(inventory['has_feature_inventory']).lower()}**")
+    print(f"UI element inventory present: **{str(inventory['has_ui_element_inventory']).lower()}**")
+    print(f"Implementation expectations present: **{str(inventory['has_implementation_expectations']).lower()}**")
+    print(f"Test expectations present: **{str(inventory['has_test_expectations']).lower()}**")
     print(f"UI audit handoff ready: **{str(inventory['ui_audit_handoff_ready']).lower()}**")
     print(f"Source hint files: **{inventory['source_hint_count']}**\n")
     if inventory["missing_signals"]:
@@ -439,13 +537,13 @@ def print_markdown(inventory: dict) -> None:
             print(f"- {item}")
         print()
     print("## Docs")
-    print("| File | Kind | Headings | Journey hits | UX hits | Priority hits | First viewport hits |")
-    print("| --- | --- | --- | ---: | ---: | ---: | ---: |")
+    print("| File | Kind | Headings | Journey hits | UX hits | Decision model hits | Relevance hits | Handoff hits |")
+    print("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |")
     for doc in inventory["docs"]:
         headings = "; ".join(doc["headings"][:5]) or "None"
         print(
             f"| `{doc['path']}` | {doc['kind']} | {headings.replace('|', '/')} | "
-            f"{doc['journey_hits']} | {doc['ux_hits']} | {doc['priority_contract_hits']} | {doc['first_viewport_hits']} |"
+            f"{doc['journey_hits']} | {doc['ux_hits']} | {doc['decision_model_hits']} | {doc['information_relevance_hits']} | {doc['ui_handoff_constraint_hits']} |"
         )
 
 
