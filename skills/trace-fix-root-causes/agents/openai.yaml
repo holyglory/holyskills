@@ -1,0 +1,4 @@
+interface:
+  display_name: "Trace Fix Root Causes"
+  short_description: "Find why fixed problems happened and prevent repeats"
+  default_prompt: "Use $trace-fix-root-causes to inspect a recently fixed bug, UI flaw, audit miss, or regression; trace the symptom through requirements, docs, audits, implementation, tests, verifiers, and policies; distinguish one-off defects from repeatable workflow gaps; then recommend concrete guardrails and validation steps so the same class of mistake is caught next time."

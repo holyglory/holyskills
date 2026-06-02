@@ -441,13 +441,62 @@ visual_comparison_audit
 | Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | desktop | decide current rates | rates chart and most-used rates | target settings | inline secondary panel | playwright screenshot currency-rates-desktop.png and DOM viewport measurement | PASS | playwright screenshot currency-rates-desktop.png and DOM viewport measurement 18% secondary controls |
-| mobile | only target currency configuration is supported; rate decision is buried | Target Currency settings form and Apply settings button | target/settings controls dominate while most-used rates are buried | secondary controls dominate visible surface | playwright screenshot currency-rates-mobile.png and DOM viewport measurement | {first_viewport_result} | playwright screenshot currency-rates-mobile.png and DOM viewport measurement 82% controls before rates |
+| mobile | only target currency configuration is supported; rate decision is buried | Target Currency settings form and Apply settings button | target/settings controls dominate while most-used rates are buried under duplicate summaries and vague labels | secondary controls dominate visible surface | playwright screenshot currency-rates-mobile.png and DOM viewport measurement | {first_viewport_result} | playwright screenshot currency-rates-mobile.png and DOM viewport measurement 82% controls before rates |
 
 ## Visual Comparison Checks
 | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
 | --- | --- | --- | --- | --- | --- | --- |
 | Currency rates decision | desktop | /currency-rates | docs/currency-rates-journey.md | playwright screenshot currency-rates-desktop.png | Desktop still exposes primary rates | MATCHED |
 | Currency rates decision | mobile | /currency-rates | docs/currency-rates-journey.md | playwright screenshot currency-rates-mobile.png and DOM viewport measurement | Target Currency block dominates the visible surface and buries most-used rates | {visual_result} |
+
+## Findings
+{findings}
+
+## Open Questions
+None.
+""",
+    )
+
+
+def write_layout_noise_visual_report(out: Path, *, include_p1: bool) -> None:
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    source_file = manifest["source_files"][0]["rel_path"]
+    result = "GAP" if include_p1 else "MATCHED"
+    usability_result = "GAP" if include_p1 else "PASS"
+    findings = "No findings."
+    if include_p1:
+        findings = f"""- Priority: P1
+- Files: {source_file}
+- Mockup/requirement evidence: docs/journeys.md requires the review workspace to make the next-case decision quickly from primary facts.
+- Interface evidence: desktop screenshot review-workspace-desktop.png shows nested blocks inside blocks, border stacks, visual noise, weak grid alignment, an unstable disclosure that changes width, a row that is not clickable unless a tiny icon-only target is hit, a disclosure icon that overlaps the scrollbar, flags with no hover/click popover feedback, selectable timestamps, permanent helper text, unintuitive icons, avatar clutter, and left/right message alignment problems.
+- Expected behavior/standard: rendered UI should make critical decision information prominent, keep secondary detail reachable without dominating, and use stable aligned whole-row disclosure controls, interactive badges with useful popover detail, meaningful icons, passive metadata, and quiet message layout.
+- Gap: the noisy frame stack and unstable disclosure obscure the decision hierarchy and make lower-importance detail look as important as critical decision content.
+- Suggested implementation direction: flatten nested surfaces, normalize grid gutters, stabilize disclosure width and control position, move obvious instructions to hints, replace decorative/meaningless icons, and align message groups by sender.
+"""
+    write(
+        out / "reports" / "visual_comparison_audit.md",
+        f"""## Run ID
+{manifest['run_id']}
+
+## Worker
+visual_comparison_audit
+
+## Journey Decision Model
+| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| review workspace | choose the next case to resolve | decide which case needs action now | case status, urgency, and owner summary | blocked or stale case state | open case | raw metadata and diagnostic history | none |
+
+## Rendered Journey Usability
+| Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| desktop | next-case decision is hard to scan | decision-critical facts are weakly placed inside nested blocks inside blocks | low-importance raw metadata, sender labels, selectable timestamps, permanent instruction noise, avatar clutter, and helper text dominate | unstable expander jumps horizontally, width changes, row is not clickable except a tiny icon-only target, and the disclosure icon interferes with the scrollbar | playwright screenshot review-workspace-desktop.png and DOM viewport measurement | {usability_result} | playwright screenshot review-workspace-desktop.png and DOM viewport measurement |
+| mobile | next-case decision is hard to scan | decision-critical facts are buried below noisy surfaces | secondary detail and decorative clutter dominate | flags have no hover feedback and no popover detail, while expanded and collapsed result blocks have different widths | playwright screenshot review-workspace-mobile.png and DOM viewport measurement | {usability_result} | playwright screenshot review-workspace-mobile.png and DOM viewport measurement |
+
+## Visual Comparison Checks
+| Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| Review workspace | desktop | /review | docs/journeys.md | playwright screenshot review-workspace-desktop.png | nested cards, border stacks, visual noise, misalignment, unintuitive icons, permanent instruction helper text, avatar clutter, icon-only row activation, expander/scrollbar collision, and unstable disclosure width changes | {result} |
+| Review workspace | mobile | /review | docs/journeys.md | playwright screenshot review-workspace-mobile.png | weak grid, badge no hover/click popover detail, low-importance detail dominates, sender labels and selectable timestamps add noise, and message alignment problems hide the decision hierarchy | {result} |
 
 ## Findings
 {findings}
@@ -513,6 +562,20 @@ def main() -> int:
         write_currency_priority_visual_report(currency_out, include_p1=True)
         currency_priority_fixed = verify(currency_out)
         check("ok: true" in currency_priority_fixed.stdout, "visual/usability finding should satisfy rendered usability regression")
+
+        layout_noise_out = tmp / "layout-noise-out"
+        build(ui_fixture, layout_noise_out)
+        write_complete_reports(layout_noise_out)
+        write_layout_noise_visual_report(layout_noise_out, include_p1=False)
+        layout_noise_result = verify(layout_noise_out, expect=1)
+        check(
+            "rendered journey usability danger terms require a visual/usability finding" in layout_noise_result.stdout
+            or "visual danger terms require a visual/usability finding" in layout_noise_result.stdout,
+            "layout noise and disclosure instability should require a visual/usability finding",
+        )
+        write_layout_noise_visual_report(layout_noise_out, include_p1=True)
+        layout_noise_fixed = verify(layout_noise_out)
+        check("ok: true" in layout_noise_fixed.stdout, "layout-noise finding should satisfy visual verifier")
 
         out_of_scope_out = tmp / "out-of-scope-out"
         build(ui_fixture, out_of_scope_out, "--batch-size", "1")

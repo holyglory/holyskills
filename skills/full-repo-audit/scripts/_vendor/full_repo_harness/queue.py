@@ -1720,8 +1720,9 @@ You are a separate low-effort worker focused on user journeys through the UI. Do
 5. Compare what the user currently sees against the journey decision model: primary decision, required facts, warning/flag conditions, frequent actions, secondary/rare actions, and unconfirmed assumptions.
 6. Check whether each journey step gives users enough information on desktop, native, and mobile surfaces to make the documented decision. Rare or conditional information should remain reachable through an appropriate detail path; threshold warnings/notices must be available at the decision point.
 7. Check compactness and responsive fit: critical journey information and primary actions should fit without accidental horizontal scroll, overlap, cropping, truncation, hidden overflow without a scroll path, unreadable compression, low contrast, invisible theme text, or displacement by decorative/low-relevance content.
-7. Check whether the interface exposes a test mode or lightweight fixture path for visually exercising the journey without heavy load or production side effects.
-8. Report concrete gaps with file evidence and visible copy when possible, including missing UI elements, unwired implementation paths, or missing test evidence. Treat unconfirmed journeys as open questions or assumption-based coverage, not as clean UI proof.
+7. Check interaction and metadata affordances anywhere the UI contains badges, flags, expandable rows, scrollable details, message streams, tool/result blocks, copy controls, navigation rows, or icon-only controls. Explicitly mark these checklist labels as `pass`, `gap`, `blocked`, or `not applicable`: `badge-detail`, `row-hit-target`, `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`, `status-summary`, `message-metadata`.
+8. Check whether the interface exposes a test mode or lightweight fixture path for visually exercising the journey without heavy load or production side effects.
+9. Report concrete gaps with file evidence and visible copy when possible, including missing UI elements, unwired implementation paths, interaction checklist gaps, or missing test evidence. Treat unconfirmed journeys as open questions or assumption-based coverage, not as clean UI proof.
 
 ## Required Output
 
@@ -1741,8 +1742,10 @@ List every confirmed journey and every `draft-needs-user-confirmation` journey. 
 
 ## UI Source Journey Checks
 Use a Markdown table with exactly these columns:
-| Journey | Step | Files | Primary navigation/decision elements | Relevance estimate | Required information | Mobile/Desktop availability | Test mode evidence |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+| Journey | Step | Files | Primary navigation/decision elements | Relevance estimate | Required information | Interaction and metadata checklist | Mobile/Desktop availability | Test mode evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+
+The `Interaction and metadata checklist` cell must include the exact labels `badge-detail`, `row-hit-target`, `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`, `status-summary`, and `message-metadata` with `pass`, `gap`, `blocked`, or `not applicable` values when the surface has badges, flags, expandable rows, scrollable details, message streams, tool/result blocks, copy controls, navigation rows, or icon-only controls.
 
 ## Findings
 Use P0/P1/P2/P3 finding blocks with the exact fields below, or `No findings.`:
@@ -1780,9 +1783,10 @@ For CLI, library, plugin, or skill packages that expose only metadata/Markdown a
 3. For each confirmed or drafted high-frequency journey, verify or plan a visual walk through desktop and narrow mobile viewports, including required UI elements, critical states, and expected test evidence.
 4. Check that navigation and primary decision elements are visible, relevant, accessible, and prioritized ahead of less probable routes, while recording whether the UI assumption is confirmed or only source-inferred.
 5. Check that enough decision-making information is visible, critical information is not cropped/hidden/unreadable, rare information is reachable through an appropriate detail path, and threshold warnings are available at the decision point.
-6. Check compactness: critical journey information and primary actions should fit on desktop, native, and mobile surfaces without overlap, accidental horizontal scroll, hidden overflow without scrolling, unreadable compression, low contrast, invisible theme text, or being buried under decorative/detail/debug/low-relevance content.
-7. Check broad layout quality: overload, crowding, ambiguous hierarchy, clipped/truncated text, oversized controls, unscannable information, theme consistency, readable font sizes, contrast, text/background colors, scrollability for overflow, menu/detail usability, and whether heavy-load actions can be avoided in test mode.
-8. When visual checks are applicable, cite the command/tool you used and at least one screenshot, trace, recording, or other artifact path/evidence in `Visual Tooling` or the `Evidence` column. If required screens, elements, states, or visual tests are missing, report them as gaps. If no repo-owned rendered UI exists, explicitly mark checks `not applicable` with evidence.
+6. Check compactness: critical journey information and primary actions should fit on desktop, native, and mobile surfaces without overlap, accidental horizontal scroll, hidden overflow without scrolling, unreadable compression, low contrast, invisible theme text, nested visual frames, unstable disclosure controls, or being buried under decorative/detail/debug/low-relevance content.
+7. Check interaction affordances: decision badges/flags should react to hover/focus/click and reveal useful detail when interactive; meaningful rows should activate as rows rather than tiny icon-only targets; navigational explanations/rows should have a predictable destination and pointer/focus affordance; temporary popovers and expanded panels should have an intentional close or timeout lifecycle; expand/collapse controls should not overlap or fight scrollbars; expanded/collapsed tool or result blocks should keep stable widths; copy controls should not permanently clutter message reading and should stay reachable when revealed; concise status blocks should avoid duplicate status/severity/duration noise; and timestamps or passive metadata should not be selectable content unless the journey justifies it. Explicitly mark these checklist labels for every relevant visual/source-inferred surface: `badge-detail`, `row-hit-target`, `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`, `status-summary`, `message-metadata`.
+8. Check broad layout quality: overload, crowding, ambiguous hierarchy, clipped/truncated text, oversized controls, unscannable information, nested cards/blocks, border/background stacks, grid/alignment discipline, stable expand/collapse controls, icon meaning, instruction noise, avatar/decorative clutter, message alignment, sender/routing label noise, theme consistency, readable font sizes, contrast, text/background colors, scrollability for overflow, menu/detail usability, and whether heavy-load actions can be avoided in test mode.
+9. When visual checks are applicable, cite the command/tool you used and at least one screenshot, trace, recording, or other artifact path/evidence in `Visual Tooling` or the `Evidence` column. If required screens, elements, states, or visual tests are missing, report them as gaps. If no repo-owned rendered UI exists, explicitly mark checks `not applicable` with evidence.
 
 ## Required Output
 
@@ -1799,8 +1803,10 @@ List tools/modes found, commands considered or run, and blockers.
 
 ## Visual Journey Checks
 Use a Markdown table with exactly these columns:
-| Journey | Viewport | Route/screen | Evidence | Navigation visibility | Decision information | Visual quality | Result |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+| Journey | Viewport | Route/screen | Evidence | Navigation visibility | Decision information | Interaction and metadata checklist | Visual quality | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+
+The `Interaction and metadata checklist` cell must include the exact labels `badge-detail`, `row-hit-target`, `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`, `status-summary`, and `message-metadata` with `pass`, `gap`, `blocked`, or `not applicable` values for relevant surfaces. A `gap` or `blocked` value must have a finding.
 
 ## Findings
 Use P0/P1/P2/P3 finding blocks with the exact fields below, or `No findings.`:

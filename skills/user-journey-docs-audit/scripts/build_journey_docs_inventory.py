@@ -100,16 +100,25 @@ DECISION_MODEL_TERMS = {
 INFORMATION_RELEVANCE_TERMS = {
     "action frequency",
     "conditional",
+    "critical always",
     "critical-always",
+    "debug",
+    "decision importance",
+    "expert only",
+    "expert-only",
     "frequent action",
     "frequent actions",
+    "importance",
     "information relevance",
     "occasional controls",
+    "primary frequent",
     "primary-frequent",
     "rare detail",
     "rare controls",
     "rare-under-5-percent",
     "rare/admin/configuration controls",
+    "relative importance",
+    "secondary occasional",
     "secondary-occasional",
 }
 UI_HANDOFF_CONSTRAINT_TERMS = {
@@ -138,6 +147,7 @@ FEATURE_TERMS = {
     "requirements",
 }
 UI_ELEMENT_TERMS = {
+    "badge",
     "banner",
     "button",
     "control",
@@ -207,8 +217,170 @@ UI_INTENT_TERMS = {
     "expert ui",
     "overview",
 }
+VISIBLE_UI_PRESCRIPTION_TERMS = {
+    "always visible",
+    "default visible",
+    "must display",
+    "must list",
+    "must show",
+    "required visible decision evidence",
+    "required visible evidence",
+    "show by default",
+    "shown by default",
+    "visible by default",
+    "visible decision evidence",
+}
+DETAIL_HEAVY_TERMS = {
+    "debug",
+    "detail",
+    "details",
+    "evidence",
+    "gap breakdown",
+    "metadata",
+    "next action",
+    "owner",
+    "raw",
+    "raw log",
+    "raw status",
+    "secondary detail",
+    "severity summary",
+    "stage",
+    "status summary",
+}
+INTERACTION_SURFACE_TERMS = {
+    "badge",
+    "badges",
+    "flag",
+    "flags",
+    "message",
+    "messages",
+    "panel",
+    "panels",
+    "popover",
+    "popovers",
+    "flyout",
+    "flyouts",
+    "row",
+    "rows",
+    "tool block",
+    "tool blocks",
+    "result block",
+    "result blocks",
+    "expand",
+    "collapse",
+    "disclosure",
+}
+DISCLOSURE_MODEL_TERMS = {
+    "click",
+    "click target",
+    "clickable row",
+    "detail path",
+    "detail state",
+    "dialog",
+    "disclosure",
+    "drill-down",
+    "drill down",
+    "drawer",
+    "expand",
+    "expansion",
+    "focus",
+    "hover",
+    "interactive badge",
+    "interactive badges",
+    "on demand",
+    "popover",
+    "row selection",
+    "whole row",
+    "whole-row",
+    "tooltip",
+}
+TRANSIENT_DISCLOSURE_TERMS = {
+    "auto collapse",
+    "auto-collapse",
+    "close on",
+    "dismiss",
+    "dismissal",
+    "focus loss",
+    "idle",
+    "leave timer",
+    "lifecycle",
+    "outside click",
+    "persistent while hovered",
+    "timeout",
+}
+NAVIGATION_SURFACE_TERMS = {
+    "destination",
+    "go to",
+    "jump to",
+    "navigate",
+    "navigation",
+    "open screen",
+    "scroll to",
+}
+NAVIGATION_AFFORDANCE_TERMS = {
+    "cursor",
+    "focus affordance",
+    "pointer",
+    "predictable destination",
+    "target surface",
+}
+COPY_CONTROL_TERMS = {
+    "copy",
+    "copy button",
+    "copy control",
+    "clipboard",
+}
+HOVER_COPY_TERMS = {
+    "hover copy",
+    "hover-revealed",
+    "hover revealed",
+    "reachable",
+    "stable position",
+    "stay visible",
+}
+STATUS_SUMMARY_TERMS = {
+    "concise status",
+    "duplicate status",
+    "duration",
+    "error count",
+    "result summary",
+    "status summary",
+    "tool status",
+}
+STATUS_SUMMARY_MODEL_TERMS = {
+    "default summary",
+    "detail only",
+    "hidden by default",
+    "moved to detail",
+    "only when",
+    "success indicator",
+}
+MESSAGE_METADATA_TERMS = {
+    "author",
+    "authorship",
+    "message metadata",
+    "metadata",
+    "routing label",
+    "sender",
+    "sender label",
+    "timestamp",
+    "unselectable",
+}
+LOW_IMPORTANCE_CLASSIFICATION_TERMS = {
+    "conditional",
+    "debug",
+    "expert-only",
+    "expert only",
+    "low-frequency",
+    "occasional",
+    "rare",
+    "rare-under-5-percent",
+    "secondary",
+    "secondary-occasional",
+}
 ROUTE_HINT_RE = re.compile(r"(?:route|path|href|to)\s*[:=]\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+GITMODULES_PATH_RE = re.compile(r"^\s*path\s*=\s*(.+?)\s*$", re.MULTILINE)
 
 
 @dataclass
@@ -222,6 +394,7 @@ class DocRecord:
     decision_model_hits: int
     information_relevance_hits: int
     ui_handoff_constraint_hits: int
+    prescriptive_ui_risk: bool
     likely_journey_doc: bool
     likely_product_doc: bool
     likely_decision_model_doc: bool
@@ -247,16 +420,54 @@ def skip_dir(path: Path) -> bool:
     return any(part in EXCLUDED_DIRS for part in path.parts)
 
 
+def discover_submodule_paths(repo: Path) -> set[str]:
+    gitmodules = repo / ".gitmodules"
+    if not gitmodules.is_file():
+        return set()
+    try:
+        text = gitmodules.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return set()
+    return {PurePosixPath(match.group(1).strip()).as_posix().strip("/") for match in GITMODULES_PATH_RE.finditer(text)}
+
+
+def is_nested_repo_dir(path: Path, repo: Path) -> bool:
+    if path == repo:
+        return False
+    return (path / ".git").exists()
+
+
+def is_under_path(rel_path: str, parent: str) -> bool:
+    return rel_path == parent or rel_path.startswith(parent.rstrip("/") + "/")
+
+
+def is_excluded_submodule_path(rel_path: str, submodules: set[str]) -> bool:
+    return any(is_under_path(rel_path, item) for item in submodules if item)
+
+
 def iter_files(repo: Path):
+    submodules = discover_submodule_paths(repo)
     for root, dirs, files in os.walk(repo):
         root_path = Path(root)
-        dirs[:] = [item for item in dirs if item not in EXCLUDED_DIRS]
+        kept_dirs: list[str] = []
+        for item in dirs:
+            candidate = root_path / item
+            rel_candidate = candidate.relative_to(repo).as_posix()
+            if item in EXCLUDED_DIRS:
+                continue
+            if is_excluded_submodule_path(rel_candidate, submodules):
+                continue
+            if is_nested_repo_dir(candidate, repo):
+                continue
+            kept_dirs.append(item)
+        dirs[:] = kept_dirs
         if skip_dir(root_path.relative_to(repo)):
             continue
         for filename in files:
             path = root_path / filename
             rel = path.relative_to(repo)
-            if skip_dir(rel):
+            rel_text = rel.as_posix()
+            if skip_dir(rel) or is_excluded_submodule_path(rel_text, submodules):
                 continue
             yield path
 
@@ -330,7 +541,7 @@ def is_likely_decision_model_doc(rel_path: str, text: str) -> bool:
     if is_operational_doc(rel_path, text):
         return False
     lowered = text.lower()
-    explicit_model = has_any_term(lowered, {"journey decision model", "primary decision"})
+    explicit_model = has_any_term(lowered, {"journey decision model"})
     has_goal = has_any_term(lowered, {"primary user goal", "primary goal", "goal"})
     has_decision = has_any_term(lowered, {"primary decision", "decision data", "decision-making information"})
     has_required_facts = has_any_term(lowered, {"required facts", "required information", "warning conditions", "warning/flag conditions"})
@@ -338,7 +549,9 @@ def is_likely_decision_model_doc(rel_path: str, text: str) -> bool:
         lowered,
         {"action frequency", "frequent action", "frequent actions", "occasional controls", "rare controls", "rare/admin/configuration controls"},
     )
-    return explicit_model or (has_goal and has_decision and has_required_facts and has_action_frequency)
+    return (explicit_model and has_goal and has_decision and has_required_facts) or (
+        has_goal and has_decision and has_required_facts and has_action_frequency
+    )
 
 
 def is_likely_information_relevance_doc(rel_path: str, text: str) -> bool:
@@ -348,7 +561,8 @@ def is_likely_information_relevance_doc(rel_path: str, text: str) -> bool:
     explicit_relevance = has_any_term(lowered, {"information relevance", "critical-always", "primary-frequent", "secondary-occasional", "rare-under-5-percent"})
     has_decision = has_any_term(lowered, {"primary decision", "decision data", "required facts", "required information"})
     has_frequency = has_any_term(lowered, {"action frequency", "frequent", "occasional", "rare", "conditional"})
-    return explicit_relevance or (has_decision and has_frequency)
+    has_importance_classes = has_any_term(lowered, {"critical-always", "primary-frequent", "secondary-occasional", "rare-under-5-percent", "expert-only", "debug"})
+    return (explicit_relevance and has_importance_classes) or (has_decision and has_frequency and has_importance_classes)
 
 
 def is_likely_ui_handoff_constraint_doc(rel_path: str, text: str) -> bool:
@@ -360,6 +574,28 @@ def is_likely_ui_handoff_constraint_doc(rel_path: str, text: str) -> bool:
         and is_likely_decision_model_doc(rel_path, text)
         and is_likely_information_relevance_doc(rel_path, text)
     )
+
+
+def has_prescriptive_ui_risk(rel_path: str, text: str) -> bool:
+    if is_operational_doc(rel_path, text):
+        return False
+    lowered = text.lower()
+    has_visible_prescription = has_any_term(lowered, VISIBLE_UI_PRESCRIPTION_TERMS)
+    has_detail_load = has_any_term(lowered, DETAIL_HEAVY_TERMS)
+    has_surface_intent = has_any_term(lowered, UI_INTENT_TERMS) or "required visible" in lowered
+    if not (has_visible_prescription and has_detail_load and has_surface_intent):
+        return False
+
+    segments = [segment.strip() for segment in re.split(r"(?:\n\s*\n|[.!?]\s+)", lowered) if segment.strip()]
+    for segment in segments:
+        if re.search(r"\b(?:not|never|does not|do not|without)\b[^.\n]{0,80}\balways visible\b", segment):
+            continue
+        if has_any_term(segment, VISIBLE_UI_PRESCRIPTION_TERMS) and has_any_term(segment, DETAIL_HEAVY_TERMS):
+            if not has_any_term(segment, DISCLOSURE_MODEL_TERMS):
+                return True
+            if has_any_term(lowered, LOW_IMPORTANCE_CLASSIFICATION_TERMS) and not has_any_term(segment, {"critical-always", "primary-frequent"}):
+                return True
+    return False
 
 
 def classify_doc(rel_path: str, text: str) -> str:
@@ -387,6 +623,7 @@ def doc_record(repo: Path, path: Path) -> DocRecord:
     decision_model_hits = count_terms(text, DECISION_MODEL_TERMS)
     relevance_hits = count_terms(text, INFORMATION_RELEVANCE_TERMS)
     handoff_hits = count_terms(text, UI_HANDOFF_CONSTRAINT_TERMS)
+    prescriptive_ui_risk = has_prescriptive_ui_risk(rel, text)
     likely_journey = is_likely_journey_doc(rel, text, journey_hits)
     likely_product = is_likely_product_doc(rel, text, app_hits)
     likely_decision_model = is_likely_decision_model_doc(rel, text)
@@ -402,6 +639,7 @@ def doc_record(repo: Path, path: Path) -> DocRecord:
         decision_model_hits=decision_model_hits,
         information_relevance_hits=relevance_hits,
         ui_handoff_constraint_hits=handoff_hits,
+        prescriptive_ui_risk=prescriptive_ui_risk,
         likely_journey_doc=likely_journey,
         likely_product_doc=likely_product,
         likely_decision_model_doc=likely_decision_model,
@@ -440,6 +678,7 @@ def build_inventory(repo: Path) -> dict:
     decision_model_doc_count = sum(1 for doc in docs if doc.likely_decision_model_doc)
     information_relevance_doc_count = sum(1 for doc in docs if doc.likely_information_relevance_doc)
     ui_handoff_constraint_doc_count = sum(1 for doc in docs if doc.likely_ui_handoff_constraint_doc)
+    prescriptive_ui_risk_doc_count = sum(1 for doc in docs if doc.prescriptive_ui_risk)
     doc_texts = []
     for doc in docs:
         text = read_text(repo / doc.path).lower()
@@ -449,6 +688,16 @@ def build_inventory(repo: Path) -> dict:
     has_low_frequency_controls = any(has_any_term(text, LOW_FREQUENCY_CONTROL_TERMS) for text in doc_texts)
     has_primary_content = any(has_any_term(text, PRIMARY_CONTENT_TERMS) for text in doc_texts)
     has_ui_intent_terms = any(has_any_term(text, UI_INTENT_TERMS) for text in doc_texts)
+    has_interaction_surface_terms = any(has_any_term(text, INTERACTION_SURFACE_TERMS) for text in doc_texts)
+    has_interaction_access_terms = any(has_any_term(text, DISCLOSURE_MODEL_TERMS) for text in doc_texts)
+    has_transient_disclosure_terms = any(has_any_term(text, TRANSIENT_DISCLOSURE_TERMS) for text in doc_texts)
+    has_navigation_surface_terms = any(has_any_term(text, NAVIGATION_SURFACE_TERMS) for text in doc_texts)
+    has_navigation_affordance_terms = any(has_any_term(text, NAVIGATION_AFFORDANCE_TERMS) for text in doc_texts)
+    has_copy_control_terms = any(has_any_term(text, COPY_CONTROL_TERMS) for text in doc_texts)
+    has_hover_copy_terms = any(has_any_term(text, HOVER_COPY_TERMS) for text in doc_texts)
+    has_status_summary_terms = any(has_any_term(text, STATUS_SUMMARY_TERMS) for text in doc_texts)
+    has_status_summary_model_terms = any(has_any_term(text, STATUS_SUMMARY_MODEL_TERMS) for text in doc_texts)
+    has_message_metadata_terms = any(has_any_term(text, MESSAGE_METADATA_TERMS) for text in doc_texts)
     has_feature_inventory = any(has_any_term(text, FEATURE_TERMS) for text in doc_texts)
     has_ui_element_inventory = any(has_any_term(text, UI_ELEMENT_TERMS) for text in doc_texts)
     has_implementation_expectations = any(has_any_term(text, IMPLEMENTATION_EXPECTATION_TERMS) for text in doc_texts)
@@ -475,7 +724,7 @@ def build_inventory(repo: Path) -> dict:
     if docs and information_relevance_doc_count == 0:
         missing_signals.append("No information relevance inventory documentation detected.")
         ui_implementation_risk_signals.append(
-            "Docs do not classify decision information, warnings, actions, and details as critical, frequent, secondary, rare, conditional, or expert-only."
+            "Docs do not classify decision information, warnings, actions, and details as critical-always, primary-frequent, secondary-occasional, rare, conditional, debug, or expert-only."
         )
     if has_mobile_screen_docs and has_low_frequency_controls and has_primary_content and information_relevance_doc_count == 0:
         ui_implementation_risk_signals.append(
@@ -485,11 +734,49 @@ def build_inventory(repo: Path) -> dict:
         ui_implementation_risk_signals.append(
             "Docs use UI intent terms such as dense, dashboard, command center, overview, compact, or expert UI without defining the decisions, relevance, action frequency, and assumptions behind that intent."
         )
+    if docs and has_interaction_surface_terms and not has_interaction_access_terms:
+        missing_signals.append("No interaction access model detected for badges, flags, rows, messages, or disclosure surfaces.")
+        ui_implementation_risk_signals.append(
+            "Docs mention badges, flags, messages, rows, tool/result blocks, or disclosure surfaces without defining click/hover/focus targets, popover/detail access, or stable expanded/collapsed behavior."
+        )
+    if docs and has_interaction_surface_terms and not has_transient_disclosure_terms:
+        ui_implementation_risk_signals.append(
+            "Docs mention interactive or disclosure surfaces without defining a transient panel lifecycle such as explicit close, outside click, focus loss, idle/leave timeout, or documented persistence."
+        )
+    if docs and has_navigation_surface_terms and not has_navigation_affordance_terms:
+        ui_implementation_risk_signals.append(
+            "Docs mention navigation or cross-surface jumps without defining predictable destinations and pointer/focus affordance for navigational elements."
+        )
+    if docs and has_copy_control_terms and not has_hover_copy_terms:
+        ui_implementation_risk_signals.append(
+            "Docs mention copy or clipboard controls without defining whether copy affordances are hidden until hover/focus, where they appear, and how they remain reachable."
+        )
+    if docs and has_status_summary_terms and not has_status_summary_model_terms:
+        ui_implementation_risk_signals.append(
+            "Docs mention tool/result/status summaries without defining which status, error count, duration, success, or severity signals belong in the concise default state versus detail."
+        )
+    if docs and has_message_metadata_terms and information_relevance_doc_count == 0:
+        ui_implementation_risk_signals.append(
+            "Docs mention message metadata such as sender labels, routing labels, timestamps, or authorship without classifying whether it is decision content or passive metadata."
+        )
+    if prescriptive_ui_risk_doc_count:
+        ui_implementation_risk_signals.append(
+            "Docs appear to turn UI handoff evidence into always-visible layout requirements for lower-importance information; classify decision importance and define inline, hint, selection, expansion, drawer, modal, or detail-view access before treating the docs as UI-audit ready."
+        )
     if hints and decision_model_doc_count == 0:
         ui_implementation_risk_signals.append(
             "Source hints expose UI surfaces, but docs do not provide a journey decision model; source hints must not substitute for product truth."
         )
-    ui_audit_handoff_ready = bool(decision_model_doc_count and information_relevance_doc_count and ui_handoff_constraint_doc_count)
+    ui_audit_handoff_ready = bool(
+        decision_model_doc_count
+        and information_relevance_doc_count
+        and ui_handoff_constraint_doc_count
+        and not prescriptive_ui_risk_doc_count
+        and (not has_interaction_surface_terms or (has_interaction_access_terms and has_transient_disclosure_terms))
+        and (not has_navigation_surface_terms or has_navigation_affordance_terms)
+        and (not has_copy_control_terms or has_hover_copy_terms)
+        and (not has_status_summary_terms or has_status_summary_model_terms)
+    )
     return {
         "repo_root": str(repo),
         "doc_count": len(docs),
@@ -498,11 +785,18 @@ def build_inventory(repo: Path) -> dict:
         "decision_model_doc_count": decision_model_doc_count,
         "information_relevance_doc_count": information_relevance_doc_count,
         "ui_handoff_constraint_doc_count": ui_handoff_constraint_doc_count,
+        "prescriptive_ui_risk_doc_count": prescriptive_ui_risk_doc_count,
         "ui_audit_handoff_ready": ui_audit_handoff_ready,
         "has_feature_inventory": has_feature_inventory,
         "has_ui_element_inventory": has_ui_element_inventory,
         "has_implementation_expectations": has_implementation_expectations,
         "has_test_expectations": has_test_expectations,
+        "has_interaction_access_model": bool(
+            (not has_interaction_surface_terms or (has_interaction_access_terms and has_transient_disclosure_terms))
+            and (not has_navigation_surface_terms or has_navigation_affordance_terms)
+            and (not has_copy_control_terms or has_hover_copy_terms)
+            and (not has_status_summary_terms or has_status_summary_model_terms)
+        ),
         "source_hint_count": len(hints),
         "docs": [asdict(doc) for doc in sorted(docs, key=lambda item: item.path)],
         "source_hints": [asdict(hint) for hint in sorted(hints, key=lambda item: item.path)[:100]],
@@ -520,6 +814,7 @@ def print_markdown(inventory: dict) -> None:
     print(f"Journey decision model docs: **{inventory['decision_model_doc_count']}**")
     print(f"Information relevance docs: **{inventory['information_relevance_doc_count']}**")
     print(f"UI handoff constraint docs: **{inventory['ui_handoff_constraint_doc_count']}**")
+    print(f"Prescriptive UI risk docs: **{inventory['prescriptive_ui_risk_doc_count']}**")
     print(f"Feature inventory present: **{str(inventory['has_feature_inventory']).lower()}**")
     print(f"UI element inventory present: **{str(inventory['has_ui_element_inventory']).lower()}**")
     print(f"Implementation expectations present: **{str(inventory['has_implementation_expectations']).lower()}**")

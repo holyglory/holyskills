@@ -706,12 +706,12 @@ def assert_manifest(manifest_path: Path) -> None:
         journey_prompt_text = (manifest_path.parent / "journey_audit.md").read_text(encoding="utf-8")
         visual_prompt_text = (manifest_path.parent / "visual_journey_audit.md").read_text(encoding="utf-8")
         check(
-            "| Journey | Step | Files | Primary navigation/decision elements | Relevance estimate | Required information | Mobile/Desktop availability | Test mode evidence |"
+            "| Journey | Step | Files | Primary navigation/decision elements | Relevance estimate | Required information | Interaction and metadata checklist | Mobile/Desktop availability | Test mode evidence |"
             in journey_prompt_text,
             "journey source prompt should use verifier-required table headers",
         )
         check(
-            "| Journey | Viewport | Route/screen | Evidence | Navigation visibility | Decision information | Visual quality | Result |"
+            "| Journey | Viewport | Route/screen | Evidence | Navigation visibility | Decision information | Interaction and metadata checklist | Visual quality | Result |"
             in visual_prompt_text,
             "visual journey prompt should use verifier-required table headers",
         )
@@ -2436,7 +2436,7 @@ visual_journey
 ## Visual Journey Checks
 | Journey | Viewport | Route/screen | Evidence | Navigation visibility | Decision information | Visual quality | Result |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Fixture audit | desktop | Fixture UI | Playwright command with screenshot `artifacts/fixture-desktop.png` for {interface_mentions} | primary actions visible | decision labels visible | overloaded unreadable text with hidden overflow | pass |
+| Fixture audit | desktop | Fixture UI | Playwright command with screenshot `artifacts/fixture-desktop.png` for {interface_mentions} | primary actions visible | decision labels visible | overloaded unreadable text with nested blocks, border stacks, weak grid alignment, permanent instruction noise, unintuitive icons, tiny icon-only target, row not clickable, flag no hover/click popover detail, expander interferes with scrollbar, selectable timestamps, unstable disclosure width changes, avatar clutter, hidden overflow, and duplicate severity summaries | pass |
 | Fixture audit | narrow mobile | Fixture UI | Playwright command with screenshot `artifacts/fixture-mobile.png` for {interface_mentions} | primary actions visible | decision labels visible | readable contrast and no horizontal scroll | pass |
 
 ## Findings

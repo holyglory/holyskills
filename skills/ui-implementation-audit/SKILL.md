@@ -18,12 +18,25 @@ This skill exists because UI implementations often drift from generated mockups:
 spacing, density, hierarchy, responsive fit, visible states, and asset use must
 be checked with actual screenshots, not only source reading.
 
+Hard reporting gate: every final audit must include an interaction checklist in
+`## Accessibility And Interaction Findings` with the exact labels
+`badge-detail`, `row-hit-target`, `navigation-cursor`,
+`transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`,
+`stable-expansion-width`, `hover-copy`, `status-summary`, and
+`message-metadata`. Each label must be marked `pass`, `gap`, `blocked`, or
+`not applicable` with evidence. If the final report does not contain all ten
+literal labels, rewrite it before returning.
+
 Treat the intended interface as a complete contract: every required screen,
 journey step, UI element, visible message, interaction state, responsive layout,
 handler, data path, accessibility path, and visual/test evidence must be present.
 If a mockup, journey doc, product requirement, visible source promise, or
 user-confirmed intent implies an element or behavior, audit it as required and
 report anything missing, partial, unwired, visually wrong, or untested.
+Journey docs are evidence, not immunity. If the rendered UI is overloaded,
+duplicative, vague, or dominated by secondary/detail/debug content because a
+journey doc over-prescribed default visibility, report both the rendered UI gap
+and the documentation handoff conflict instead of marking the UI as compliant.
 
 ## Required Execution Model
 
@@ -49,7 +62,34 @@ report anything missing, partial, unwired, visually wrong, or untested.
   supports the current journey decision. Except on pages whose primary purpose
   is data entry, visible content should mostly drive the current decision;
   secondary detail, debug data, and rare configuration should be available
-  without dominating the main surface.
+  without dominating the main surface. Use the documented information
+  hierarchy to judge placement: critical-always information must be visible at
+  the decision point, primary-frequent information should be prominent,
+  secondary information should be reachable without dominating, and
+  rare/debug/expert detail should not consume prime space unless the journey
+  docs justify it.
+- The visual comparison worker must check interaction affordances, not just
+  static appearance. Decision badges, flags, rows, and disclosures should show
+  hover/focus/click affordance when interactive; whole-row activation should be
+  preferred when the row is the meaningful target; disclosure icons must not
+  collide with scrollbars or adjacent controls; and expanded/collapsed states
+  should keep stable width, placement, and readable alignment. Navigating rows,
+  badges, links, and contextual explanations must expose a predictable
+  destination and pointer/keyboard affordance. Temporary panels, popovers, and
+  expanded signal regions should have an intentional lifecycle such as explicit
+  close, outside click, focus loss, idle leave timer, or documented persistence.
+- Treat interaction affordances as a required checklist for any UI that contains
+  badges, flags, expandable rows, tool/result blocks, scrollable details,
+  message streams, or icon-only controls. The audit is incomplete if it does not
+  explicitly mark each relevant item as pass, gap, blocked, or not applicable:
+  badge hover/focus/click feedback and popover/detail access; row/card
+  activation versus tiny icon-only activation; navigation destination and
+  pointer/focus cursor affordance; transient disclosure lifecycle; disclosure
+  control separation from scrollbars and adjacent controls; stable
+  collapsed/expanded dimensions; icon meaning; hover-revealed copy controls that
+  are stable and reachable; concise status summaries that avoid duplicate
+  status/severity/duration noise; message sender/routing label relevance; and
+  timestamp/passive metadata selection behavior.
 - Prefer test, fixture, preview, mock-data, dry-run, or Storybook paths over
   production paths. If no safe visual path exists, report the blocker with
   evidence and include an implementation step to add one.
@@ -178,6 +218,25 @@ For every owned interface source unit:
   explanatory copy, or secondary metadata that crowds out decision-driving
   content. Do this across desktop, native, and narrow/mobile viewports rather
   than only one mobile layout pattern.
+- Flag visual-noise and layout-discipline gaps that prevent the information
+  hierarchy from reading correctly: cards or blocks nested inside other cards,
+  repeated borders/background changes, inconsistent gutters, controls that move
+  when expanded, permanent obvious instructions, meaningless icons, decorative
+  avatars or clutter, and message layouts whose sender/receiver alignment is
+  inconsistent with the journey.
+- Flag interaction and metadata gaps: badges or flags that look interactive but
+  lack hover/click feedback or a useful popover/detail; meaningful rows that
+  require hitting only a tiny icon; contextual explanation rows that navigate
+  without a pointer/focus affordance or predictable destination; temporary
+  popovers/panels that stay open indefinitely without a clear lifecycle;
+  disclosure controls that interfere with scrollbars; icons whose meaning is
+  unclear even with context; expandable tool or result blocks that change width
+  between states; copy controls that permanently clutter messages or disappear
+  while the pointer moves toward them; concise tool/result blocks that repeat
+  completed/error/severity/duration signals instead of showing the minimum
+  status needed; selectable timestamps or metadata that should be passive; and
+  visible sender/routing labels that add noise when the message content alone is
+  the decision-driving information.
 - For ranged units, use the exact unit id in coverage rows and inventory rows.
 
 ## Required Batch Report
@@ -214,6 +273,12 @@ supported`, `Visible decision-driving content`, `Visible secondary/detail
 content`, `Detail access pattern`, `Readability/contrast evidence`, `Layout
 quality result`, and `Evidence`. Desktop rows are required for native or desktop
 apps; desktop and mobile/narrow rows are required when a web UI can be rendered.
+When a viewport contains badges, flags, expandable rows, tool/result blocks,
+scrollable details, message streams, or icon-only controls, its `Detail access
+pattern` or `Evidence` cell must explicitly cover row activation, badge
+hover/focus/click detail behavior, disclosure/scrollbar separation, icon
+meaning, expanded/collapsed size stability, and passive metadata behavior. Use
+`not applicable` for categories truly absent from that viewport.
 
 Findings must use either `No findings.` or field blocks with:
 
@@ -246,6 +311,15 @@ For each rendered screen, check:
   warnings, and actions that help the user progress through the current journey.
   Details, settings, filters, raw/debug status, and rare/admin controls may be
   present, but they should not overwhelm the primary decision path.
+- Handoff conflict: if a requirement says all facts must be visible but the
+  screenshot shows duplicate severity summaries, vague labels, source-model
+  leakage, or detail controls dominating the main state, record a gap and
+  recommend separating default indicators from hover/focus/click detail.
+- Structure and alignment: if the screenshot shows nested cards/blocks,
+  stacked borders, competing backgrounds, random-looking placement, weak grid
+  discipline, disclosure controls that jump or change width, permanent helper
+  copy, meaningless icons, avatar clutter, or inconsistent message alignment,
+  record a visual/usability gap even when all data is technically present.
 - Answer: "What decision can the user make from this rendered viewport?" If the
   answer is unclear, only configuration-oriented, or buried under secondary
   detail, report a journey-usability gap.
@@ -278,6 +352,14 @@ Return exactly these top-level headings:
 ## Implementation Plan
 ## Verification Plan
 ```
+
+The `Accessibility And Interaction Findings` section must include a short
+checklist before or after findings with these exact labels: `badge-detail`,
+`row-hit-target`, `disclosure-scrollbar`, `icon-meaning`,
+`stable-expansion-width`, `message-metadata`. Each label must be marked `pass`,
+`gap`, `blocked`, or `not applicable` with a file/screenshot/source reference.
+If any label is `gap` or `blocked`, include a prioritized finding in this
+section or in the closest specific findings section.
 
 Use this priority scale:
 

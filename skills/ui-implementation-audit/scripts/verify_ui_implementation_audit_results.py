@@ -109,7 +109,28 @@ WEB_UI_EXTENSIONS = {".astro", ".css", ".html", ".jsx", ".mdx", ".scss", ".svelt
 VISUAL_DANGER_RE = re.compile(
     r"\b(overloaded?|crowded|cramped|unreadable|invisible|low[- ]contrast|clipped|cropped|truncated|"
     r"overflow|hidden overflow|no scroll|without scroll|unscannable|ambiguous hierarchy|oversized|"
-    r"excessive detail|debug detail|raw status|dominates|dominating|buried|below the fold)\b",
+    r"excessive detail|debug detail|raw status|overexposed|over-prescribed|overprescribed|"
+    r"duplicate summaries?|duplicative summaries?|duplicate severity|vague labels?|unclear labels?|"
+    r"detail controls?|source-model leakage|data-model leakage|dominates|dominating|buried|below the fold|"
+    r"nested (?:cards?|blocks?|containers?|frames?)|card[- ]in[- ]card|blocks? inside blocks?|"
+    r"border stacks?|background stacks?|visual noise|noisy surfaces?|misaligned|misalignment|"
+    r"random(?:ly)? placed|random placement|weak grid|poor grid|grid drift|inconsistent gutters?|"
+    r"unstable (?:expander|expansion|disclosure)|jumps? horizontally|width changes?|different widths?|"
+    r"collapsed and expanded [^|.\n]*(?:different widths?|mismatch)|expanded and collapsed [^|.\n]*(?:different widths?|mismatch)|"
+	    r"meaningless icons?|unclear icons?|unintuitive icons?|decorative clutter|avatar clutter|unnecessary avatars?|"
+	    r"tiny icon[- ]only target|icon[- ]only (?:target|activation)|row [^|.\n]*(?:not clickable|not activated|not interactive)|"
+	    r"(?:navigate|navigation|destination|click) [^|.\n]*(?:no pointer|cursor missing|unpredictable|missing destination|wrong destination)|"
+	    r"(?:popover|flyout|expanded panel|temporary panel) [^|.\n]*(?:no timeout|no lifecycle|never closes|stays open|does not close)|"
+	    r"(?:badge|flag) [^|.\n]*(?:not interactive|no hover|no click|no popover|no detail)|"
+	    r"(?:hover|focus|click) [^|.\n]*(?:missing|absent|no feedback)|popover [^|.\n]*(?:missing|absent|not available)|"
+	    r"(?:expander|expand icon|disclosure icon|chevron) [^|.\n]*(?:interferes?|overlaps?|collides?|fights?) [^|.\n]*(?:scroll|scrollbar)|"
+	    r"scrollbar [^|.\n]*(?:interferes?|overlaps?|collides?|fights?) [^|.\n]*(?:expander|expand icon|disclosure icon|chevron)|"
+	    r"copy (?:button|icon|control)s? [^|.\n]*(?:always visible|permanent|not reachable|disappears|unstable)|"
+	    r"duplicate (?:status|error|duration)|status [^|.\n]*twice|error [^|.\n]*twice|duration [^|.\n]*(?:unnecessary|steals attention)|"
+	    r"sender labels?|authorship labels?|routing labels?|selectable timestamps?|timestamp [^|.\n]*selectable|"
+    r"permanent (?:helper|instruction)|instruction noise|helper text|low[- ]importance|"
+    r"decision[- ]critical [^|.\n]*(?:hidden|weak|buried)|hidden [^|.\n]*decision[- ]critical|"
+    r"weakly placed [^|.\n]*decision)\b",
     re.IGNORECASE,
 )
 
@@ -538,7 +559,7 @@ def verify_visual_comparison_table(path: Path, body: str, findings: str, *, requ
                     "section": "Visual Comparison Checks",
                     "row": index,
                     "field": "Result",
-                    "reason": "danger terms such as overload, unreadable text, clipping, overflow, or low contrast cannot be marked MATCHED without a finding",
+                    "reason": "danger terms such as overload, nested frames, unstable disclosure, meaningless icons, instruction noise, unreadable text, clipping, overflow, or low contrast cannot be marked MATCHED without a finding",
                 }
             )
         viewport = row.get("viewport", "").lower()

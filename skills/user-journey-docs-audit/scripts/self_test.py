@@ -20,6 +20,7 @@ REQUIRED_REFERENCES = {
         "## Journey Inventory",
         "## Journey Decision Model",
         "## Information Relevance Inventory",
+        "## Interaction And Metadata Model",
         "## UI Handoff Constraints",
         "## Screen Requirements",
     ],
@@ -116,6 +117,53 @@ The mobile screen should be compact and have no horizontal overflow.
             "ambiguous docs should warn when dense/dashboard intent lacks decision and relevance definitions",
         )
 
+        interaction_gap_repo = tmp / "interaction-gap"
+        write(
+            interaction_gap_repo / "docs" / "case-review.md",
+            """# Case Review Journey
+
+Operators review a queue dashboard with status badges, warning flags, expandable rows, messages, and result blocks.
+
+## Journey Decision Model
+
+| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unresolved assumptions |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Case Review | choose the next case | decide whether to inspect a flagged row | status badge, warning flag, latest message | red and yellow flags | inspect row | raw tool result block | none |
+
+## Information Relevance Inventory
+
+| Journey | Surface | Item | Relevance | Why it matters | Condition/frequency | Evidence source |
+| --- | --- | --- | --- | --- | --- | --- |
+| Case review | Case Review | status badge | critical-always | shows urgency | always | product requirement |
+| Case review | Case Review | raw tool result block | rare-under-5-percent | supports debugging | rare | product requirement |
+
+## UI Handoff Constraints
+
+Use screenshots and rendered-state evidence to verify the case review surface.
+
+## Feature Inventory
+Features: status badges, warning flags, expandable rows, messages, result blocks.
+
+## UI Element Inventory
+UI elements: badge, flag, row, message, result block.
+
+## Implementation Expectations
+Handlers, state, persistence, validation, and permissions must exist.
+
+## Test Expectations
+Acceptance criteria, fixture, visual test, and accessibility checks must exist.
+""",
+        )
+        interaction_gap = run_inventory(interaction_gap_repo)
+        check(interaction_gap["decision_model_doc_count"] >= 1, "interaction-gap docs should have a decision model")
+        check(interaction_gap["information_relevance_doc_count"] >= 1, "interaction-gap docs should have relevance docs")
+        check(not interaction_gap["has_interaction_access_model"], "interaction-gap docs should miss the access model")
+        check(not interaction_gap["ui_audit_handoff_ready"], "interaction-gap docs should not be UI-audit ready")
+        check(
+            any("click/hover/focus targets" in item for item in interaction_gap["ui_implementation_risk_signals"]),
+            "interaction-gap docs should warn about missing interaction targets and popover/detail access",
+        )
+
         complete_repo = tmp / "complete"
         write(
             complete_repo / "docs" / "journey-decision.md",
@@ -172,6 +220,13 @@ Acceptance criteria, unit test, component test, e2e, visual test, fixture, and t
 ## UI Handoff Constraints
 
 Use the UI implementation audit with a mobile screenshot, mockup, and DOM/native viewport measurement to confirm the rendered surface supports the live-metric decision and keeps conditional settings from overwhelming that decision path.
+
+## Interaction And Metadata Model
+
+| Surface | Element or metadata | User intent | Interaction target | Feedback/detail access | Stability/accessibility expectation |
+| --- | --- | --- | --- | --- | --- |
+| Metrics Dashboard | threshold warning badge | decide whether status needs action | badge and keyboard focus | hover/focus hint and click popover detail | stable position, accessible name, no scrollbar collision, popover closes on outside click or focus loss after idle timeout |
+| Metrics Dashboard | latest update timestamp | know data freshness | not interactive | passive visible metadata | timestamp is not selectable message content |
 """,
         )
         complete = run_inventory(complete_repo)
@@ -185,6 +240,108 @@ Use the UI implementation audit with a mobile screenshot, mockup, and DOM/native
         check(complete["has_test_expectations"], "complete docs should include test expectations")
         check(complete["ui_audit_handoff_ready"], "complete docs should be UI-audit handoff ready")
         check(not complete["ui_implementation_risk_signals"], "complete docs should clear UI implementation risk signals")
+
+        overprescribed_repo = tmp / "overprescribed"
+        write(
+            overprescribed_repo / "docs" / "canonical-journeys.md",
+            """# Operations Console Journey
+
+## App Idea
+
+Product promise: help operators supervise review queues.
+Primary users: operators.
+Primary value: the next review decision is clear.
+
+## Journey Inventory
+
+| Journey | User | Frequency | Importance | Risk if broken | Entry point | Success state |
+| --- | --- | ---: | ---: | ---: | --- | --- |
+| Review operations console | operator | high | high | high | /console | user knows which case needs attention |
+
+## Journey Decision Model
+
+| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unresolved assumptions |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Operations Console | decide which case needs attention | act now or continue monitoring | urgent case count and blocking state | critical and warning states | inspect case | raw evidence and owner metadata | none |
+
+## Information Relevance Inventory
+
+| Journey | Surface | Item | Relevance | Why it matters | Condition/frequency | Evidence source |
+| --- | --- | --- | --- | --- | --- | --- |
+| Review operations console | Operations Console | urgent case indicator | critical-always | tells user whether to act | always | product requirement |
+| Review operations console | Operations Console | raw evidence and owner | rare-under-5-percent | supports deep debugging | rare | product requirement |
+
+## UI Handoff Constraints
+
+Required visible decision evidence: status chip, stage chip, severity summary, raw evidence, owner, next action, and raw status summary must show in the operations console.
+
+## Feature Inventory
+Features: urgent case indicator, warning count, raw signal evidence, owner metadata, retry.
+
+## UI Element Inventory
+UI elements: badge, status chip, details expander, retry button, error state.
+
+## Implementation Expectations
+Handlers, persistence, validation, and state changes must be implemented.
+
+## Test Expectations
+Acceptance criteria, fixture, unit test, visual test, and recovery test must exist.
+""",
+        )
+        overprescribed = run_inventory(overprescribed_repo)
+        check(overprescribed["decision_model_doc_count"] >= 1, "overprescribed docs still have decision docs")
+        check(overprescribed["information_relevance_doc_count"] >= 1, "overprescribed docs still have relevance docs")
+        check(overprescribed["ui_handoff_constraint_doc_count"] >= 1, "overprescribed docs still have handoff docs")
+        check(overprescribed["prescriptive_ui_risk_doc_count"] >= 1, "overprescribed docs should be flagged")
+        check(not overprescribed["ui_audit_handoff_ready"], "overprescribed docs should not be UI-audit handoff ready")
+        check(
+            any("always-visible layout requirements" in item for item in overprescribed["ui_implementation_risk_signals"]),
+            "overprescribed docs should report a prescriptive UI risk",
+        )
+
+        nested_repo = tmp / "nested-repo"
+        write(nested_repo / "README.md", "# Review App\n\nProduct overview and app purpose for operators.\n")
+        write(
+            nested_repo / ".gitmodules",
+            """[submodule "external/product-docs"]
+	path = external/product-docs
+	url = https://example.invalid/product-docs.git
+""",
+        )
+        write(
+            nested_repo / "external" / "product-docs" / "docs" / "journey.md",
+            """# External Journey
+
+## Journey Decision Model
+Primary user goal: external.
+Primary decision: external.
+Required facts: external.
+
+## Information Relevance Inventory
+critical-always external detail.
+""",
+        )
+        write(
+            nested_repo / "packages" / "vendored-app" / ".git" / "HEAD",
+            "ref: refs/heads/main\n",
+        )
+        write(
+            nested_repo / "packages" / "vendored-app" / "docs" / "journey.md",
+            """# Vendored Journey
+
+## Journey Decision Model
+Primary user goal: vendored.
+Primary decision: vendored.
+Required facts: vendored.
+
+## Information Relevance Inventory
+critical-always vendored detail.
+""",
+        )
+        nested_inventory = run_inventory(nested_repo)
+        nested_doc_paths = {doc["path"] for doc in nested_inventory["docs"]}
+        check("external/product-docs/docs/journey.md" not in nested_doc_paths, "git submodule docs should be excluded by default")
+        check("packages/vendored-app/docs/journey.md" not in nested_doc_paths, "nested repo docs should be excluded by default")
 
         journey_repo = tmp / "journey"
         write(

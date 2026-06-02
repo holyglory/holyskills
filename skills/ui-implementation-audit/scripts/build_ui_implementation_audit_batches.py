@@ -365,6 +365,7 @@ For ranged units, inspect the assigned range manually plus nearby imports/types/
 - Trace handlers, state, navigation, API/persistence, permissions, validation, and missing state branches when the UI promises behavior.
 - Compare implementation to mockup/journey evidence: hierarchy, density, spacing, imagery, typography intent, copy, responsiveness, required decision information, feature behavior, and test evidence.
 - Flag visible overload across desktop, native, and narrow/mobile surfaces: low-journey-relevance settings, filters, rare/admin controls, debug/raw detail, explanatory copy, or secondary metadata dominating the space needed for decision-driving content.
+- Run the interaction/metadata checklist whenever the owned source contains badges, flags, expandable rows, scrollable details, message streams, tool/result blocks, copy controls, navigation rows, or icon-only controls. Explicitly mark badge-detail, row-hit target, navigation-cursor/destination, transient-disclosure lifecycle, disclosure-scrollbar separation, icon meaning, stable expanded/collapsed width, hover-copy reachability, concise status-summary behavior, sender/routing label relevance, and passive timestamp/metadata selection as PASS/GAP/BLOCKED/NOT_APPLICABLE with evidence.
 - Do not mark source alignment clear just because it resembles a mockup; rendered viewports must help the user make the current journey decision.
 - Flag missing UI elements, unwired handlers, missing data/persistence paths, missing states, missing accessibility paths, and missing safe visual states or fixture paths when source implies heavy or production-only operations.
 
@@ -401,6 +402,8 @@ Briefly summarize the UI surfaces these files define.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | desktop/native/mobile | supported decision or blocker | facts/actions/warnings visible | details/settings/debug/config visible | inline/expander/menu/detail route/blocked | source/CSS/DOM/screenshot/measurement evidence | PASS/GAP/BLOCKED/NOT_APPLICABLE | source/CSS/DOM/screenshot/measurement evidence |
 
+For any row that includes badges, flags, expandable rows, scrollable details, message streams, tool/result blocks, copy controls, navigation rows, or icon-only controls, include these exact checklist labels in `Detail access pattern` or `Evidence`: `badge-detail`, `row-hit-target`, `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`, `status-summary`, `message-metadata`.
+
 ## Mockup And Journey Alignment
 Explain how the owned UI source aligns or conflicts with the listed mockups/assets, required UI elements, features, tests, and journey requirements. Mention missing target evidence if no relevant mockup or journey exists.
 
@@ -414,6 +417,10 @@ Use `No findings.` or one block per gap:
 - Expected behavior/standard: expected visual, journey, feature, UI element, implementation, or test behavior
 - Gap: concrete mismatch, missing element, unwired path, or missing test evidence
 - Suggested implementation direction: specific fix direction
+
+Before `No findings.` or the first finding, include a one-line checklist summary:
+`Interaction checklist: badge-detail=<pass/gap/blocked/not-applicable>; row-hit-target=<...>; navigation-cursor=<...>; transient-disclosure=<...>; disclosure-scrollbar=<...>; icon-meaning=<...>; stable-expansion-width=<...>; hover-copy=<...>; status-summary=<...>; message-metadata=<...>.`
+Any `gap` or `blocked` item must have a finding.
 
 ## No Gap Notes
 List units or UI behaviors that look aligned and why.
@@ -517,7 +524,7 @@ Worker: `visual_comparison_audit`
 
 Do not edit files. Use available screenshot-capable tooling to compare the implemented UI against mockups/assets, required UI elements, feature behavior, tests, and user journey requirements. Prefer safe test/fixture/preview mode. If the UI cannot be rendered, create desktop and mobile `BLOCKED` rows with concrete tool/route evidence and report the missing visual harness as a finding.
 
-Before visual comparison, define the journey decision model and required UI element set. A visual check is not clear merely because it matches a mockup, has correct data, or avoids overflow. Each rendered viewport must support the primary journey decision unless the surface is itself primarily a data-entry form. If settings, filters, menus, target/configuration blocks, raw/debug detail, explanatory copy, or other low-relevance content dominates the visible surface while the primary decision is unclear or buried, report a journey-usability finding.
+Before visual comparison, define the journey decision model and required UI element set. A visual check is not clear merely because it matches a mockup, has correct data, or avoids overflow. Each rendered viewport must support the primary journey decision unless the surface is itself primarily a data-entry form. If settings, filters, menus, target/configuration blocks, raw/debug detail, explanatory copy, or other low-relevance content dominates the visible surface while the primary decision is unclear or buried, report a journey-usability finding. Also run the interaction checklist for every rendered/source-inferred viewport that contains badges, flags, expandable rows, scrollable details, message streams, tool/result blocks, copy controls, navigation rows, or icon-only controls: badge-detail, row-hit-target, navigation-cursor, transient-disclosure, disclosure-scrollbar, icon-meaning, stable-expansion-width, hover-copy, status-summary, and message-metadata.
 
 ## Mockup And Asset Evidence
 
@@ -545,13 +552,15 @@ visual_comparison_audit
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | desktop/native/mobile | supported decision or blocker | facts/actions/warnings visible | details/settings/debug/config visible | inline/expander/menu/detail route/blocked | screenshot/tool/DOM/viewport evidence | PASS/GAP/BLOCKED/NOT_APPLICABLE | screenshot/tool/DOM/viewport evidence |
 
+For relevant rows, include these exact checklist labels in `Detail access pattern` or `Evidence`: `badge-detail`, `row-hit-target`, `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`, `status-summary`, `message-metadata`.
+
 ## Visual Comparison Checks
 | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
 | --- | --- | --- | --- | --- | --- | --- |
 | journey or screen | desktop/mobile | route/screen/story | asset or requirement | screenshot/trace/tool command or blocker evidence | visual/responsive differences | MATCHED/GAP/BLOCKED/NOT_APPLICABLE |
 
 ## Findings
-Use `No findings.` or finding blocks with Priority, Files, Mockup/requirement evidence, Interface evidence, Expected behavior/standard, Gap, Suggested implementation direction. If screenshot production is blocked, include a finding that names the missing safe visual path. If a required element/state is absent, content is overloaded/crowded/unreadable, or low-relevance detail dominates while the primary decision is unclear or buried, include a finding.
+Use `No findings.` or finding blocks with Priority, Files, Mockup/requirement evidence, Interface evidence, Expected behavior/standard, Gap, Suggested implementation direction. Start with `Interaction checklist: badge-detail=<pass/gap/blocked/not-applicable>; row-hit-target=<...>; navigation-cursor=<...>; transient-disclosure=<...>; disclosure-scrollbar=<...>; icon-meaning=<...>; stable-expansion-width=<...>; hover-copy=<...>; status-summary=<...>; message-metadata=<...>.` If screenshot production is blocked, include a finding that names the missing safe visual path. If a required element/state is absent, content is overloaded/crowded/unreadable, low-relevance detail dominates while the primary decision is unclear or buried, or any interaction checklist item is gap/blocked, include a finding.
 
 ## Open Questions
 List visual blockers, missing mockups, unclear routes, or `None.`
