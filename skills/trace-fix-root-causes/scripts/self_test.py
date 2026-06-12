@@ -42,6 +42,12 @@ def check(condition: bool, message: str) -> None:
 GOOD_BASE = """## Fixed Symptom
 {symptom}
 
+## Reproduction
+{reproduction}
+
+## User Intent And Scope Check
+{intent}
+
 ## Evidence Used
 {evidence}
 
@@ -51,11 +57,20 @@ GOOD_BASE = """## Fixed Symptom
 ## Root Cause Classification
 {classification}
 
-## Workflow Improvements
-{improvements}
+## System Fix First
+{system_fix}
 
-## Validation Plan
-{validation}
+## Testing Procedure Audit
+{testing_audit}
+
+## Implementation Gap Closure
+{gap_closure}
+
+## Retest Results
+{retest}
+
+## Comprehensive Retest Results
+{comprehensive_retest}
 
 ## Boundaries And Non-Generalizable Notes
 {boundaries}
@@ -74,11 +89,16 @@ def main() -> int:
             audit_miss,
             GOOD_BASE.format(
                 symptom="UI audit passed a screen that showed overloaded status summaries.",
+                reproduction="Reproduced through the same screenshot-based audit surface and original audit command.",
+                intent="The user request was not changed; Codex and the audit perceived visible evidence as more important than the primary decision journey.",
                 evidence="User report, screenshot, audit output, and verifier source showed the pass.",
                 chain="Requirements listed the facts, audit accepted source-inferred docs, verifier missed the visual overload, implementation preserved the text-heavy state.",
                 classification="generalizable audit and verifier failure.",
-                improvements="Update the UI audit skill and verifier fixture so overloaded default surfaces cannot pass.",
-                validation="Run the verifier self-test fixture and rerun the UI audit command.",
+                system_fix="Updated the UI audit skill and verifier fixture so overloaded default surfaces cannot pass.",
+                testing_audit="Audited the screenshot audit procedure for missed failures in adjacent journeys, edge cases, and acceptance criteria; added verifier coverage for overloaded default surfaces.",
+                gap_closure="Fixed the implementation to reduce the default status surface.",
+                retest="Reran the original audit command and the verifier self-test fixture; both passed.",
+                comprehensive_retest="After the detected gap was closed, ran a broader visual audit suite and journey coverage matrix to prove the expected result.",
                 boundaries="The exact visual design remains repo-specific.",
             ),
         )
@@ -89,11 +109,16 @@ def main() -> int:
             docs_induced,
             GOOD_BASE.format(
                 symptom="A canonical journey doc caused a default command center to render too many detail fields.",
+                reproduction="Replicated on the original screen route with the before/after screenshot evidence.",
+                intent="No user requirement changed; Codex followed the docs literally and missed the intended decision priority.",
                 evidence="File diff in docs/testing/canonical-journeys.md and before/after screenshot evidence.",
                 chain="Journey docs over-prescribed visible evidence, implementation copied the handoff literally, tests checked presence rather than decision usefulness.",
                 classification="local-repeatable docs-to-implementation handoff failure.",
-                improvements="Change journey docs, add docs-audit regression fixture, and require disclosure paths for secondary detail.",
-                validation="Run python3 scripts/validate.py and a screenshot-based audit fixture.",
+                system_fix="Changed journey docs, added a docs-audit regression fixture, and required disclosure paths for secondary detail.",
+                testing_audit="Audited tests and docs verifier coverage for other possible missed failures in secondary detail, edge cases, and decision-usefulness acceptance criteria.",
+                gap_closure="Patched the UI implementation to move secondary detail behind disclosure.",
+                retest="Reran python3 scripts/validate.py and the screenshot-based audit fixture.",
+                comprehensive_retest="After the gap closed, ran comprehensive screenshot, docs-audit, and end-to-end journey tests for the expected user result.",
                 boundaries="Exact compact indicator design is product-specific.",
             ),
         )
@@ -104,11 +129,16 @@ def main() -> int:
             implementation_only,
             GOOD_BASE.format(
                 symptom="A save button failed to persist one local field.",
+                reproduction="Reproduced with the original focused unit test command.",
+                intent="The request and requirement were not changed; Codex omitted one field assignment in implementation.",
                 evidence="Failing unit test, source file diff, and reproduction log.",
                 chain="Implementation omitted the persistence assignment, test coverage missed that field.",
                 classification="one-off implementation defect.",
-                improvements="Add a targeted regression test; no global policy change is recommended.",
-                validation="Run the focused unit test command.",
+                system_fix="Added a targeted regression test; no broad policy change is recommended.",
+                testing_audit="Audited the field persistence tests for adjacent missed fields and edge cases; no other possible failures were found beyond the targeted coverage.",
+                gap_closure="Fixed the product code by assigning the missing persistence field.",
+                retest="Reran the original focused unit test command and the new regression test; both passed.",
+                comprehensive_retest="After the fix, ran the full unit suite and persistence coverage test matrix to prove the expected result.",
                 boundaries="No evidence connects this to docs, audits, or skill policy.",
             ),
         )
@@ -119,26 +149,116 @@ def main() -> int:
             one_off,
             GOOD_BASE.format(
                 symptom="A local fixture used stale data after a manual run.",
+                reproduction="Replicated with the original fixture reproduction command.",
+                intent="The user request did not change; this was a stale local test fixture, not a changed requirement.",
                 evidence="Reproduction log and before/after fixture file diff.",
                 chain="Test fixture state was stale, implementation behaved correctly, review did not need a new global policy.",
                 classification="one-off local fixture mistake.",
-                improvements="No workflow changes; refresh the fixture and keep the existing test.",
-                validation="Run the fixture reproduction command.",
+                system_fix="Refreshed the fixture and kept the existing test as the targeted guardrail.",
+                testing_audit="Audited fixture and smoke test coverage for adjacent stale data risks and other possible missed failures.",
+                gap_closure="No product code fix was applicable because implementation behaved correctly.",
+                retest="Reran the fixture reproduction command and existing test; both passed.",
+                comprehensive_retest="After fixture refresh, ran the comprehensive fixture suite and smoke checks for the expected result.",
                 boundaries="The cause is local to one disposable fixture.",
             ),
         )
         run_verify(one_off)
+
+        missing_reproduction = tmp / "missing-reproduction.md"
+        write(
+            missing_reproduction,
+            GOOD_BASE.format(
+                symptom="Codex shipped the wrong behavior.",
+                reproduction="User saw it.",
+                intent="The request was not changed; Codex misread the requirement.",
+                evidence="User report and source file diff.",
+                chain="Implementation missed the docs and tests did not cover the journey.",
+                classification="local-repeatable implementation and test gap.",
+                system_fix="Updated docs and tests.",
+                testing_audit="Audited tests for adjacent edge cases and missed failures.",
+                gap_closure="Fixed the implementation code.",
+                retest="Reran the original command and regression test.",
+                comprehensive_retest="After the gap was closed, ran the broader integration test suite.",
+                boundaries="None.",
+            ),
+        )
+        run_verify(missing_reproduction, expect=1)
+
+        missing_system_fix = tmp / "missing-system-fix.md"
+        write(
+            missing_system_fix,
+            GOOD_BASE.format(
+                symptom="Codex shipped the wrong behavior.",
+                reproduction="Reproduced with the same screen route.",
+                intent="No requirement changed; Codex misread the user request.",
+                evidence="User report, screenshot, and source file diff.",
+                chain="Implementation missed the docs and tests did not cover the journey.",
+                classification="local-repeatable implementation and test gap.",
+                system_fix="None.",
+                testing_audit="Audited tests for adjacent edge cases and missed failures.",
+                gap_closure="Fixed the implementation code.",
+                retest="Reran the original route and regression test.",
+                comprehensive_retest="After the gap was closed, ran the broader integration test suite.",
+                boundaries="None.",
+            ),
+        )
+        run_verify(missing_system_fix, expect=1)
+
+        missing_testing_audit = tmp / "missing-testing-audit.md"
+        write(
+            missing_testing_audit,
+            GOOD_BASE.format(
+                symptom="Codex missed a broken export flow after implementation.",
+                reproduction="Reproduced on the same screen route and export command.",
+                intent="The user request was not changed; Codex misread the requirement.",
+                evidence="User report, screenshot, source file diff, and reproduction log.",
+                chain="Implementation skipped one export branch and tests only covered the happy path.",
+                classification="local-repeatable implementation and test gap.",
+                system_fix="Updated the test fixture for the missed export branch.",
+                testing_audit="Added one regression.",
+                gap_closure="Fixed the product code for the export branch.",
+                retest="Reran the original route and regression test; both passed.",
+                comprehensive_retest="After the gap was closed, ran the broader integration test suite.",
+                boundaries="None.",
+            ),
+        )
+        run_verify(missing_testing_audit, expect=1)
+
+        missing_comprehensive_retest = tmp / "missing-comprehensive-retest.md"
+        write(
+            missing_comprehensive_retest,
+            GOOD_BASE.format(
+                symptom="Codex missed a broken export flow after implementation.",
+                reproduction="Reproduced on the same screen route and export command.",
+                intent="The user request was not changed; Codex misread the requirement.",
+                evidence="User report, screenshot, source file diff, and reproduction log.",
+                chain="Implementation skipped one export branch and tests only covered the happy path.",
+                classification="local-repeatable implementation and test gap.",
+                system_fix="Updated the test fixture for the missed export branch.",
+                testing_audit="Audited the testing procedure for adjacent journeys, edge cases, and other possible missed failures.",
+                gap_closure="Fixed the product code for the export branch.",
+                retest="Reran the original route and regression test; both passed.",
+                comprehensive_retest="Reran the regression test.",
+                boundaries="None.",
+            ),
+        )
+        run_verify(missing_comprehensive_retest, expect=1)
 
         missing_evidence = tmp / "missing-evidence.md"
         write(
             missing_evidence,
             GOOD_BASE.format(
                 symptom="A problem supposedly came from bad docs.",
+                reproduction="Unable to reproduce because no original surface or artifact was available.",
+                intent="The request status is unconfirmed because no original request or clarification evidence is available.",
                 evidence="No evidence available.",
                 chain="Docs and audit were probably responsible.",
                 classification="generalizable workflow failure.",
-                improvements="Update policies everywhere.",
-                validation="Run a command later.",
+                system_fix="Updated policies everywhere.",
+                testing_audit="Audited testing procedure status is unconfirmed because no tests or missed-failure evidence is available.",
+                gap_closure="No product fix was applicable without evidence.",
+                retest="Run a verifier command later.",
+                comprehensive_retest="After evidence is available, run comprehensive verifier and test coverage checks.",
                 boundaries="None.",
             ),
         )
