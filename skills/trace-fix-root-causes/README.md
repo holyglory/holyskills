@@ -18,6 +18,16 @@ classification, system fix, testing procedure audit, implementation closure,
 focused retest results, comprehensive retest results, and boundaries for
 one-off causes.
 
+Guardrail updates must be scoped and proportional: repo `AGENTS.md` is
+repo-wide policy, not global policy; policy text should contain generalized
+reusable rules only. Put one-off incident explanations in the root-cause report,
+`DecisionHistory.md`, a targeted test, or a fixture.
+
+When the problem is general enough to affect Codex behavior across tasks or
+repos, and a global instruction would prevent recurrence, the global Codex
+app-wide `/Users/holyglory/.codex/AGENTS.md` must be updated with that
+generalized reusable instruction.
+
 Validation:
 
 ```bash

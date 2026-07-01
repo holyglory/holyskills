@@ -65,6 +65,35 @@ AFTER_GAP_RE = re.compile(
     r"\b(after|post-fix|post-gap|gap closed|after closure|after fix|after the detected gap)\b",
     re.IGNORECASE,
 )
+POLICY_TARGET_RE = re.compile(
+    r"\b(agents\.md|global polic(?:y|ies)|repo-wide polic(?:y|ies)|project polic(?:y|ies)|policy file|policy update)\b",
+    re.IGNORECASE,
+)
+POLICY_SCOPE_RE = re.compile(
+    r"\b(scope|scoped|global|repo-wide|project|local|skill|verifier|tests?|docs?|persistent context)\b",
+    re.IGNORECASE,
+)
+GENERALIZED_POLICY_RE = re.compile(
+    r"\b(generalized|generalised|reusable|abstract|stable rule|durable rule|policy rule|not incident-specific)\b",
+    re.IGNORECASE,
+)
+INCIDENT_POLICY_RE = re.compile(
+    r"\b(incident explanation|specific incident|this incident|this error|this bug|exact bug|timeline|one-off root cause|root-cause narrative)\b",
+    re.IGNORECASE,
+)
+POLICY_ALTERNATIVE_RE = re.compile(
+    r"\b(no|not|do not|don't|without)\b[\s\S]{0,80}\b(agents\.md|policy|global policy|repo-wide policy)\b|"
+    r"\b(DecisionHistory\.md|root-cause report|targeted test|fixture|code review note)\b",
+    re.IGNORECASE,
+)
+GLOBAL_SCOPE_RE = re.compile(
+    r"\b(global polic(?:y|ies)|global guardrail|app-wide|across Codex|cross-repo|all repos|all projects|Codex tasks|Codex sessions|app-wide agent behavior)\b",
+    re.IGNORECASE,
+)
+APP_WIDE_AGENTS_RE = re.compile(
+    r"(/Users/holyglory/\.codex/AGENTS\.md|global Codex app-wide AGENTS\.md|Codex app-wide AGENTS\.md|app-wide AGENTS\.md|global AGENTS\.md)",
+    re.IGNORECASE,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -129,6 +158,21 @@ def verify(text: str) -> list[str]:
         r"\b(no system changes?|no workflow changes?|none)\b", system_fix, re.IGNORECASE
     ):
         issues.append("repeatable root causes require a system guardrail fix")
+    if POLICY_TARGET_RE.search(system_fix):
+        if not POLICY_SCOPE_RE.search(system_fix):
+            issues.append("AGENTS.md or policy guardrail updates must state whether the scope is global, repo-wide, project, skill, docs, tests, or context")
+        if INCIDENT_POLICY_RE.search(system_fix):
+            issues.append("incident-specific explanations belong in the root-cause report, DecisionHistory.md, targeted tests, or fixtures, not AGENTS.md or policy text")
+        if re.search(r"\b(one-off|unconfirmed)\b", classification, re.IGNORECASE) and not POLICY_ALTERNATIVE_RE.search(system_fix):
+            issues.append("one-off or unconfirmed causes must not update AGENTS.md or policy; use a targeted test, fixture, report note, or DecisionHistory.md entry")
+        if re.search(r"\b(generalizable|local-repeatable)\b", classification, re.IGNORECASE) and not GENERALIZED_POLICY_RE.search(system_fix):
+            issues.append("AGENTS.md or policy guardrails for repeatable causes must be written as generalized reusable rules")
+        if (
+            GLOBAL_SCOPE_RE.search(f"{classification}\n{causal_chain}\n{system_fix}")
+            and not POLICY_ALTERNATIVE_RE.search(system_fix)
+            and not APP_WIDE_AGENTS_RE.search(system_fix)
+        ):
+            issues.append("global or app-wide Codex policy guardrails must explicitly update /Users/holyglory/.codex/AGENTS.md")
     if not is_scope_change and not SYSTEM_GUARDRAIL_RE.search(system_fix):
         issues.append("system fix first must name a guardrail such as AGENTS.md, docs, skill, verifier, test, policy, or checklist")
     if not is_scope_change and not TESTING_AUDIT_RE.search(testing_audit):

@@ -81,7 +81,16 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="trace-fix-root-causes-self-test-"))
     try:
         skill_text = SKILL.read_text(encoding="utf-8")
-        for needle in ("Trace Fix Root Causes", "do not invent root causes", "generalizable", "one-off"):
+        for needle in (
+            "Trace Fix Root Causes",
+            "do not invent root causes",
+            "guardrail scope",
+            "DecisionHistory.md",
+            "generalized reusable rule",
+            "/Users/holyglory/.codex/AGENTS.md",
+            "generalizable",
+            "one-off",
+        ):
             check(needle.lower() in skill_text.lower(), f"SKILL.md should contain {needle!r}")
 
         audit_miss = tmp / "audit-miss.md"
@@ -163,6 +172,86 @@ def main() -> int:
             ),
         )
         run_verify(one_off)
+
+        one_off_policy_explanation = tmp / "one-off-policy-explanation.md"
+        write(
+            one_off_policy_explanation,
+            GOOD_BASE.format(
+                symptom="Codex wrote an incident-specific explanation into repo AGENTS.md for a mistake that may never happen again.",
+                reproduction="Reproduced from the same conversation log and repo policy surface.",
+                intent="The request used global policies and AGENTS.md ambiguously; Codex treated repo-wide AGENTS.md as the policy target.",
+                evidence="User report and conversation log showed the AGENTS.md update and follow-up concern.",
+                chain="User intent around policy scope was ambiguous; skill instructions listed AGENTS.md as a guardrail; implementation wrote incident explanation into repo policy.",
+                classification="one-off recurrence risk for this exact incident.",
+                system_fix="Update repo-wide AGENTS.md with an explanation of this incident so future agents remember it.",
+                testing_audit="Audited verifier coverage for adjacent missed failures around guardrail scope and policy placement.",
+                gap_closure="Fixed the policy text.",
+                retest="Reran the verifier command and self-test.",
+                comprehensive_retest="After the gap was closed, ran the full skill self-test suite.",
+                boundaries="The exact action-row mistake may never recur.",
+            ),
+        )
+        run_verify(one_off_policy_explanation, expect=1)
+
+        repeatable_policy_without_general_rule = tmp / "repeatable-policy-without-general-rule.md"
+        write(
+            repeatable_policy_without_general_rule,
+            GOOD_BASE.format(
+                symptom="A repeated destructive-action UI mistake was traced to unclear repo policy.",
+                reproduction="Reproduced from the same UI journey and source diff.",
+                intent="The user request was not changed; Codex missed row-level destructive action placement.",
+                evidence="User report, screenshot, and code diff.",
+                chain="Requirements and implementation both missed row-action placement; policy did not cover destructive list actions.",
+                classification="local-repeatable UI policy gap.",
+                system_fix="Update repo-wide AGENTS.md with a note about the mistake.",
+                testing_audit="Audited UI smoke tests for adjacent destructive action failure modes.",
+                gap_closure="Fixed the implementation code.",
+                retest="Reran the verifier command and self-test.",
+                comprehensive_retest="After the gap was closed, ran the full UI test suite.",
+                boundaries="Exact copy and layout remain product-specific.",
+            ),
+        )
+        run_verify(repeatable_policy_without_general_rule, expect=1)
+
+        global_policy_without_app_agents = tmp / "global-policy-without-app-agents.md"
+        write(
+            global_policy_without_app_agents,
+            GOOD_BASE.format(
+                symptom="Codex agents repeatedly miss a cross-repo policy requirement.",
+                reproduction="Reproduced with a report accepted by the verifier while omitting the app-wide AGENTS.md target.",
+                intent="The request was not changed; the issue is global across Codex behavior, not repo-local.",
+                evidence="User report, skill text, and verifier source showed the gap.",
+                chain="User intent required app-wide behavior; skill policy allowed global policy wording; verifier accepted reports that did not name the Codex app-wide AGENTS.md guardrail.",
+                classification="generalizable policy-scope failure across Codex tasks.",
+                system_fix="Update global policy with a generalized reusable rule requiring app-wide guardrails for broad Codex behavior.",
+                testing_audit="Audited verifier tests for adjacent policy-scope failure modes and app-wide guardrail coverage.",
+                gap_closure="Fixed the skill and verifier.",
+                retest="Reran the verifier command and self-test.",
+                comprehensive_retest="After the gap was closed, ran the full skill self-test suite.",
+                boundaries="Repo-local policies still apply when the cause is repo-specific.",
+            ),
+        )
+        run_verify(global_policy_without_app_agents, expect=1)
+
+        global_policy_with_app_agents = tmp / "global-policy-with-app-agents.md"
+        write(
+            global_policy_with_app_agents,
+            GOOD_BASE.format(
+                symptom="Codex agents repeatedly miss a cross-repo policy requirement.",
+                reproduction="Reproduced with a report accepted by the verifier while omitting the app-wide AGENTS.md target.",
+                intent="The request was not changed; the issue is global across Codex behavior, not repo-local.",
+                evidence="User report, skill text, and verifier source showed the gap.",
+                chain="User intent required app-wide behavior; skill policy allowed global policy wording; verifier accepted reports that did not name the Codex app-wide AGENTS.md guardrail.",
+                classification="generalizable policy-scope failure across Codex tasks.",
+                system_fix="Update /Users/holyglory/.codex/AGENTS.md with a generalized reusable rule requiring app-wide guardrails for broad Codex behavior, plus update the skill verifier.",
+                testing_audit="Audited verifier tests for adjacent policy-scope failure modes and app-wide guardrail coverage.",
+                gap_closure="Fixed the skill and verifier.",
+                retest="Reran the verifier command and self-test.",
+                comprehensive_retest="After the gap was closed, ran the full skill self-test suite.",
+                boundaries="Repo-local policies still apply when the cause is repo-specific.",
+            ),
+        )
+        run_verify(global_policy_with_app_agents)
 
         missing_reproduction = tmp / "missing-reproduction.md"
         write(

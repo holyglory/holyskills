@@ -14,7 +14,14 @@ possible, distinguish changed requirements from Codex-created gaps, trace the
 creation path of the mistake, patch the nearest durable guardrail first when
 prevention is needed, audit the testing procedure for other possible missed
 failures, close the implementation gap, and run comprehensive tests that prove
-the user gets the expected result.
+the user gets the expected result. Guardrail updates must be proportional:
+`AGENTS.md` and policy files are for generalized reusable rules, while
+incident-specific explanations belong in the root-cause report,
+`DecisionHistory.md`, or a targeted test. When the problem is general enough to
+affect Codex behavior across tasks or repos, and an instruction would prevent
+recurrence, update the global Codex app-wide
+`/Users/holyglory/.codex/AGENTS.md`; do not satisfy that need by editing only a
+repo `AGENTS.md`.
 
 ## Workflow
 
@@ -57,6 +64,21 @@ the user gets the expected result.
    - `unconfirmed`: evidence is insufficient to choose.
 
 5. **Fix the system first**
+   - Before updating `AGENTS.md` or another policy file, perform a guardrail scope check and suitability check:
+     - Name whether the target is the global Codex app-wide
+       `/Users/holyglory/.codex/AGENTS.md`, repo-wide `AGENTS.md`, a skill, a
+       verifier, project docs, tests, or persistent context. Do not treat
+       repo-wide `AGENTS.md` as global policy.
+     - If the cause is generalizable across Codex tasks, repos, tool use, or
+       app-wide agent behavior and a generalized instruction would prevent
+       recurrence, update `/Users/holyglory/.codex/AGENTS.md` in addition to
+       any narrower guardrail.
+     - Confirm the cause is `generalizable` or `local-repeatable`. If recurrence
+       is `one-off` or `unconfirmed`, prefer a targeted regression, fixture,
+       report note, or `DecisionHistory.md` entry instead of policy text.
+     - Write only the generalized reusable rule into policy. Do not put the
+       incident explanation, timeline, exact bug narrative, or one-off root
+       cause into `AGENTS.md`.
    - For generalizable or local-repeatable causes, update the nearest durable
      guardrail before closing the product gap when practical: local
      `AGENTS.md`, project docs, acceptance criteria, skill instructions,
@@ -130,13 +152,17 @@ the user changed the requirement or Codex misread/omitted the original request.
 Under `Causal Chain`, include the origin point, immediate defect, missed
 detection point, and evidence status for each causal link. Under `System Fix
 First`, name owner files or systems such as `AGENTS.md`, docs, skills,
-verifiers, tests, policies, or context sources. Under `Testing Procedure Audit`,
-identify other likely missed failures and the tests/verifiers/audits added or
-updated to cover them. Under `Retest Results`, include both the original
-reproduction path and the new or updated guardrail check. Under `Comprehensive
-Retest Results`, list the broader post-gap test commands, checks, or manual
-journeys that prove the user gets the expected result after the implementation
-gap is closed.
+verifiers, tests, policies, or context sources. If an `AGENTS.md` or policy
+update is recommended, state the scope, recurrence evidence, generalized
+reusable rule, and where incident-specific details were kept. For
+app-wide/general Codex behavior, name the global Codex app-wide
+`/Users/holyglory/.codex/AGENTS.md` update explicitly. Under `Testing Procedure
+Audit`, identify other likely missed failures and the
+tests/verifiers/audits added or updated to cover them. Under `Retest Results`,
+include both the original reproduction path and the new or updated guardrail
+check. Under `Comprehensive Retest Results`, list the broader post-gap test
+commands, checks, or manual journeys that prove the user gets the expected
+result after the implementation gap is closed.
 
 ## Completion Rules
 
@@ -151,6 +177,15 @@ gap is closed.
 - Do not stop at one targeted regression when Codex testing missed a
   user-visible mistake; audit the testing procedure for adjacent gaps and run
   comprehensive tests after the detected gap is closed.
+- Do not put one-off incident explanations, timelines, exact bug narratives, or
+  unconfirmed root causes into `AGENTS.md` or policy files. Use the report,
+  `DecisionHistory.md`, a targeted test, or a fixture instead.
+- Do not treat repo-wide `AGENTS.md` as global policy. If the requested policy
+  scope is ambiguous and the target cannot be inferred safely, ask or state the
+  chosen scope before editing.
+- Do not leave a broadly generalizable Codex behavior gap only in a repo
+  guardrail. When a global instruction will prevent recurrence across Codex
+  tasks or repos, update `/Users/holyglory/.codex/AGENTS.md`.
 - Do not add global process for a one-off mistake unless there is evidence that the mistake class is recurring.
 - If the user asks to implement prevention, update the relevant docs, skill,
   verifier, policy, or tests and run the validation path before reporting done.
