@@ -399,6 +399,26 @@ This is a local curation repository for Codex skills.
         check(skill_readme_inventory["journey_doc_count"] == 0, "skill repo README should not count as app journey docs")
         check(skill_readme_inventory["product_doc_count"] == 0, "skill repo README should not count as app product docs")
 
+        comment_journey_repo = tmp / "comment-journey"
+        write(comment_journey_repo / "README.md", "# App\n\nA tool.\n")
+        write(
+            comment_journey_repo / "src" / "checkout.ts",
+            "// User journey: shopper reviews cart, then confirms payment.\n"
+            "// This onboarding workflow drives the primary purchase use case.\n"
+            "export function checkout() { return true; }\n",
+        )
+        comment_journey = run_inventory(comment_journey_repo)
+        check(comment_journey["source_comment_journey_hits"] >= 1, "journey comments in source should be detected")
+        check(
+            any("source comments" in signal for signal in comment_journey["missing_signals"]),
+            "journeys documented only in source comments should raise a missing signal",
+        )
+
+        rst_repo = tmp / "rst-docs"
+        write(rst_repo / "docs" / "guide.rst", "User Guide\n=========\n\nThe app helps users.\n")
+        rst_inventory = run_inventory(rst_repo)
+        check(rst_inventory["doc_count"] >= 1, "reStructuredText docs should be inventoried")
+
         print("self-test ok")
         return 0
     finally:

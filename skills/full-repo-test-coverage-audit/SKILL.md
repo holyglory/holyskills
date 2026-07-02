@@ -40,7 +40,15 @@ Treat documented product intent, confirmed user journeys, source-backed feature 
    python3 "$FULL_REPO_TEST_COVERAGE_AUDIT_SKILL_DIR/scripts/verify_test_coverage_audit_results.py" --manifest <audit-output>/manifest.json --reports <audit-output>/reports
    ```
 
-8. Reconcile findings, inspect suspicious high-impact gaps directly as lead, and produce a prioritized implementation plan.
+8. Reconcile findings, inspect suspicious high-impact gaps directly as lead, and produce a prioritized implementation plan. For large audits, consolidate first:
+
+   ```bash
+   python3 "$FULL_REPO_TEST_COVERAGE_AUDIT_SKILL_DIR/scripts/_vendor/full_repo_harness/merge_findings.py" \
+     --reports <audit-output>/reports \
+     --markdown-out <audit-output>/consolidated-findings.md
+   ```
+
+   This deduplicates by primary file and summary, ranks P0→P3, and cites the source reports; it supports lead synthesis rather than replacing it.
 
 ## Batch Worker Review Rules
 

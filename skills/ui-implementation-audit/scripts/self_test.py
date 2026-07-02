@@ -24,6 +24,14 @@ PNG_1X1 = bytes.fromhex(
 )
 
 
+INTERACTION_CHECKLIST_LINE = (
+    "Interaction checklist: badge-detail=pass; row-hit-target=pass; "
+    "navigation-cursor=pass; transient-disclosure=pass; disclosure-scrollbar=pass; "
+    "icon-meaning=pass; stable-expansion-width=pass; hover-copy=pass; "
+    "status-summary=pass; message-metadata=pass."
+)
+
+
 def write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -399,6 +407,8 @@ visual_comparison_audit
 | Dashboard review | desktop | / dashboard | design/mockups/dashboard-mobile.png and docs/journeys.md | {evidence} | No material desktop mismatch in fixture report | MATCHED |
 | Dashboard review | mobile | / dashboard | design/mockups/dashboard-mobile.png and docs/journeys.md | {evidence} | No material mobile mismatch in fixture report | MATCHED |
 
+{INTERACTION_CHECKLIST_LINE}
+
 ## Findings
 No findings.
 
@@ -449,6 +459,8 @@ visual_comparison_audit
 | Currency rates decision | desktop | /currency-rates | docs/currency-rates-journey.md | playwright screenshot currency-rates-desktop.png | Desktop still exposes primary rates | MATCHED |
 | Currency rates decision | mobile | /currency-rates | docs/currency-rates-journey.md | playwright screenshot currency-rates-mobile.png and DOM viewport measurement | Target Currency block dominates the visible surface and buries most-used rates | {visual_result} |
 
+{INTERACTION_CHECKLIST_LINE}
+
 ## Findings
 {findings}
 
@@ -498,6 +510,8 @@ visual_comparison_audit
 | Review workspace | desktop | /review | docs/journeys.md | playwright screenshot review-workspace-desktop.png | nested cards, border stacks, visual noise, misalignment, unintuitive icons, permanent instruction helper text, avatar clutter, icon-only row activation, expander/scrollbar collision, and unstable disclosure width changes | {result} |
 | Review workspace | mobile | /review | docs/journeys.md | playwright screenshot review-workspace-mobile.png | weak grid, badge no hover/click popover detail, low-importance detail dominates, sender labels and selectable timestamps add noise, and message alignment problems hide the decision hierarchy | {result} |
 
+{INTERACTION_CHECKLIST_LINE}
+
 ## Findings
 {findings}
 
@@ -534,6 +548,19 @@ def main() -> int:
         write_complete_reports(out)
         result = verify(out)
         check("ok: true" in result.stdout, "complete report should verify")
+
+        checklist_missing_out = tmp / "checklist-missing-out"
+        shutil.copytree(out, checklist_missing_out)
+        checklist_report = checklist_missing_out / "reports" / "visual_comparison_audit.md"
+        checklist_report.write_text(
+            checklist_report.read_text(encoding="utf-8").replace(INTERACTION_CHECKLIST_LINE, "Interaction checklist: omitted."),
+            encoding="utf-8",
+        )
+        checklist_missing_result = verify(checklist_missing_out, expect=1)
+        check(
+            "interaction checklist label" in checklist_missing_result.stdout,
+            "visual comparison report missing interaction checklist labels should fail verification",
+        )
 
         missing_report_out = tmp / "missing-report-out"
         shutil.copytree(out, missing_report_out)

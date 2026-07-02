@@ -253,6 +253,26 @@ def main() -> int:
         )
         run_verify(global_policy_with_app_agents)
 
+        global_policy_with_claude = tmp / "global-policy-with-claude.md"
+        write(
+            global_policy_with_claude,
+            GOOD_BASE.format(
+                symptom="Claude Code agents repeatedly miss a cross-repo policy requirement.",
+                reproduction="Reproduced with a report accepted by the verifier while omitting the app-wide policy target.",
+                intent="The request was not changed; the issue is global across agent behavior, not repo-local.",
+                evidence="User report, skill text, and verifier source showed the gap.",
+                chain="User intent required app-wide behavior; skill policy allowed global policy wording; verifier accepted reports that did not name the app-wide policy guardrail.",
+                classification="generalizable policy-scope failure across agent tasks.",
+                system_fix="Update /Users/holyglory/.claude/CLAUDE.md with a generalized reusable rule requiring app-wide guardrails for broad agent behavior, mirrored into /Users/holyglory/.codex/AGENTS.md, plus update the skill verifier.",
+                testing_audit="Audited verifier tests for adjacent policy-scope failure modes and app-wide guardrail coverage.",
+                gap_closure="Fixed the skill and verifier.",
+                retest="Reran the verifier command and self-test.",
+                comprehensive_retest="After the gap was closed, ran the full skill self-test suite.",
+                boundaries="Repo-local policies still apply when the cause is repo-specific.",
+            ),
+        )
+        run_verify(global_policy_with_claude)
+
         missing_reproduction = tmp / "missing-reproduction.md"
         write(
             missing_reproduction,

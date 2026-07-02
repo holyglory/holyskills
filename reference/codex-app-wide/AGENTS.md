@@ -1,6 +1,7 @@
 # Global Agent Instructions
 - Never propose V1/MVP limited functionality implementation. User always expects the entire requested functionality to work, no matter how large it is. Engage sub-agents to help planning and implementing larger features when necessary.
 - Before fixing errors, replicate them. Test before delivery the same way you replicated them before.
+- When delivering or fixing a detector — a test suite, verifier, audit, linter, monitor, or alert — prove recall, not only precision: exercise it against realistic examples of the failures it claims to catch, shaped like real-world breakage rather than like the detector's own implementation, and keep at least one such must-catch example per advertised detection class in its automated checks, plus false-positive guards for common intentional patterns. A detector that only passes fixtures mirroring its implementation is not validated.
 - Generalize user bug or wrong behavior reports. See if such potential wrong behavior may happen elsewhere. 
 - Use ImageGen2 to design interfaces when fixing interfaces on user prompts. Confirm mockups with the user.
 - Total ban across all projects: never ship or present fake user-facing

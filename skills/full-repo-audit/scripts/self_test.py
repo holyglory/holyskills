@@ -2405,6 +2405,8 @@ visual_journey
 | Fixture audit | desktop | Fixture UI | Playwright command with screenshot `artifacts/fixture-desktop.png` for {interface_mentions} | primary actions visible | decision labels visible | readable contrast and no crop | pass |
 | Fixture audit | narrow mobile | Fixture UI | Playwright command with screenshot `artifacts/fixture-mobile.png` for {interface_mentions} | primary actions visible | decision labels visible | readable contrast and no horizontal scroll | pass |
 
+Interaction checklist: badge-detail=pass; row-hit-target=pass; navigation-cursor=pass; transient-disclosure=pass; disclosure-scrollbar=pass; icon-meaning=pass; stable-expansion-width=pass; hover-copy=pass; status-summary=pass; message-metadata=pass.
+
 ## Findings
 No findings.
 
@@ -2422,6 +2424,23 @@ None.
                 str(canonical_complete),
             ]
         )
+        checklist_missing_report = visual_report_path.read_text(encoding="utf-8").replace(
+            "Interaction checklist: badge-detail=pass; row-hit-target=pass; navigation-cursor=pass; transient-disclosure=pass; disclosure-scrollbar=pass; icon-meaning=pass; stable-expansion-width=pass; hover-copy=pass; status-summary=pass; message-metadata=pass.",
+            "Interaction checklist: omitted.",
+        )
+        write(visual_report_path, checklist_missing_report)
+        visual_checklist_result = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--reports",
+                str(canonical_complete),
+            ],
+            expect=1,
+        )
+        check_output(visual_checklist_result, "interaction checklist label")
         write(
             visual_report_path,
             f"""## Run ID

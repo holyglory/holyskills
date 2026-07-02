@@ -1,6 +1,6 @@
 ---
 name: user-journey-docs-audit
-description: Audit Markdown and development documentation for app idea clarity, user context, complete user journeys, journey decision models, information relevance, feature inventory, UI handoff constraints, edge cases, implementation expectations, test expectations, and usability acceptance criteria. Use when Codex needs to inspect README/docs/MDX/product specs for whether they define user intent and decision needs well enough to design, build, test, and improve a rich, easy-to-use application or prepare reliable inputs for ui-implementation-audit; must actively interview the user with questions or surveys when app purpose, users, journeys, feature intent, decision needs, or UI assumptions are missing or ambiguous.
+description: Audit Markdown and development documentation for app idea clarity, user context, complete user journeys, journey decision models, information relevance, feature inventory, UI handoff constraints, edge cases, implementation expectations, test expectations, and usability acceptance criteria. Use when an agent (Codex, Claude Code) needs to inspect README/docs/MDX/product specs for whether they define user intent and decision needs well enough to design, build, test, and improve a rich, easy-to-use application or prepare reliable inputs for ui-implementation-audit; must actively interview the user with questions or surveys when app purpose, users, journeys, feature intent, decision needs, or UI assumptions are missing or ambiguous.
 ---
 
 # User Journey Docs Audit
@@ -25,7 +25,7 @@ behavior.
 Do not silently infer journeys and call the audit complete.
 
 - Inspect docs and source hints first, then actively interview the user before final scoring when app idea, user groups, journey priority, or UI intent is missing or ambiguous.
-- Use `request_user_input` when available for survey-style choices and concise direct questions for free-form details. If the tool is unavailable, ask in chat.
+- Use the runtime's structured question tool when available (`request_user_input` in Codex, `AskUserQuestion` in Claude Code) for survey-style choices and concise direct questions for free-form details. If no such tool is available, ask in chat.
 - Ask at least one user-facing clarification round before a final verdict unless the user's prompt already includes the app idea, target users, and prioritized journeys.
 - If the user cannot answer or asks to proceed without clarifying, label the result `journey assumptions unconfirmed`; do not say the docs are complete or UI-ready.
 - When multiple journeys exist, audit every confirmed journey and every plausible drafted journey independently before synthesizing cross-journey priorities.

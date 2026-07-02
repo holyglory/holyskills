@@ -107,6 +107,17 @@ escalate to screenshot-based visual review or `ui-implementation-audit`.
    - Inspect suspicious high-impact findings directly as lead before including them.
 
 6. **Synthesize the implementation plan**
+   - For large repos, first consolidate findings mechanically instead of merging
+     hundreds of reports by hand:
+     ```bash
+     python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/_vendor/full_repo_harness/merge_findings.py" \
+       --reports <audit-output>/reports \
+       --markdown-out <audit-output>/consolidated-findings.md \
+       --json-out <audit-output>/consolidated-findings.json
+     ```
+     This deduplicates findings that share a primary file and summary, ranks them
+     P0→P3, and records which reports raised each one. Use it as the starting
+     point for the lead synthesis; it does not replace lead judgment.
    - Deduplicate batch findings.
    - Separate confirmed issues from hypotheses and open questions.
    - Prioritize by user impact, correctness, security/reliability, blast radius, and implementation dependency order.

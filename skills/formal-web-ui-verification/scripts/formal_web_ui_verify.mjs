@@ -35,6 +35,7 @@ Options:
   --allow-truncation <selector=reason>
   --allow-overlap <selector=reason>
   --screenshot-dir <path>           Save full-page screenshots for evidence.
+  --no-scroll                       Skip the full-page scroll pass (default: scroll on).
 `;
 }
 
@@ -81,6 +82,7 @@ function parseArgs(argv) {
     coordinatorProject: undefined,
     onlyCurrent: false,
     screenshotDir: undefined,
+    noScroll: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -125,6 +127,8 @@ function parseArgs(argv) {
       cli.allowOverlap.push(parseSelectorReason(next(), "--allow-overlap"));
     } else if (arg === "--screenshot-dir") {
       cli.screenshotDir = next();
+    } else if (arg === "--no-scroll") {
+      cli.noScroll = true;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -272,6 +276,7 @@ function normalizeConfig(config, cli) {
     coordinatorProject: cli.coordinatorProject || config.coordinatorProject,
     onlyCurrent: cli.onlyCurrent || Boolean(config.onlyCurrent),
     screenshotDir: cli.screenshotDir || config.screenshotDir,
+    scroll: cli.noScroll ? false : (config.scroll === undefined ? true : Boolean(config.scroll)),
   };
 }
 
@@ -376,6 +381,42 @@ function sanitizeFilePart(value) {
   return String(value).replace(/[^a-z0-9_.-]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 80) || "page";
 }
 
+// Runs a full-page scroll pass in viewport-height steps so lazy-loaded content and
+// IntersectionObservers fire before measurement. `page.evaluate` handles the settle
+// wait between steps. Robust to pages that grow while scrolling via a hard iteration cap.
+async function scrollThroughPage(page, { maxIterations = 30, settleMs = 120 } = {}) {
+  const metrics = { scrollPasses: 0, scrolledTo: 0, maxScrollHeight: 0, capped: false };
+  const originalY = await page.evaluate(() => window.scrollY).catch(() => 0);
+  for (let i = 0; i < maxIterations; i += 1) {
+    const state = await page
+      .evaluate(() => {
+        const scrolling = document.scrollingElement || document.documentElement;
+        const step = window.innerHeight || 600;
+        const before = window.scrollY;
+        const maxScroll = Math.max(0, scrolling.scrollHeight - window.innerHeight);
+        const nextY = Math.min(before + step, maxScroll);
+        window.scrollTo(0, nextY);
+        return {
+          scrollHeight: scrolling.scrollHeight,
+          innerHeight: window.innerHeight,
+          scrollY: window.scrollY,
+          atBottom: window.scrollY >= maxScroll - 1,
+        };
+      })
+      .catch(() => null);
+    if (!state) break;
+    metrics.scrollPasses += 1;
+    metrics.scrolledTo = Math.max(metrics.scrolledTo, Math.round(state.scrollY));
+    metrics.maxScrollHeight = Math.max(metrics.maxScrollHeight, Math.round(state.scrollHeight));
+    await page.waitForTimeout(settleMs);
+    if (state.atBottom) break;
+    if (i === maxIterations - 1) metrics.capped = true;
+  }
+  await page.evaluate((y) => window.scrollTo(0, y), originalY).catch(() => {});
+  await page.waitForTimeout(settleMs).catch(() => {});
+  return metrics;
+}
+
 function pageVerifier() {
   const config = window.__FORMAL_WEB_UI_CONFIG__;
   const controlSelector = [
@@ -414,6 +455,10 @@ function pageVerifier() {
     allowOverlap: config.allowOverlap || [],
   };
   const findings = [];
+  const unmeasurableContrast = [];
+  const ellipsisTruncations = [];
+  const hiddenTextLike = { displayNone: 0, visibilityHidden: 0, zeroOpacity: 0, zeroSize: 0 };
+  let pendingMedia = 0;
 
   const nowRect = (el) => el.getBoundingClientRect();
   const round = (value) => Math.round(value * 100) / 100;
@@ -463,30 +508,98 @@ function pageVerifier() {
   const isIgnored = (el) => Boolean(hasAttrReason(el, "data-ui-verify-ignore") || matchesList(el, selectorLists.ignore));
   const truncationReason = (el) => hasAttrReason(el, "data-ui-allow-truncation") || matchesList(el, selectorLists.allowTruncation);
   const overlapReason = (el) => hasAttrReason(el, "data-ui-allow-overlap") || matchesList(el, selectorLists.allowOverlap);
+
+  const styleCache = new WeakMap();
+  const cs = (el) => {
+    let style = styleCache.get(el);
+    if (!style) {
+      style = getComputedStyle(el);
+      styleCache.set(el, style);
+    }
+    return style;
+  };
+  const opacityCache = new WeakMap();
+  const effectiveOpacity = (el) => {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return 1;
+    const cached = opacityCache.get(el);
+    if (cached !== undefined) return cached;
+    const value = Number(cs(el).opacity || 1) * effectiveOpacity(el.parentElement);
+    opacityCache.set(el, value);
+    return value;
+  };
+
+  // Complex-artifact detection is token-bounded so ordinary sections named
+  // "roadmap", "sitemap", or "org-chart-team" are NOT excluded from checks.
+  // An element is artifact context only when an ancestor is a real svg/canvas,
+  // matches a known visualization/map library token, or carries a generic
+  // map/chart token AND actually contains a substantial svg/canvas/video.
+  const ARTIFACT_LIB_TOKENS = /(^|[^a-z0-9])(leaflet|mapbox|maplibre|gm-style|recharts|echarts|highcharts|chartjs|apexcharts|plotly|nivo|visx|vega|cesium|deckgl|deck-gl|openlayers|ol-viewport)([^a-z0-9]|$)/;
+  const ARTIFACT_GENERIC_TOKENS = /(^|[^a-z0-9])(map|chart|graph|plot|gauge|sparkline|axis|legend|marker|cluster|heatmap|treemap|diagram)([^a-z0-9]|$)/;
+  const CAROUSEL_TOKENS = /(^|[^a-z0-9])(carousel|swiper|slider|slick|embla|glide|flickity|splide|marquee|ticker)([^a-z0-9]|$)/;
+  const markerText = (node) => `${node.localName || ""} ${node.id || ""} ${typeof node.className === "string" ? node.className : node.className?.baseVal || ""}`.toLowerCase();
+  const artifactCache = new WeakMap();
+  const nodeIsArtifact = (node) => {
+    const cached = artifactCache.get(node);
+    if (cached !== undefined) return cached;
+    let isArtifact = false;
+    if (node.localName === "svg" || node.localName === "canvas" || node.ownerSVGElement) {
+      isArtifact = true;
+    } else {
+      const marker = markerText(node);
+      if (ARTIFACT_LIB_TOKENS.test(marker)) {
+        isArtifact = true;
+      } else if (ARTIFACT_GENERIC_TOKENS.test(marker)) {
+        for (const media of node.querySelectorAll("svg,canvas,video")) {
+          const rect = media.getBoundingClientRect();
+          if (rect.width * rect.height >= 10000) {
+            isArtifact = true;
+            break;
+          }
+        }
+      }
+    }
+    artifactCache.set(node, isArtifact);
+    return isArtifact;
+  };
   const complexArtifactContext = (el) => {
     let node = el;
     while (node && node.nodeType === Node.ELEMENT_NODE && node !== document.body) {
-      const marker = `${node.localName || ""} ${node.id || ""} ${typeof node.className === "string" ? node.className : node.className?.baseVal || ""}`.toLowerCase();
-      if (/(svg|canvas|leaflet|map|chart|recharts|marker|cluster|axis|legend)/.test(marker)) return true;
+      if (nodeIsArtifact(node)) return true;
       node = node.parentElement;
     }
     return false;
   };
+
   const visible = (el) => {
-    const style = getComputedStyle(el);
+    const style = cs(el);
+    if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
+    if (effectiveOpacity(el) <= 0.01) return false;
     const rect = nowRect(el);
-    return style.display !== "none" &&
-      style.visibility !== "hidden" &&
-      style.visibility !== "collapse" &&
-      Number(style.opacity || 1) > 0.01 &&
-      rect.width > 1 &&
-      rect.height > 1;
+    return rect.width > 1 && rect.height > 1;
   };
   const hasVisibleElementChild = (el) => Array.from(el.children).some((child) => visible(child));
+  const hasDirectText = (el) => {
+    for (const node of el.childNodes) {
+      if (node.nodeType === Node.TEXT_NODE && node.textContent && node.textContent.trim().length > 0) return true;
+    }
+    return false;
+  };
   const isControl = (el) => el.matches(controlSelector);
   const isTextCandidate = (el) => el.matches(textSelector) && textOf(el).length > 0;
-  const isLeafText = (el) => isTextCandidate(el) && (!hasVisibleElementChild(el) || el.matches("h1,h2,h3,h4,h5,h6,p,li,td,th,label"));
+  const classicLeafText = (el) => isTextCandidate(el) && (!hasVisibleElementChild(el) || el.matches("h1,h2,h3,h4,h5,h6,p,li,td,th,label"));
+  // Any element that directly owns rendered text (including div/section/dd/etc.)
+  // is a text candidate; the fixed tag list alone misses most modern app text.
+  const isLeafText = (el) => hasDirectText(el) || classicLeafText(el);
+
+  const MAX_PER_RULE = 40;
+  const ruleCounts = {};
+  const suppressed = {};
   const add = (severity, rule, el, message, extra = {}) => {
+    ruleCounts[rule] = (ruleCounts[rule] || 0) + 1;
+    if (ruleCounts[rule] > MAX_PER_RULE) {
+      suppressed[rule] = (suppressed[rule] || 0) + 1;
+      return;
+    }
     findings.push({
       severity,
       rule,
@@ -533,19 +646,165 @@ function pageVerifier() {
     configuredAreaRoots.push({ name: el.getAttribute("data-ui-verify-area") || selectorPath(el), el });
   }
 
-  const rawCandidates = Array.from(document.querySelectorAll(`${controlSelector},${textSelector},img,video`));
-  const candidates = rawCandidates
-    .filter((el) => !isIgnored(el) && visible(el))
-    .filter((el) => isControl(el) || isLeafText(el) || el.matches("img,video"));
+  const SKIP_TAGS = new Set([
+    "script", "style", "template", "noscript", "meta", "link", "title", "base",
+    "br", "hr", "wbr", "source", "track", "param", "slot", "option", "optgroup",
+    "datalist", "iframe", "object", "embed", "area", "map", "svg", "canvas", "portal",
+  ]);
+  const walkRoot = document.body || document.documentElement;
+  const candidates = [];
+  for (const el of walkRoot.querySelectorAll("*")) {
+    if (SKIP_TAGS.has(el.localName) || el.ownerSVGElement) continue;
+    if (isIgnored(el)) continue;
+    const textLike = isControl(el) || isLeafText(el);
+    if (!textLike && !el.matches("img,video")) continue;
+    if (!visible(el)) {
+      // Inventory text/controls that exist but are invisible so hidden-content
+      // regressions are at least countable in evidence.
+      if (textLike) {
+        const style = cs(el);
+        if (style.display === "none") hiddenTextLike.displayNone += 1;
+        else if (style.visibility === "hidden" || style.visibility === "collapse") hiddenTextLike.visibilityHidden += 1;
+        else if (effectiveOpacity(el) <= 0.01) hiddenTextLike.zeroOpacity += 1;
+        else hiddenTextLike.zeroSize += 1;
+      }
+      continue;
+    }
+    candidates.push(el);
+  }
+
+  // Blind spots: querySelectorAll does not pierce open shadow roots and we do not
+  // traverse iframe documents. Count them so the gap is visible in evidence rather
+  // than silently reporting ~0 elements as clean.
+  let shadowRootCount = 0;
+  for (const el of document.querySelectorAll("*")) {
+    if (el.shadowRoot) shadowRootCount += 1;
+  }
+  const iframeCount = document.querySelectorAll("iframe").length;
+  const notInspected = { shadowRoots: shadowRootCount, iframes: iframeCount };
+  if (shadowRootCount > 0 || iframeCount > 0) {
+    findings.push({
+      severity: "warning",
+      rule: "not-inspected",
+      message: `${shadowRootCount} shadow roots / ${iframeCount} iframes were not inspected; findings may be incomplete.`,
+      selector: "document",
+      textSnippet: "",
+      rect: null,
+      area: null,
+      evidence: notInspected,
+    });
+  }
+
+  const establishesContainingBlock = (style) =>
+    style.position !== "static" ||
+    style.transform !== "none" ||
+    style.perspective !== "none" ||
+    (style.filter && style.filter !== "none") ||
+    (style.backdropFilter && style.backdropFilter !== "none") ||
+    (style.contain || "").includes("paint") ||
+    (style.contain || "").includes("layout") ||
+    (style.willChange || "").includes("transform");
+  const fixedContextCache = new WeakMap();
+  const hasFixedContext = (el) => {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+    const cached = fixedContextCache.get(el);
+    if (cached !== undefined) return cached;
+    const value = cs(el).position === "fixed" || hasFixedContext(el.parentElement);
+    fixedContextCache.set(el, value);
+    return value;
+  };
+
+  // Walks ancestors and reports content cut off by an ancestor's overflow
+  // clipping. This is the common real-world crop: the element itself has
+  // overflow visible, but a parent with overflow hidden/clip cuts it. Scrollable
+  // ancestors on the cut axis count as a reachability path (not a defect), and
+  // absolutely positioned elements skip ancestors outside their containing-block
+  // chain because CSS does not clip them there.
+  function ancestorClipReport(el) {
+    const report = { scrollPathX: false, scrollPathY: false, cut: null };
+    const elStyle = cs(el);
+    if (elStyle.position === "fixed") return report;
+    const rect = nowRect(el);
+    // Content spills beyond the element's own box only when the element does not
+    // clip/scroll that axis itself; a self-clipping element (ellipsis, hidden,
+    // scrollable) is already handled by the self-overflow rule.
+    const spillsX = elStyle.overflowX === "visible";
+    const spillsY = elStyle.overflowY === "visible";
+    const effRight = spillsX ? Math.max(rect.right, rect.left + (el.clientLeft || 0) + (el.scrollWidth || 0)) : rect.right;
+    const effBottom = spillsY ? Math.max(rect.bottom, rect.top + (el.clientTop || 0) + (el.scrollHeight || 0)) : rect.bottom;
+    const box = { left: rect.left, top: rect.top, right: effRight, bottom: effBottom };
+    const width = Math.max(1, box.right - box.left);
+    const height = Math.max(1, box.bottom - box.top);
+    let carouselContext = CAROUSEL_TOKENS.test(markerText(el));
+    let awaitingContainingBlock = elStyle.position === "absolute";
+    let node = el.parentElement;
+    while (node && node.nodeType === Node.ELEMENT_NODE) {
+      const style = cs(node);
+      if (!carouselContext && CAROUSEL_TOKENS.test(markerText(node))) carouselContext = true;
+      const isContainingBlock = establishesContainingBlock(style);
+      if (awaitingContainingBlock && !isContainingBlock) {
+        node = node.parentElement;
+        continue;
+      }
+      awaitingContainingBlock = false;
+      const scrollableX = ["auto", "scroll", "overlay"].includes(style.overflowX);
+      const scrollableY = ["auto", "scroll", "overlay"].includes(style.overflowY);
+      const clipsX = ["hidden", "clip"].includes(style.overflowX) && !report.scrollPathX;
+      const clipsY = ["hidden", "clip"].includes(style.overflowY) && !report.scrollPathY;
+      if (clipsX || clipsY) {
+        const nodeRect = nowRect(node);
+        const clip = {
+          left: nodeRect.left + (node.clientLeft || 0),
+          top: nodeRect.top + (node.clientTop || 0),
+        };
+        clip.right = clip.left + node.clientWidth;
+        clip.bottom = clip.top + node.clientHeight;
+        const cutLeft = clipsX ? Math.max(0, clip.left - box.left) : 0;
+        const cutRight = clipsX ? Math.max(0, box.right - clip.right) : 0;
+        const cutTop = clipsY ? Math.max(0, clip.top - box.top) : 0;
+        const cutBottom = clipsY ? Math.max(0, box.bottom - clip.bottom) : 0;
+        const maxCut = Math.max(cutLeft, cutRight, cutTop, cutBottom);
+        const visX = clipsX ? Math.max(0, Math.min(box.right, clip.right) - Math.max(box.left, clip.left)) / width : 1;
+        const visY = clipsY ? Math.max(0, Math.min(box.bottom, clip.bottom) - Math.max(box.top, clip.top)) / height : 1;
+        const cutFraction = 1 - visX * visY;
+        if (maxCut > 4 && cutFraction > 0.08) {
+          report.cut = {
+            clipperSelector: selectorPath(node),
+            cutLeft: round(cutLeft),
+            cutRight: round(cutRight),
+            cutTop: round(cutTop),
+            cutBottom: round(cutBottom),
+            cutFraction: round(cutFraction),
+            fullyHidden: visX <= 0 || visY <= 0,
+            singleLineEllipsis:
+              style.textOverflow === "ellipsis" && style.whiteSpace === "nowrap" && cutTop === 0 && cutBottom === 0,
+            lineClamp: Boolean(style.webkitLineClamp && style.webkitLineClamp !== "none"),
+            carouselContext,
+            overflowX: style.overflowX,
+            overflowY: style.overflowY,
+          };
+          return report;
+        }
+      }
+      if (scrollableX) report.scrollPathX = true;
+      if (scrollableY) report.scrollPathY = true;
+      if (style.position === "fixed") break;
+      if (style.position === "absolute") awaitingContainingBlock = true;
+      node = node.parentElement;
+    }
+    return report;
+  }
 
   for (const el of candidates) {
-    const style = getComputedStyle(el);
+    const style = cs(el);
     const rect = nowRect(el);
     const text = textOf(el);
     const complexArtifact = complexArtifactContext(el);
     const isSingleLineEllipsis = style.textOverflow === "ellipsis" && style.whiteSpace === "nowrap";
+    const lineClampAllowed = Boolean(style.webkitLineClamp && style.webkitLineClamp !== "none");
     const allowedTruncation = truncationReason(el);
-    if ((isControl(el) || isLeafText(el)) && text) {
+    const meaningful = isControl(el) || isLeafText(el);
+    if (meaningful && text) {
       const clipsX = ["hidden", "clip"].includes(style.overflowX) && el.scrollWidth > el.clientWidth + 3;
       const clipsY = ["hidden", "clip"].includes(style.overflowY) && el.scrollHeight > el.clientHeight + 3;
       if ((clipsX || clipsY) && complexArtifact) {
@@ -559,7 +818,7 @@ function pageVerifier() {
             clientHeight: el.clientHeight,
           },
         });
-      } else if ((clipsX || clipsY) && !(allowedTruncation || (!config.rules.strictTruncation && isSingleLineEllipsis))) {
+      } else if ((clipsX || clipsY) && !(allowedTruncation || (!config.rules.strictTruncation && (isSingleLineEllipsis || lineClampAllowed)))) {
         add("critical", clipsX ? "clipped-x" : "clipped-y", el, "Visible text/control content is clipped without an explicit allowance.", {
           evidence: {
             overflowX: style.overflowX,
@@ -574,35 +833,132 @@ function pageVerifier() {
         add("warning", "allowed-truncation", el, "Content is clipped but has an explicit truncation allowance.", {
           evidence: { reason: allowedTruncation },
         });
+      } else if ((clipsX || clipsY) && ellipsisTruncations.length < 100) {
+        ellipsisTruncations.push({
+          selector: selectorPath(el),
+          textSnippet: snippet(el),
+          kind: isSingleLineEllipsis ? "text-overflow-ellipsis" : "line-clamp",
+        });
       }
     }
-    if (isControl(el) && (rect.right < -2 || rect.left > window.innerWidth + 2)) {
-      add("critical", "interactive-offscreen-x", el, "Interactive element is outside the horizontal viewport.", {
-        evidence: { viewportWidth: window.innerWidth },
-      });
+
+    // Ancestor clipping: the element itself may not clip, but a parent's
+    // overflow hidden/clip can still cut it (the most common crop mechanism).
+    let geo = null;
+    if (meaningful && (text || isControl(el))) {
+      geo = ancestorClipReport(el);
+      const cut = geo.cut;
+      if (cut) {
+        const evidence = { evidence: cut };
+        if (cut.singleLineEllipsis && !config.rules.strictTruncation && cut.cutTop === 0 && cut.cutBottom === 0) {
+          if (ellipsisTruncations.length < 100) {
+            ellipsisTruncations.push({ selector: selectorPath(el), textSnippet: snippet(el), kind: "ancestor-text-overflow-ellipsis" });
+          }
+        } else if (cut.lineClamp && !config.rules.strictTruncation) {
+          if (ellipsisTruncations.length < 100) {
+            ellipsisTruncations.push({ selector: selectorPath(el), textSnippet: snippet(el), kind: "ancestor-line-clamp" });
+          }
+        } else if (allowedTruncation) {
+          add("warning", "allowed-truncation", el, "Content is cut by an ancestor clip but has an explicit truncation allowance.", {
+            evidence: { reason: allowedTruncation, ...cut },
+          });
+        } else if (complexArtifact) {
+          add("warning", "complex-artifact-overflow", el, "Complex map/chart/media internals are cut by an ancestor clip; review visually if this artifact is the primary content.", evidence);
+        } else if (cut.fullyHidden) {
+          add("warning", "clipped-hidden", el, "Text/control is fully hidden by an ancestor's overflow clipping; verify this state is intentional.", evidence);
+        } else if (cut.carouselContext) {
+          add("warning", "clipped-by-ancestor", el, "Text/control is partially cut by an ancestor clip inside a carousel/slider context.", evidence);
+        } else {
+          add("critical", "clipped-by-ancestor", el, "Visible text/control is cut by an ancestor's overflow clipping without a scroll path or allowance.", evidence);
+        }
+      }
     }
+
+    // Off-canvas geometry. Fixed-context content cannot be scrolled into view,
+    // so any viewport cut is a defect. Static/absolute content before the
+    // document origin (negative document coordinates) is equally unreachable.
+    if (meaningful && !complexArtifact) {
+      if (hasFixedContext(el)) {
+        const cutLeft = Math.max(0, -rect.left);
+        const cutRight = Math.max(0, rect.right - window.innerWidth);
+        const cutTop = Math.max(0, -rect.top);
+        const cutBottom = Math.max(0, rect.bottom - window.innerHeight);
+        const visW = Math.max(0, Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0));
+        const visH = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
+        const maxCut = Math.max(cutLeft, cutRight, cutTop, cutBottom);
+        const cutFraction = 1 - (visW * visH) / Math.max(1, rect.width * rect.height);
+        if (visW <= 0 || visH <= 0) {
+          add("warning", "fixed-offscreen-hidden", el, "Fixed-position text/control is entirely outside the viewport and cannot be scrolled to; verify this state is intentional.", {
+            evidence: { viewportWidth: window.innerWidth, viewportHeight: window.innerHeight },
+          });
+        } else if (maxCut > 4 && cutFraction > 0.08) {
+          add("critical", "fixed-offscreen-cut", el, "Fixed-position text/control is partially cut by the viewport edge and cannot be scrolled into view.", {
+            evidence: {
+              cutLeft: round(cutLeft),
+              cutRight: round(cutRight),
+              cutTop: round(cutTop),
+              cutBottom: round(cutBottom),
+              viewportWidth: window.innerWidth,
+              viewportHeight: window.innerHeight,
+            },
+          });
+        }
+      } else {
+        const rtl = (document.documentElement.getAttribute("dir") || "").toLowerCase() === "rtl";
+        const absLeft = rect.left + window.scrollX;
+        const absTop = rect.top + window.scrollY;
+        const cutLeft = rtl ? 0 : Math.max(0, -absLeft);
+        const cutTop = Math.max(0, -absTop);
+        if ((cutLeft > 4 && cutLeft / Math.max(1, rect.width) > 0.08) || (cutTop > 4 && cutTop / Math.max(1, rect.height) > 0.08)) {
+          const fullyOut = absLeft + rect.width <= 0 || absTop + rect.height <= 0;
+          if (fullyOut) {
+            add("warning", "offcanvas-hidden", el, "Text/control is positioned entirely before the document origin (possible visually-hidden pattern); verify it is intentional.", {
+              evidence: { documentLeft: round(absLeft), documentTop: round(absTop) },
+            });
+          } else {
+            add("critical", "offcanvas-cut", el, "Text/control is partially cut by the document edge and cannot be scrolled into view.", {
+              evidence: { documentLeft: round(absLeft), documentTop: round(absTop), cutLeft: round(cutLeft), cutTop: round(cutTop) },
+            });
+          }
+        }
+        if (isControl(el) && rect.left > window.innerWidth + 2 && !(geo && geo.scrollPathX)) {
+          const reachableByDocScroll = rect.left + window.scrollX < doc.scrollWidth - 2;
+          if (!reachableByDocScroll) {
+            add("critical", "interactive-offscreen-x", el, "Interactive element is outside the horizontal viewport and beyond the document scroll range.", {
+              evidence: { viewportWidth: window.innerWidth, documentScrollWidth: doc.scrollWidth },
+            });
+          }
+        }
+      }
+    }
+
     for (const area of configuredAreaRoots) {
       if (area.el === el || area.el.contains(el)) {
         const areaRect = nowRect(area.el);
         if (rect.left < areaRect.left - 2 || rect.right > areaRect.right + 2 || rect.top < areaRect.top - 2 || rect.bottom > areaRect.bottom + 2) {
-          add(isControl(el) || isLeafText(el) ? "critical" : "warning", "outside-area", el, "Element is rendered outside its declared area of interest.", {
+          add(meaningful ? "critical" : "warning", "outside-area", el, "Element is rendered outside its declared area of interest.", {
             area: area.name,
             evidence: { areaRect: rectObj(areaRect) },
           });
         }
       }
     }
-    if (el.matches("img")) {
-      if (el.complete && el.naturalWidth === 0) {
-        add("critical", "broken-image", el, "Visible image failed to load.", { evidence: { currentSrc: el.currentSrc || el.src } });
-      }
-    } else if (el.matches("video") && el.error) {
-      add("critical", "broken-video", el, "Visible video has a media error.", { evidence: { code: el.error.code } });
-    }
-    if ((isControl(el) || isLeafText(el)) && text && !complexArtifact) {
+    if (meaningful && text && !complexArtifact) {
       const contrast = contrastAgainstBackground(el);
       if (contrast.transparentText) {
         add("critical", "invisible-text", el, "Text is effectively transparent.", { evidence: contrast });
+      } else if (contrast.unmeasurable) {
+        // Effective background is a gradient/image or a translucent stack: contrast
+        // against white would be a false positive, so never emit a critical here.
+        if (unmeasurableContrast.length < 200) {
+          unmeasurableContrast.push({
+            selector: selectorPath(el),
+            reason: contrast.unmeasurableReason || "unmeasurable-background",
+            color: contrast.color,
+            backgroundColor: contrast.backgroundColor,
+          });
+        }
+        add("warning", "unmeasurable-contrast", el, "Text contrast could not be measured against a solid background; review visually.", { evidence: contrast });
       } else if (contrast.ratio !== null && contrast.ratio < 1.15) {
         add("critical", "invisible-text", el, "Text foreground/background contrast is effectively invisible.", { evidence: contrast });
       } else if (contrast.ratio !== null && contrast.ratio < 3) {
@@ -614,22 +970,76 @@ function pageVerifier() {
     }
   }
 
-  const occlusionCandidates = candidates
-    .filter((el) => (isControl(el) || isLeafText(el)) && !overlapReason(el) && !complexArtifactContext(el))
-    .slice(0, 300);
+  // Media health runs over every img/video that participates in rendering,
+  // regardless of rect size: a broken image usually collapses to ~0x0, which is
+  // exactly why it must not be filtered out by the visibility size gate.
+  for (const el of document.querySelectorAll("img,video")) {
+    if (isIgnored(el)) continue;
+    const style = cs(el);
+    if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") continue;
+    if (effectiveOpacity(el) <= 0.01) continue;
+    if (el.localName === "img") {
+      if (el.complete && el.naturalWidth === 0 && (el.currentSrc || el.getAttribute("src"))) {
+        const rect = nowRect(el);
+        add("critical", "broken-image", el, "Image failed to load.", {
+          evidence: {
+            currentSrc: el.currentSrc || el.src,
+            rect: rectObj(rect),
+            collapsed: rect.width <= 1 || rect.height <= 1,
+          },
+        });
+      } else if (!el.complete) {
+        pendingMedia += 1;
+      }
+    } else if (el.error) {
+      add("critical", "broken-video", el, "Visible video has a media error.", { evidence: { code: el.error.code } });
+    }
+  }
+
+  const occlusionCandidates = [
+    ...candidates.filter((el) => isControl(el) && !overlapReason(el) && !complexArtifactContext(el)),
+    ...candidates.filter((el) => !isControl(el) && isLeafText(el) && !overlapReason(el) && !complexArtifactContext(el)),
+  ].slice(0, 400);
   const originalScroll = { x: window.scrollX, y: window.scrollY };
+  const inViewport = (rect) =>
+    rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+  const occluderOpacity = (node) => {
+    // Effective opacity of an occluder for the purpose of "does it hide content":
+    // combine element opacity with its own background-color alpha. Low values mean
+    // the covered content can plausibly still be seen through the occluder.
+    let ancestorOpacity = 1;
+    let walk = node;
+    while (walk && walk.nodeType === Node.ELEMENT_NODE) {
+      ancestorOpacity *= Number(getComputedStyle(walk).opacity || 1);
+      walk = walk.parentElement;
+    }
+    const bg = parseCssColor(getComputedStyle(node).backgroundColor);
+    const bgAlpha = bg ? bg.a : 0;
+    return ancestorOpacity * bgAlpha;
+  };
   for (const el of occlusionCandidates) {
     if (!document.body.contains(el) || !visible(el)) continue;
-    el.scrollIntoView({ block: "center", inline: "center" });
+    let measuredAfterScroll = false;
+    if (!inViewport(nowRect(el))) {
+      // Only elements outside the current viewport may be scrolled into view; those
+      // are flagged so the finding reflects "occluded when scrolled to" not "as seen".
+      el.scrollIntoView({ block: "center", inline: "center" });
+      measuredAfterScroll = true;
+    }
     const rect = nowRect(el);
     if (rect.width <= 1 || rect.height <= 1) continue;
+    const insetX = Math.min(8, Math.max(2, rect.width / 4));
+    const insetY = Math.min(8, Math.max(2, rect.height / 4));
     const points = [
       { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
-      { x: rect.left + Math.min(8, rect.width / 2), y: rect.top + Math.min(8, rect.height / 2) },
-      { x: rect.right - Math.min(8, rect.width / 2), y: rect.bottom - Math.min(8, rect.height / 2) },
+      { x: rect.left + insetX, y: rect.top + insetY },
+      { x: rect.right - insetX, y: rect.top + insetY },
+      { x: rect.left + insetX, y: rect.bottom - insetY },
+      { x: rect.right - insetX, y: rect.bottom - insetY },
     ].filter((point) => point.x >= 0 && point.y >= 0 && point.x <= window.innerWidth && point.y <= window.innerHeight);
-    if (!points.length) continue;
+    if (points.length < 2) continue;
     let covered = 0;
+    let maxOccluderOpacity = 0;
     const evidencePoints = [];
     for (const point of points) {
       const stack = document.elementsFromPoint(point.x, point.y).filter((node) => node.nodeType === Node.ELEMENT_NODE && !isIgnored(node));
@@ -641,15 +1051,47 @@ function pageVerifier() {
         topSelector: top ? selectorPath(top) : "",
         covered: !ok,
       });
-      if (!ok) covered += 1;
+      if (!ok) {
+        covered += 1;
+        if (top) maxOccluderOpacity = Math.max(maxOccluderOpacity, occluderOpacity(top));
+      }
     }
-    if (covered === points.length) {
-      add("critical", "occluded", el, "Meaningful text/control appears fully covered by an unrelated element.", {
-        evidence: { samplePoints: evidencePoints },
-      });
+    if (covered >= 2) {
+      const coveredFraction = covered / points.length;
+      // A translucent occluder may still leave the content legible: warn instead of fail.
+      const lowOpacityOccluder = maxOccluderOpacity < 0.5;
+      const evidence = {
+        evidence: {
+          samplePoints: evidencePoints,
+          measuredAfterScroll,
+          occluderOpacity: round(maxOccluderOpacity),
+          coveredFraction: round(coveredFraction),
+        },
+      };
+      if (covered === points.length) {
+        add(lowOpacityOccluder ? "warning" : "critical", "occluded", el, "Meaningful text/control appears fully covered by an unrelated element.", evidence);
+      } else if (coveredFraction >= 0.6) {
+        add(lowOpacityOccluder ? "warning" : "critical", "partially-occluded", el, "Meaningful text/control is substantially covered by an unrelated element.", evidence);
+      } else {
+        add("warning", "partially-occluded", el, "Meaningful text/control is partially covered by an unrelated element.", evidence);
+      }
     }
   }
   window.scrollTo(originalScroll.x, originalScroll.y);
+
+  const suppressedTotal = Object.values(suppressed).reduce((total, count) => total + count, 0);
+  if (suppressedTotal > 0) {
+    findings.push({
+      severity: "warning",
+      rule: "findings-truncated",
+      message: `${suppressedTotal} additional findings were suppressed after the per-rule cap of ${MAX_PER_RULE}; fix the reported instances and re-run.`,
+      selector: "document",
+      textSnippet: "",
+      rect: null,
+      area: null,
+      evidence: { suppressed },
+    });
+  }
 
   function parseCssColor(value) {
     const raw = String(value || "").trim();
@@ -775,14 +1217,32 @@ function pageVerifier() {
     const dark = Math.min(l1, l2);
     return round((light + 0.05) / (dark + 0.05));
   }
+  // Walk ancestors accumulating solid background layers. Returns a resolved opaque
+  // background color only when the chain up to the first opaque layer is a genuine
+  // stack of solid colors. If any ancestor in that chain paints a non-'none'
+  // background-image (gradient/image) or the accumulated alpha never reaches opaque,
+  // the effective background cannot be measured against white: return unmeasurable.
   function backgroundFor(el) {
     let node = el;
+    let accum = null; // color painted so far, over an unknown backdrop
     while (node && node.nodeType === Node.ELEMENT_NODE) {
-      const bg = parseCssColor(getComputedStyle(node).backgroundColor);
-      if (bg && bg.a > 0.05) return bg;
+      const style = getComputedStyle(node);
+      if (style.backgroundImage && style.backgroundImage !== "none") {
+        return { unmeasurable: true, reason: "background-image/gradient", raw: style.backgroundImage };
+      }
+      const bg = parseCssColor(style.backgroundColor);
+      if (bg && bg.a > 0.001) {
+        if (bg.a >= 0.999) {
+          const solid = accum ? blended(accum, bg) : bg;
+          return { r: solid.r, g: solid.g, b: solid.b, a: 1, raw: bg.raw };
+        }
+        // Semi-transparent layer: composite over whatever accumulates below it.
+        accum = accum ? blended(accum, bg) : { ...bg };
+      }
       node = node.parentElement;
     }
-    return { r: 255, g: 255, b: 255, a: 1, raw: "default-white" };
+    // Reached the root without an opaque solid backdrop.
+    return { unmeasurable: true, reason: "translucent-stack", raw: accum ? accum.raw || "translucent" : "no-solid-background" };
   }
   function contrastAgainstBackground(el) {
     const fg = parseCssColor(getComputedStyle(el).color);
@@ -792,6 +1252,16 @@ function pageVerifier() {
     const bg = backgroundFor(el);
     if (fg.a < 0.05) {
       return { ratio: null, color: fg.raw, backgroundColor: bg.raw, transparentText: true };
+    }
+    if (bg.unmeasurable) {
+      return {
+        ratio: null,
+        color: fg.raw,
+        backgroundColor: bg.raw,
+        transparentText: false,
+        unmeasurable: true,
+        unmeasurableReason: bg.reason,
+      };
     }
     const effectiveFg = fg.a < 1 ? blended(fg, bg) : fg;
     return {
@@ -867,6 +1337,12 @@ function pageVerifier() {
       candidateCount: candidates.length,
       findingCount: findings.length,
       visibleScrollbars: collectVisibleScrollbars(),
+      unmeasurableContrast,
+      notInspected,
+      ellipsisTruncations,
+      hiddenTextLike,
+      pendingMedia,
+      suppressedFindings: suppressed,
       document: {
         scrollWidth: doc.scrollWidth,
         clientWidth: doc.clientWidth,
@@ -921,11 +1397,15 @@ async function verifyTarget(page, target, viewport, config, screenshotDir) {
   await page.evaluate((injected) => {
     window.__FORMAL_WEB_UI_CONFIG__ = injected;
   }, pageConfig);
+  let scrollMetrics = { skipped: true };
+  if (config.scroll) {
+    scrollMetrics = await scrollThroughPage(page).catch(() => ({ skipped: true, error: true }));
+  }
   const evaluated = await page.evaluate(pageVerifier);
   result.title = evaluated.title;
   result.url = evaluated.url;
   result.actualViewport = evaluated.viewport;
-  result.metrics = evaluated.metrics;
+  result.metrics = { ...evaluated.metrics, scroll: scrollMetrics };
   result.findings = evaluated.findings;
   if (screenshotDir) {
     fs.mkdirSync(screenshotDir, { recursive: true });
@@ -994,6 +1474,34 @@ function markdownReport(report) {
       const rect = sb.rect ? `${Math.round(sb.rect.width)}x${Math.round(sb.rect.height)} at ${Math.round(sb.rect.x)},${Math.round(sb.rect.y)}` : "";
       const metrics = `scroll ${sb.scrollWidth}x${sb.scrollHeight}; client ${sb.clientWidth}x${sb.clientHeight}; overflow ${sb.overflowX}/${sb.overflowY}`;
       lines.push(`| ${escapeMd(row.page.target.name || row.page.target.url)} | ${escapeMd(row.page.viewport.name)} | ${escapeMd(sb.axis)} | ${escapeMd(sb.selector)} | ${escapeMd(rect)} | ${escapeMd(metrics)} |`);
+    }
+  }
+  lines.push("", "## Coverage & Unmeasurable", "");
+  const coverageRows = [];
+  for (const page of report.pages) {
+    const notInspected = page.metrics?.notInspected;
+    const scroll = page.metrics?.scroll;
+    const unmeasurable = page.metrics?.unmeasurableContrast || [];
+    const ellipsis = page.metrics?.ellipsisTruncations || [];
+    const hidden = page.metrics?.hiddenTextLike || {};
+    const pending = page.metrics?.pendingMedia || 0;
+    if (page.skipped && !notInspected && !scroll) continue;
+    const label = `${page.target.name || page.target.url} (${page.viewport.name})`;
+    const shadow = notInspected ? notInspected.shadowRoots : 0;
+    const iframes = notInspected ? notInspected.iframes : 0;
+    const hiddenTotal = (hidden.displayNone || 0) + (hidden.visibilityHidden || 0) + (hidden.zeroOpacity || 0) + (hidden.zeroSize || 0);
+    const scrollNote = scroll && !scroll.skipped
+      ? `scrolled to ${scroll.scrolledTo}px over ${scroll.scrollPasses} pass(es)${scroll.capped ? " (capped)" : ""}`
+      : "scroll off";
+    coverageRows.push({ label, shadow, iframes, unmeasurable: unmeasurable.length, ellipsis: ellipsis.length, hiddenTotal, pending, scrollNote });
+  }
+  if (!coverageRows.length) {
+    lines.push("No coverage gaps recorded.");
+  } else {
+    lines.push("| Target | Shadow roots (not inspected) | Iframes (not inspected) | Unmeasurable contrast | Allowed ellipsis/clamp | Hidden text/controls | Pending media | Scroll pass |");
+    lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+    for (const row of coverageRows) {
+      lines.push(`| ${escapeMd(row.label)} | ${row.shadow} | ${row.iframes} | ${row.unmeasurable} | ${row.ellipsis} | ${row.hiddenTotal} | ${row.pending} | ${escapeMd(row.scrollNote)} |`);
     }
   }
   lines.push("", "## Findings", "");

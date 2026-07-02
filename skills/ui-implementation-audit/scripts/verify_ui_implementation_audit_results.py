@@ -515,6 +515,23 @@ def verify_aux_report(path: Path, manifest: dict, expected_sections: list[str], 
             )
         )
         issues.extend(verify_visual_comparison_table(path, bodies.get("visual comparison checks", ""), bodies.get("findings", ""), require_mobile=require_mobile))
+        checklist_text = "\n".join(
+            [
+                bodies.get("rendered journey usability", ""),
+                bodies.get("visual comparison checks", ""),
+                bodies.get("findings", ""),
+            ]
+        )
+        missing_labels = common.interaction_checklist_missing(checklist_text)
+        if missing_labels:
+            issues.append(
+                {
+                    "path": str(path),
+                    "section": "Interaction Checklist",
+                    "reason": "visual comparison report must mark every interaction checklist label pass/gap/blocked/not-applicable",
+                    "missing": missing_labels,
+                }
+            )
     return issues
 
 

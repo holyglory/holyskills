@@ -1,27 +1,29 @@
 ---
 name: trace-fix-root-causes
-description: Investigate Codex implementation mistakes, recently fixed bugs, UI flaws, audit misses, regressions, or user-reported quality problems to explain how the mistake was created, update the nearest workflow/documentation/verifier/test/skill/policy guardrail first when prevention is needed, audit testing procedures for other missed failures, close the implementation gap, and run comprehensive post-fix tests. Use when a user reports a Codex-made implementation mistake, after a fix, after an audit miss, for postmortem requests, "why did this happen", "why did the audit miss this", or "how do we prevent this next time" prompts.
+description: Investigate agent-made implementation mistakes (Codex, Claude Code), recently fixed bugs, UI flaws, audit misses, regressions, or user-reported quality problems to explain how the mistake was created, update the nearest workflow/documentation/verifier/test/skill/policy guardrail first when prevention is needed, audit testing procedures for other missed failures, close the implementation gap, and run comprehensive post-fix tests. Use when a user reports an agent-made implementation mistake, after a fix, after an audit miss, for postmortem requests, "why did this happen", "why did the audit miss this", or "how do we prevent this next time" prompts.
 ---
 
 # Trace Fix Root Causes
 
 ## Purpose
 
-Use this skill when a Codex implementation mistake, bug, UI flaw, audit miss,
+Use this skill when an agent implementation mistake, bug, UI flaw, audit miss,
 or quality regression has been reported or fixed. The goal is not blame and not
 a vague postmortem. The goal is to reproduce the reported failure when
-possible, distinguish changed requirements from Codex-created gaps, trace the
+possible, distinguish changed requirements from agent-created gaps, trace the
 creation path of the mistake, patch the nearest durable guardrail first when
 prevention is needed, audit the testing procedure for other possible missed
 failures, close the implementation gap, and run comprehensive tests that prove
 the user gets the expected result. Guardrail updates must be proportional:
-`AGENTS.md` and policy files are for generalized reusable rules, while
-incident-specific explanations belong in the root-cause report,
+`AGENTS.md`/`CLAUDE.md` and policy files are for generalized reusable rules,
+while incident-specific explanations belong in the root-cause report,
 `DecisionHistory.md`, or a targeted test. When the problem is general enough to
-affect Codex behavior across tasks or repos, and an instruction would prevent
-recurrence, update the global Codex app-wide
-`/Users/holyglory/.codex/AGENTS.md`; do not satisfy that need by editing only a
-repo `AGENTS.md`.
+affect agent behavior across tasks or repos, and an instruction would prevent
+recurrence, update the current runtime's global policy file — the global Codex
+app-wide `/Users/holyglory/.codex/AGENTS.md` for Codex, or the global Claude
+Code `/Users/holyglory/.claude/CLAUDE.md` for Claude Code; mirror the rule into
+the other runtime's global file when it governs both. Do not satisfy that need
+by editing only a repo `AGENTS.md` or repo `CLAUDE.md`.
 
 ## Workflow
 
@@ -40,9 +42,9 @@ repo `AGENTS.md`.
    - Compare the original request, latest user clarification, accepted plan,
      project documentation, journey docs, and delivered behavior.
    - If the issue is caused by the user changing their mind or changing the
-     requirement after implementation, mark it as a scope change instead of a
-     Codex mistake.
-   - If the requirement did not change, trace how Codex perceived the request:
+     requirement after implementation, mark it as a scope change instead of an
+     agent mistake.
+   - If the requirement did not change, trace how the agent perceived the request:
      what was misread, over-assumed, omitted, or incorrectly prioritized.
 
 3. **Trace the creation path**
@@ -53,7 +55,7 @@ repo `AGENTS.md`.
      assumptions.
    - Separate the immediate defect from the detection failure. A UI can be
      wrong because the code rendered the wrong thing, because docs asked for
-     the wrong thing, because Codex misread the request, because an audit
+     the wrong thing, because the agent misread the request, because an audit
      accepted it, or because tests never exercised the actual journey.
    - Mark each causal link as `confirmed`, `source-inferred`, or `unconfirmed`.
 
@@ -64,15 +66,18 @@ repo `AGENTS.md`.
    - `unconfirmed`: evidence is insufficient to choose.
 
 5. **Fix the system first**
-   - Before updating `AGENTS.md` or another policy file, perform a guardrail scope check and suitability check:
-     - Name whether the target is the global Codex app-wide
-       `/Users/holyglory/.codex/AGENTS.md`, repo-wide `AGENTS.md`, a skill, a
-       verifier, project docs, tests, or persistent context. Do not treat
-       repo-wide `AGENTS.md` as global policy.
-     - If the cause is generalizable across Codex tasks, repos, tool use, or
+   - Before updating `AGENTS.md`/`CLAUDE.md` or another policy file, perform a guardrail scope check and suitability check:
+     - Name whether the target is the current runtime's global policy file
+       (the global Codex app-wide `/Users/holyglory/.codex/AGENTS.md`, or the
+       global Claude Code `/Users/holyglory/.claude/CLAUDE.md`), repo-wide
+       `AGENTS.md`/`CLAUDE.md`, a skill, a verifier, project docs, tests, or
+       persistent context. Do not treat repo-wide policy files as global
+       policy.
+     - If the cause is generalizable across agent tasks, repos, tool use, or
        app-wide agent behavior and a generalized instruction would prevent
-       recurrence, update `/Users/holyglory/.codex/AGENTS.md` in addition to
-       any narrower guardrail.
+       recurrence, update the current runtime's global policy file in addition
+       to any narrower guardrail, and mirror the rule into the other runtime's
+       global policy file when the rule governs both runtimes.
      - Confirm the cause is `generalizable` or `local-repeatable`. If recurrence
        is `one-off` or `unconfirmed`, prefer a targeted regression, fixture,
        report note, or `DecisionHistory.md` entry instead of policy text.
@@ -92,7 +97,7 @@ repo `AGENTS.md`.
    - Prefer guardrails that run automatically or are hard to skip.
 
 6. **Audit the testing procedure**
-   - When the user finds a mistake that Codex testing did not catch, inspect
+   - When the user finds a mistake that agent testing did not catch, inspect
      the tests, verifiers, audits, smoke checks, fixtures, mocks, seeded data,
      acceptance criteria, and manual validation that should have caught it.
    - Look for other possible missed failures in adjacent journeys, edge cases,
@@ -148,15 +153,17 @@ Return these headings:
 
 Under `Reproduction`, name the original surface or explain why replication was
 not possible or not reasonable. Under `User Intent And Scope Check`, say whether
-the user changed the requirement or Codex misread/omitted the original request.
+the user changed the requirement or the agent misread/omitted the original request.
 Under `Causal Chain`, include the origin point, immediate defect, missed
 detection point, and evidence status for each causal link. Under `System Fix
-First`, name owner files or systems such as `AGENTS.md`, docs, skills,
-verifiers, tests, policies, or context sources. If an `AGENTS.md` or policy
+First`, name owner files or systems such as `AGENTS.md`/`CLAUDE.md`, docs,
+skills, verifiers, tests, policies, or context sources. If a policy file
 update is recommended, state the scope, recurrence evidence, generalized
 reusable rule, and where incident-specific details were kept. For
-app-wide/general Codex behavior, name the global Codex app-wide
-`/Users/holyglory/.codex/AGENTS.md` update explicitly. Under `Testing Procedure
+app-wide/general agent behavior, name the global policy update explicitly:
+the global Codex app-wide `/Users/holyglory/.codex/AGENTS.md` for Codex, the
+global Claude Code `/Users/holyglory/.claude/CLAUDE.md` for Claude Code, or
+both when the rule is mirrored. Under `Testing Procedure
 Audit`, identify other likely missed failures and the
 tests/verifiers/audits added or updated to cover them. Under `Retest Results`,
 include both the original reproduction path and the new or updated guardrail
@@ -169,23 +176,26 @@ result after the implementation gap is closed.
 - Do not skip reproduction when it is possible and reasonable.
 - Do not invent root causes or present a root cause as confirmed without
   concrete evidence.
-- Do not treat a changed requirement as a Codex implementation mistake.
+- Do not treat a changed requirement as an agent implementation mistake.
 - Do not stop at fixing the symptom when the creation path exposes a repeatable
   workflow gap.
 - Do not close the implementation gap before patching the nearest durable
   guardrail unless you explain why that ordering was not practical.
-- Do not stop at one targeted regression when Codex testing missed a
+- Do not stop at one targeted regression when agent testing missed a
   user-visible mistake; audit the testing procedure for adjacent gaps and run
   comprehensive tests after the detected gap is closed.
 - Do not put one-off incident explanations, timelines, exact bug narratives, or
   unconfirmed root causes into `AGENTS.md` or policy files. Use the report,
   `DecisionHistory.md`, a targeted test, or a fixture instead.
-- Do not treat repo-wide `AGENTS.md` as global policy. If the requested policy
-  scope is ambiguous and the target cannot be inferred safely, ask or state the
-  chosen scope before editing.
-- Do not leave a broadly generalizable Codex behavior gap only in a repo
-  guardrail. When a global instruction will prevent recurrence across Codex
-  tasks or repos, update `/Users/holyglory/.codex/AGENTS.md`.
+- Do not treat repo-wide `AGENTS.md`/`CLAUDE.md` as global policy. If the
+  requested policy scope is ambiguous and the target cannot be inferred safely,
+  ask or state the chosen scope before editing.
+- Do not leave a broadly generalizable agent behavior gap only in a repo
+  guardrail. When a global instruction will prevent recurrence across agent
+  tasks or repos, update the current runtime's global policy file
+  (`/Users/holyglory/.codex/AGENTS.md` for Codex,
+  `/Users/holyglory/.claude/CLAUDE.md` for Claude Code) and mirror it when the
+  rule governs both runtimes.
 - Do not add global process for a one-off mistake unless there is evidence that the mistake class is recurring.
 - If the user asks to implement prevention, update the relevant docs, skill,
   verifier, policy, or tests and run the validation path before reporting done.

@@ -66,7 +66,7 @@ AFTER_GAP_RE = re.compile(
     re.IGNORECASE,
 )
 POLICY_TARGET_RE = re.compile(
-    r"\b(agents\.md|global polic(?:y|ies)|repo-wide polic(?:y|ies)|project polic(?:y|ies)|policy file|policy update)\b",
+    r"\b(agents\.md|claude\.md|global polic(?:y|ies)|repo-wide polic(?:y|ies)|project polic(?:y|ies)|policy file|policy update)\b",
     re.IGNORECASE,
 )
 POLICY_SCOPE_RE = re.compile(
@@ -90,8 +90,13 @@ GLOBAL_SCOPE_RE = re.compile(
     r"\b(global polic(?:y|ies)|global guardrail|app-wide|across Codex|cross-repo|all repos|all projects|Codex tasks|Codex sessions|app-wide agent behavior)\b",
     re.IGNORECASE,
 )
+# The global policy file differs per runtime: ~/.codex/AGENTS.md for Codex and
+# ~/.claude/CLAUDE.md for Claude Code. A global-scope root cause may name either
+# (or both when mirrored), so accept both app-wide policy files.
 APP_WIDE_AGENTS_RE = re.compile(
-    r"(/Users/holyglory/\.codex/AGENTS\.md|global Codex app-wide AGENTS\.md|Codex app-wide AGENTS\.md|app-wide AGENTS\.md|global AGENTS\.md)",
+    r"(/Users/holyglory/\.codex/AGENTS\.md|/Users/holyglory/\.claude/CLAUDE\.md"
+    r"|global Codex app-wide AGENTS\.md|Codex app-wide AGENTS\.md|app-wide AGENTS\.md|global AGENTS\.md"
+    r"|global Claude Code CLAUDE\.md|Claude Code app-wide CLAUDE\.md|app-wide CLAUDE\.md|global CLAUDE\.md)",
     re.IGNORECASE,
 )
 
@@ -172,7 +177,7 @@ def verify(text: str) -> list[str]:
             and not POLICY_ALTERNATIVE_RE.search(system_fix)
             and not APP_WIDE_AGENTS_RE.search(system_fix)
         ):
-            issues.append("global or app-wide Codex policy guardrails must explicitly update /Users/holyglory/.codex/AGENTS.md")
+            issues.append("global or app-wide policy guardrails must explicitly update the runtime global policy file (/Users/holyglory/.codex/AGENTS.md or /Users/holyglory/.claude/CLAUDE.md)")
     if not is_scope_change and not SYSTEM_GUARDRAIL_RE.search(system_fix):
         issues.append("system fix first must name a guardrail such as AGENTS.md, docs, skill, verifier, test, policy, or checklist")
     if not is_scope_change and not TESTING_AUDIT_RE.search(testing_audit):

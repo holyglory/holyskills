@@ -11,8 +11,26 @@ from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
 
-DOC_EXTENSIONS = {".md", ".mdx", ".markdown"}
+DOC_EXTENSIONS = {".md", ".mdx", ".markdown", ".rst", ".adoc", ".asciidoc"}
 SOURCE_HINT_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte", ".html", ".cshtml", ".razor"}
+COMMENT_LINE_RE = re.compile(r"^\s*(?://+|#+|\*+|/\*+|<!--)")
+COMMENT_JOURNEY_TERMS = ("journey", "user flow", "workflow", "onboarding", "use case", "user story")
+
+
+def count_comment_journey_hits(text: str) -> int:
+    """Count code-comment lines that describe a user journey.
+
+    Journeys are sometimes documented in JSDoc/inline comments rather than
+    Markdown; without this an inventory would report 'no journey docs' even
+    though the intent exists in source.
+    """
+    hits = 0
+    for line in text.splitlines():
+        if COMMENT_LINE_RE.match(line):
+            lowered = line.lower()
+            if any(term in lowered for term in COMMENT_JOURNEY_TERMS):
+                hits += 1
+    return hits
 EXCLUDED_DIRS = {
     ".git",
     ".hg",
@@ -660,6 +678,7 @@ def source_hint(repo: Path, path: Path) -> SourceHint | None:
 def build_inventory(repo: Path) -> dict:
     docs: list[DocRecord] = []
     hints: list[SourceHint] = []
+    source_comment_journey_hits = 0
     for path in iter_files(repo):
         if path.suffix.lower() in DOC_EXTENSIONS:
             docs.append(doc_record(repo, path))
@@ -667,12 +686,18 @@ def build_inventory(repo: Path) -> dict:
             hint = source_hint(repo, path)
             if hint:
                 hints.append(hint)
+            source_comment_journey_hits += count_comment_journey_hits(read_text(path))
     missing_signals: list[str] = []
     ui_implementation_risk_signals: list[str] = []
     if not any(doc.likely_product_doc for doc in docs):
         missing_signals.append("No strong app idea/product overview documentation detected.")
     if not any(doc.likely_journey_doc for doc in docs):
         missing_signals.append("No strong user journey/workflow/persona documentation detected.")
+        if source_comment_journey_hits > 0:
+            missing_signals.append(
+                f"Journey descriptions appear only in source comments ({source_comment_journey_hits} hit(s)); "
+                "move them into product/journey docs so they can be reviewed and kept current."
+            )
     if sum(doc.ux_hits for doc in docs) < 3:
         missing_signals.append("Very little UI/UX hierarchy, navigation, responsive, or accessibility documentation detected.")
     decision_model_doc_count = sum(1 for doc in docs if doc.likely_decision_model_doc)
@@ -798,6 +823,7 @@ def build_inventory(repo: Path) -> dict:
             and (not has_status_summary_terms or has_status_summary_model_terms)
         ),
         "source_hint_count": len(hints),
+        "source_comment_journey_hits": source_comment_journey_hits,
         "docs": [asdict(doc) for doc in sorted(docs, key=lambda item: item.path)],
         "source_hints": [asdict(hint) for hint in sorted(hints, key=lambda item: item.path)[:100]],
         "missing_signals": missing_signals,

@@ -1,6 +1,6 @@
 ---
 name: ui-implementation-audit
-description: Audit a repository's implemented user interface against mockup images, visual assets, and user journey requirements. Use when Codex needs to compare rendered desktop/mobile UI screenshots and UI source code against design assets, ImageGen mockups, Figma exports, screenshots, product journeys, or UX requirements, then produce a prioritized plan for closing visual, responsive, interaction, journey, implementation, and test gaps. Only interface-defining source files are queued in deterministic source batches.
+description: Audit a repository's implemented user interface against mockup images, visual assets, and user journey requirements. Use when an agent (Codex, Claude Code) needs to compare rendered desktop/mobile UI screenshots and UI source code against design assets, ImageGen mockups, Figma exports, screenshots, product journeys, or UX requirements, then produce a prioritized plan for closing visual, responsive, interaction, journey, implementation, and test gaps. Only interface-defining source files are queued in deterministic source batches.
 ---
 
 # UI Implementation Audit
@@ -193,6 +193,15 @@ and the documentation handoff conflict instead of marking the UI as compliant.
    - Treat verifier failures as blockers before final synthesis.
 
 6. **Synthesize the implementation plan**
+   - For large audits, consolidate findings across all reports first:
+     ```bash
+     python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/_vendor/full_repo_harness/merge_findings.py" \
+       --reports <audit-output>/reports \
+       --markdown-out <audit-output>/consolidated-findings.md
+     ```
+     It deduplicates by primary file and summary, ranks P0→P3, and cites the
+     source reports; use it as the starting point, not a replacement for lead
+     judgment.
    - Deduplicate source and visual findings.
    - Separate confirmed screenshot/source gaps from hypotheses and blockers.
    - Treat rendered journey-usability failures as real UI defects even when the
@@ -364,12 +373,15 @@ Return exactly these top-level headings:
 ```
 
 The `Accessibility And Interaction Findings` section must include a short
-checklist before or after findings with these exact labels: `badge-detail`,
-`row-hit-target`, `disclosure-scrollbar`, `icon-meaning`,
-`stable-expansion-width`, `message-metadata`. Each label must be marked `pass`,
-`gap`, `blocked`, or `not applicable` with a file/screenshot/source reference.
-If any label is `gap` or `blocked`, include a prioritized finding in this
-section or in the closest specific findings section.
+checklist before or after findings with all ten exact labels: `badge-detail`,
+`row-hit-target`, `navigation-cursor`, `transient-disclosure`,
+`disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`,
+`status-summary`, `message-metadata`. Each label must be marked `pass`, `gap`,
+`blocked`, or `not applicable` with a file/screenshot/source reference. The
+`visual_comparison_audit` worker report is verified for these labels
+automatically, so the same set must be carried into this final section. If any
+label is `gap` or `blocked`, include a prioritized finding in this section or in
+the closest specific findings section.
 
 Use this priority scale:
 

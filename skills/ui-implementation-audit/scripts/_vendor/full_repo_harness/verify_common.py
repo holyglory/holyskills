@@ -11,6 +11,43 @@ from pathlib import Path
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
 
+# Canonical interaction/metadata checklist labels shared by every UI-bearing
+# audit skill. This is the single source of truth so the three verifiers cannot
+# drift, and so the "hard reporting gate" in the SKILL.md contracts is enforced
+# by code rather than prose.
+INTERACTION_CHECKLIST_LABELS = (
+    "badge-detail",
+    "row-hit-target",
+    "navigation-cursor",
+    "transient-disclosure",
+    "disclosure-scrollbar",
+    "icon-meaning",
+    "stable-expansion-width",
+    "hover-copy",
+    "status-summary",
+    "message-metadata",
+)
+_CHECKLIST_STATUS_RE = r"(?:pass|passed|gap|blocked|not[\s\-]?applicable|n/?a)"
+
+
+def interaction_checklist_missing(text: str) -> list[str]:
+    """Return the checklist labels that are absent or not marked with a status.
+
+    A label counts as marked when it is followed by ``=``, ``:`` or a table-cell
+    ``|`` separator and a ``pass``/``gap``/``blocked``/``not-applicable`` status
+    token. That matches both the inline ``badge-detail=pass; ...`` form and the
+    table-cell form that the batch prompts instruct workers to emit.
+    """
+    missing: list[str] = []
+    for label in INTERACTION_CHECKLIST_LABELS:
+        pattern = re.compile(
+            re.escape(label) + r"\s*(?:[=:]|\|)\s*" + _CHECKLIST_STATUS_RE,
+            re.IGNORECASE,
+        )
+        if not pattern.search(text):
+            missing.append(label)
+    return missing
+
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()

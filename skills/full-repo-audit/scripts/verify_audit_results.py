@@ -14,6 +14,21 @@ from collections import Counter, defaultdict
 from pathlib import Path, PurePosixPath
 
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+SKILL_DIR = SCRIPT_DIR.parent
+REPO_ROOT = Path(__file__).resolve().parents[3]
+VENDOR_ROOT = SCRIPT_DIR / "_vendor"
+DEV_SKILL_DIR = (REPO_ROOT / "skills" / "full-repo-audit").resolve()
+running_in_dev_repo = DEV_SKILL_DIR == SKILL_DIR.resolve() and (REPO_ROOT / "full_repo_harness" / "verify_common.py").is_file()
+path_roots = [REPO_ROOT, VENDOR_ROOT] if running_in_dev_repo else [VENDOR_ROOT]
+for root in reversed([item for item in path_roots if item.is_dir()]):
+    root_text = str(root)
+    if root_text not in sys.path:
+        sys.path.insert(0, root_text)
+
+from full_repo_harness import verify_common as common
+
+
 BATCH_ID_RE = re.compile(r"\bbatch_(\d{3,})\b", re.IGNORECASE)
 REPORT_FILENAME_RE = re.compile(r"^batch_\d{3,}\.md$", re.IGNORECASE)
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -1090,6 +1105,18 @@ def validate_journey_report(
                     "reason": "visual report must include the required table with viewport checks",
                 }
             )
+        if interface_files and not report_is_not_applicable:
+            checklist_text = f"{checks_body_raw}\n{bodies.get('findings', '')}"
+            missing_labels = common.interaction_checklist_missing(checklist_text)
+            if missing_labels:
+                issues.append(
+                    {
+                        "path": str(report_path),
+                        "section": "visual journey checks",
+                        "reason": "rendered visual journey report must mark every interaction checklist label pass/gap/blocked/not-applicable",
+                        "missing": missing_labels,
+                    }
+                )
         visual_rows = parse_markdown_table_dicts(checks_body_raw)
         if visual_rows and set(visual_rows[0]) != VISUAL_JOURNEY_TABLE_HEADERS:
             issues.append(
