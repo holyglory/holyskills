@@ -1778,7 +1778,7 @@ For CLI, library, plugin, or skill packages that expose only metadata/Markdown a
 
 ## Tasks
 
-1. Identify available visual test tooling: Playwright, Cypress, Storybook, browser MCP tools, native UI preview/test harnesses, screenshots, or documented local dev/test mode.
+1. Identify available visual test tooling: Playwright, Cypress, Storybook, browser MCP tools, native UI preview/test harnesses, screenshots, `formal-web-ui-verification`, or documented local dev/test mode.
 2. Prefer test mode or fixture data. Use production mode only when the user explicitly instructed it or no side-effecting/heavy path is involved.
 3. For each confirmed or drafted high-frequency journey, verify or plan a visual walk through desktop and narrow mobile viewports, including required UI elements, critical states, and expected test evidence.
 4. Check that navigation and primary decision elements are visible, relevant, accessible, and prioritized ahead of less probable routes, while recording whether the UI assumption is confirmed or only source-inferred.
@@ -1786,7 +1786,8 @@ For CLI, library, plugin, or skill packages that expose only metadata/Markdown a
 6. Check compactness: critical journey information and primary actions should fit on desktop, native, and mobile surfaces without overlap, accidental horizontal scroll, hidden overflow without scrolling, unreadable compression, low contrast, invisible theme text, nested visual frames, unstable disclosure controls, or being buried under decorative/detail/debug/low-relevance content.
 7. Check interaction affordances: decision badges/flags should react to hover/focus/click and reveal useful detail when interactive; meaningful rows should activate as rows rather than tiny icon-only targets; navigational explanations/rows should have a predictable destination and pointer/focus affordance; temporary popovers and expanded panels should have an intentional close or timeout lifecycle; expand/collapse controls should not overlap or fight scrollbars; expanded/collapsed tool or result blocks should keep stable widths; copy controls should not permanently clutter message reading and should stay reachable when revealed; concise status blocks should avoid duplicate status/severity/duration noise; and timestamps or passive metadata should not be selectable content unless the journey justifies it. Explicitly mark these checklist labels for every relevant visual/source-inferred surface: `badge-detail`, `row-hit-target`, `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`, `status-summary`, `message-metadata`.
 8. Check broad layout quality: overload, crowding, ambiguous hierarchy, clipped/truncated text, oversized controls, unscannable information, nested cards/blocks, border/background stacks, grid/alignment discipline, stable expand/collapse controls, icon meaning, instruction noise, avatar/decorative clutter, message alignment, sender/routing label noise, theme consistency, readable font sizes, contrast, text/background colors, scrollability for overflow, menu/detail usability, and whether heavy-load actions can be avoided in test mode.
-9. When visual checks are applicable, cite the command/tool you used and at least one screenshot, trace, recording, or other artifact path/evidence in `Visual Tooling` or the `Evidence` column. If required screens, elements, states, or visual tests are missing, report them as gaps. If no repo-owned rendered UI exists, explicitly mark checks `not applicable` with evidence.
+9. When a web UI has a safe render path, run `formal-web-ui-verification` or explicitly report why formal DOM/layout verification is blocked. Treat unresolved critical formal findings for clipped text, hidden controls, unintended overlap, off-canvas controls, broken media, invisible text, horizontal overflow, or area violations as gaps. Always record the verifier's visible scrollbar inventory as evidence.
+10. When visual checks are applicable, cite the command/tool you used and at least one screenshot, trace, recording, formal verifier report, or other artifact path/evidence in `Visual Tooling` or the `Evidence` column. If required screens, elements, states, formal DOM checks, or visual tests are missing, report them as gaps. If no repo-owned rendered UI exists, explicitly mark checks `not applicable` with evidence.
 
 ## Required Output
 
@@ -1799,7 +1800,7 @@ Return Markdown with exactly these sections:
 visual_journey
 
 ## Visual Tooling
-List tools/modes found, commands considered or run, and blockers.
+List tools/modes found, commands considered or run, formal Web UI verifier status, visible scrollbar inventory when available, and blockers.
 
 ## Visual Journey Checks
 Use a Markdown table with exactly these columns:

@@ -58,6 +58,12 @@ and the documentation handoff conflict instead of marking the UI as compliant.
   Playwright, Cypress, Storybook, browser MCP tools, app/browser preview,
   native simulator/preview tools, or screenshot-capable test commands. It must
   check desktop and narrow mobile viewports when a web UI exists.
+- When a web UI has a safe render path, the visual comparison worker must run
+  `formal-web-ui-verification` or explicitly report why it is blocked. Treat
+  unresolved critical formal findings for clipping, overlap, off-canvas
+  controls, broken media, invisible text, document overflow, or area violations
+  as audit gaps. Always include the verifier's visible scrollbar inventory in
+  visual evidence, even when it has no critical findings.
 - The visual comparison worker must answer whether each rendered viewport
   supports the current journey decision. Except on pages whose primary purpose
   is data entry, visible content should mostly drive the current decision;
@@ -299,6 +305,10 @@ desktop and mobile/narrow rows when a web UI can be rendered. Evidence should
 name the command/tool and screenshot/trace/video/artifact path when available.
 If screenshots cannot be produced, the row result must be `BLOCKED` and the
 findings must explain the missing safe render path.
+When the web UI can be rendered, evidence should also name the
+`formal-web-ui-verification` command and report path. If the verifier cannot
+run, mark formal DOM/layout verification as `BLOCKED`; if it runs, summarize
+critical findings and visible scrollbars from the Markdown or JSON report.
 
 For each rendered screen, check:
 
@@ -373,8 +383,9 @@ Use this priority scale:
 
 - The final report must state the audit output path, run id, source files
   queued, visual assets/mockups found, requirement sources found, visual tools
-  attempted, screenshot/artifact evidence, unchecked files/units, scope
-  warnings, ledger status, and verifier result.
+  attempted, formal Web UI verifier result when applicable, visible scrollbar
+  inventory when applicable, screenshot/artifact evidence, unchecked
+  files/units, scope warnings, ledger status, and verifier result.
 - If no mockups/assets are found, label visual target coverage as
   `mockup target missing` and include a plan item to add or provide target
   imagery.

@@ -726,8 +726,8 @@ def assert_manifest(manifest_path: Path) -> None:
             check(required_field in journey_prompt_text, "journey source prompt should spell out verifier-required finding fields")
             check(required_field in visual_prompt_text, "visual journey prompt should spell out verifier-required finding fields")
         check(
-            "screenshot, trace, recording, or other artifact" in visual_prompt_text,
-            "visual journey prompt should require command/tool and visual artifact evidence when applicable",
+            "screenshot, trace, recording, formal verifier report, or other artifact" in visual_prompt_text,
+            "visual journey prompt should require command/tool, formal verifier report, and visual artifact evidence when applicable",
         )
         check(
             "UI assumption status" in journey_prompt_text and "source-inferred" in journey_prompt_text,

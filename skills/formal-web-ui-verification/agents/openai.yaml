@@ -1,0 +1,4 @@
+interface:
+  display_name: "Formal Web UI Verification"
+  short_description: "Catch clipped, hidden, and overlapping web UI"
+  default_prompt: "Use $formal-web-ui-verification to run a formal DOM/layout check against this web app's desktop and mobile routes, then report objective clipping, overlap, offscreen, overflow, visibility, broken-media, and contrast failures with artifacts."
