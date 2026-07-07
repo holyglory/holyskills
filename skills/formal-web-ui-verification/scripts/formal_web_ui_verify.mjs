@@ -164,7 +164,18 @@ function normalizeCookieList(value) {
       return { name: name.trim(), value: val };
     }
     if (item && typeof item === "object" && typeof item.name === "string" && typeof item.value === "string") {
-      return { name: item.name, value: item.value, url: item.url, domain: item.domain, path: item.path };
+      const normalized = { name: item.name.trim(), value: item.value };
+      if (!normalized.name) throw new Error("cookies entries must have a non-empty name");
+      // Validate optional scoping fields here so a malformed config fails
+      // with a clear message instead of a confusing Playwright error later.
+      for (const field of ["url", "domain", "path"]) {
+        if (item[field] === undefined || item[field] === null) continue;
+        if (typeof item[field] !== "string" || !item[field].trim()) {
+          throw new Error(`cookies entry '${normalized.name}': ${field} must be a non-empty string`);
+        }
+        normalized[field] = item[field].trim();
+      }
+      return normalized;
     }
     throw new Error("cookies entries must be 'name=value' strings or {name, value, url?, domain?, path?}");
   });
