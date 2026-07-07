@@ -6,11 +6,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
 import threading
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
@@ -70,6 +71,80 @@ class Server:
         self.httpd.shutdown()
         self.thread.join(timeout=5)
         os.chdir(self.previous)
+
+
+class _FixedPageHandler(BaseHTTPRequestHandler):
+    """Serves a body chosen by pick_body(); used for cookie/TLS fixtures."""
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def pick_body(self) -> str:
+        raise NotImplementedError
+
+    def do_GET(self) -> None:
+        data = self.pick_body().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+class CookieGateHandler(_FixedPageHandler):
+    """Without sess=ok the page has invisible text (a must-catch critical)."""
+
+    def pick_body(self) -> str:
+        if "sess=ok" in (self.headers.get("Cookie") or ""):
+            return page("<h1>Dashboard</h1><p>Session accepted.</p><button>Save changes</button>")
+        return page("<p class='bad'>Invisible message</p>", ".bad { color: #fff; background: #fff; }")
+
+
+class CleanPageHandler(_FixedPageHandler):
+    def pick_body(self) -> str:
+        return page("<h1>Secure</h1><p>Served over self-signed TLS.</p><button>Save changes</button>")
+
+
+class DynamicServer:
+    def __init__(self, handler: type[BaseHTTPRequestHandler]) -> None:
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.scheme = "http"
+        self.thread: threading.Thread | None = None
+
+    def start(self) -> "DynamicServer":
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        return self
+
+    @property
+    def base_url(self) -> str:
+        return f"{self.scheme}://127.0.0.1:{self.httpd.server_address[1]}"
+
+    def close(self) -> None:
+        self.httpd.shutdown()
+        if self.thread:
+            self.thread.join(timeout=5)
+
+
+def make_tls_server(tmp: Path) -> DynamicServer:
+    cert = tmp / "self-test-tls.crt"
+    key = tmp / "self-test-tls.key"
+    subprocess.run(
+        [
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+            "-keyout", str(key), "-out", str(cert), "-days", "2",
+            "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=TIMEOUT_SECONDS,
+    )
+    server = DynamicServer(CleanPageHandler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(cert), str(key))
+    server.httpd.socket = context.wrap_socket(server.httpd.socket, server_side=True)
+    server.scheme = "https"
+    return server.start()
 
 
 def node_binary() -> str:
@@ -632,6 +707,40 @@ def main() -> int:
 
         form = run_verify(f"{server.base_url}/form-controls.html", tmp / "form-controls", expect=0)
         assert_no_critical(form)
+
+        # --cookie: the gated fixture is broken for anonymous visitors and clean
+        # with the session cookie, proving the cookie reaches the page (recall
+        # both ways: the anon run must still catch the critical).
+        cookie_server = DynamicServer(CookieGateHandler).start()
+        try:
+            cookie_anon = run_verify(f"{cookie_server.base_url}/gated.html", tmp / "cookie-anon", expect=1)
+            assert_critical_rule(cookie_anon, "invisible-text")
+            cookie_authed = run_verify(
+                f"{cookie_server.base_url}/gated.html",
+                tmp / "cookie-authed",
+                expect=0,
+                extra=["--cookie", "sess=ok"],
+            )
+            assert_no_critical(cookie_authed)
+            if not page_metrics(cookie_authed):
+                raise AssertionError("Cookie-authenticated page was skipped")
+        finally:
+            cookie_server.close()
+
+        # --ignore-https-errors: a self-signed TLS target must be verifiable.
+        tls_server = make_tls_server(tmp)
+        try:
+            tls_clean = run_verify(
+                f"{tls_server.base_url}/clean.html",
+                tmp / "tls-clean",
+                expect=0,
+                extra=["--ignore-https-errors"],
+            )
+            assert_no_critical(tls_clean)
+            if not page_metrics(tls_clean):
+                raise AssertionError("Self-signed TLS page was skipped")
+        finally:
+            tls_server.close()
 
         print("self-test ok")
         return 0

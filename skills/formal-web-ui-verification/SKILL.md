@@ -52,6 +52,13 @@ node "$FORMAL_WEB_UI_SKILL_DIR/scripts/formal_web_ui_verify.mjs" \
   --fail-on critical
 ```
 
+Auth-gated pages and local TLS: pass `--cookie name=value` (repeatable; scoped
+to the target URL) to verify pages behind a session cookie, and
+`--ignore-https-errors` when the target uses a self-signed or otherwise
+untrusted certificate (local HTTPS dev servers). Both are also accepted in the
+JSON config as `cookies` (strings or `{name, value, url?, domain?, path?}`)
+and `ignoreHttpsErrors`.
+
 Verify healthy coordinator-managed web URLs without starting duplicate servers:
 
 ```bash
