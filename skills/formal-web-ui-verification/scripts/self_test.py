@@ -724,6 +724,51 @@ def main() -> int:
             assert_no_critical(cookie_authed)
             if not page_metrics(cookie_authed):
                 raise AssertionError("Cookie-authenticated page was skipped")
+
+            # Config-object cookie form with domain/path scoping: must travel
+            # through normalizeCookieList's object branch AND the addCookies
+            # domain/path plumbing (not the url fallback) and still reach the
+            # gated page — recall, not just parse acceptance.
+            cookie_scoped = run_verify_config(
+                {
+                    "targets": [{"url": f"{cookie_server.base_url}/gated.html"}],
+                    "cookies": [{"name": "sess", "value": "ok", "domain": "127.0.0.1", "path": "/"}],
+                },
+                tmp / "cookie-config-scoped",
+                expect=0,
+            )
+            assert_no_critical(cookie_scoped)
+            if not page_metrics(cookie_scoped):
+                raise AssertionError("Config-scoped cookie page was skipped")
+
+            # Malformed scoping fields must fail fast with the validator's
+            # message, not a downstream Playwright error. (Raw invocation:
+            # config validation aborts before any report is written.)
+            bad_out = tmp / "cookie-config-bad"
+            bad_out.mkdir(parents=True, exist_ok=True)
+            bad_config = bad_out / "formal-web-ui.json"
+            bad_config.write_text(
+                json.dumps(
+                    {
+                        "targets": [{"url": f"{cookie_server.base_url}/gated.html"}],
+                        "cookies": [{"name": "sess", "value": "ok", "domain": True}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            bad_result = subprocess.run(
+                [node_binary(), str(VERIFY), "--config", str(bad_config)],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=TIMEOUT_SECONDS,
+                env=verifier_env(),
+            )
+            if bad_result.returncode == 0:
+                raise AssertionError("Malformed cookie domain should fail config validation")
+            bad_text = f"{bad_result.stdout}\n{bad_result.stderr}"
+            if "domain must be a non-empty string" not in bad_text:
+                raise AssertionError(f"Malformed cookie domain should surface the validator message, got: {bad_text[:400]}")
         finally:
             cookie_server.close()
 
