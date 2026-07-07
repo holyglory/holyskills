@@ -36,6 +36,9 @@ Options:
   --allow-overlap <selector=reason>
   --screenshot-dir <path>           Save full-page screenshots for evidence.
   --no-scroll                       Skip the full-page scroll pass (default: scroll on).
+  --cookie <name=value>             Send a cookie with every target (repeatable). Use for
+                                    auth-gated pages; scoped to the target URL by default.
+  --ignore-https-errors             Accept invalid/self-signed TLS certificates.
 `;
 }
 
@@ -83,6 +86,8 @@ function parseArgs(argv) {
     onlyCurrent: false,
     screenshotDir: undefined,
     noScroll: false,
+    cookies: [],
+    ignoreHttpsErrors: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -129,6 +134,11 @@ function parseArgs(argv) {
       cli.screenshotDir = next();
     } else if (arg === "--no-scroll") {
       cli.noScroll = true;
+    } else if (arg === "--cookie") {
+      const [name, value] = parseKeyValue(next(), "--cookie");
+      cli.cookies.push({ name: name.trim(), value });
+    } else if (arg === "--ignore-https-errors") {
+      cli.ignoreHttpsErrors = true;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -143,6 +153,32 @@ function loadConfig(configPath) {
     throw new Error("Config must be a JSON object");
   }
   return parsed;
+}
+
+function normalizeCookieList(value) {
+  if (!value) return [];
+  if (!Array.isArray(value)) throw new Error("cookies must be an array");
+  return value.map((item) => {
+    if (typeof item === "string") {
+      const [name, val] = parseKeyValue(item, "cookies");
+      return { name: name.trim(), value: val };
+    }
+    if (item && typeof item === "object" && typeof item.name === "string" && typeof item.value === "string") {
+      const normalized = { name: item.name.trim(), value: item.value };
+      if (!normalized.name) throw new Error("cookies entries must have a non-empty name");
+      // Validate optional scoping fields here so a malformed config fails
+      // with a clear message instead of a confusing Playwright error later.
+      for (const field of ["url", "domain", "path"]) {
+        if (item[field] === undefined || item[field] === null) continue;
+        if (typeof item[field] !== "string" || !item[field].trim()) {
+          throw new Error(`cookies entry '${normalized.name}': ${field} must be a non-empty string`);
+        }
+        normalized[field] = item[field].trim();
+      }
+      return normalized;
+    }
+    throw new Error("cookies entries must be 'name=value' strings or {name, value, url?, domain?, path?}");
+  });
 }
 
 function normalizeSelectorReasonList(value, name) {
@@ -277,6 +313,8 @@ function normalizeConfig(config, cli) {
     onlyCurrent: cli.onlyCurrent || Boolean(config.onlyCurrent),
     screenshotDir: cli.screenshotDir || config.screenshotDir,
     scroll: cli.noScroll ? false : (config.scroll === undefined ? true : Boolean(config.scroll)),
+    cookies: [...normalizeCookieList(config.cookies), ...cli.cookies],
+    ignoreHttpsErrors: cli.ignoreHttpsErrors || Boolean(config.ignoreHttpsErrors),
   };
 }
 
@@ -1552,8 +1590,19 @@ async function main() {
   try {
     for (const target of targets) {
       for (const viewport of config.viewports) {
-        const page = await browser.newPage();
+        const page = await browser.newPage(config.ignoreHttpsErrors ? { ignoreHTTPSErrors: true } : {});
         try {
+          if (config.cookies.length) {
+            await page.context().addCookies(
+              config.cookies.map((cookie) => ({
+                name: cookie.name,
+                value: cookie.value,
+                ...(cookie.domain
+                  ? { domain: cookie.domain, path: cookie.path || "/" }
+                  : { url: cookie.url || target.url }),
+              })),
+            );
+          }
           report.pages.push(await verifyTarget(page, target, viewport, config, config.screenshotDir));
         } finally {
           await page.close().catch(() => {});
