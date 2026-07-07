@@ -13,6 +13,7 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,12 +54,23 @@ class QuietHandler(SimpleHTTPRequestHandler):
         return
 
 
+class FastBindThreadingHTTPServer(ThreadingHTTPServer):
+    # macOS CI runners black-hole reverse DNS, so HTTPServer.server_bind's
+    # socket.getfqdn() call stalls fixtures ~30s between bind() and listen().
+    # The FQDN is unused here — bind like a plain TCPServer.
+    def server_bind(self) -> None:
+        TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
+
+
 class Server:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.previous = Path.cwd()
         os.chdir(root)
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+        self.httpd = FastBindThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
 
@@ -107,7 +119,7 @@ class CleanPageHandler(_FixedPageHandler):
 
 class DynamicServer:
     def __init__(self, handler: type[BaseHTTPRequestHandler]) -> None:
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.httpd = FastBindThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.scheme = "http"
         self.thread: threading.Thread | None = None
 
