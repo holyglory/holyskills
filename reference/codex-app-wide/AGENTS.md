@@ -2,6 +2,18 @@
 - Never propose V1/MVP limited functionality implementation. User always expects the entire requested functionality to work, no matter how large it is. Engage sub-agents to help planning and implementing larger features when necessary.
 - Before fixing errors, replicate them. Test before delivery the same way you replicated them before.
 - When delivering or fixing a detector — a test suite, verifier, audit, linter, monitor, or alert — prove recall, not only precision: exercise it against realistic examples of the failures it claims to catch, shaped like real-world breakage rather than like the detector's own implementation, and keep at least one such must-catch example per advertised detection class in its automated checks, plus false-positive guards for common intentional patterns. A detector that only passes fixtures mirroring its implementation is not validated.
+- Before repository-wide audits, broad refactors, migrations, history rewrites,
+  or repository splits, fetch the remote default branch and compare local HEAD,
+  the remote head, and their merge base. Use the repository's freshness
+  detector when it provides one, and distinguish `current`, `ahead`, `behind`,
+  `diverged`, `dirty-on-stale-base`, and `remote-unavailable`; lack of remote
+  access is unknown, not proof that the checkout is current.
+- Never discard or rewrite dirty work to satisfy a freshness preflight. Preserve
+  it, create an isolated checkout from the remote baseline, and reconcile with
+  an evidence-backed three-way merge. Do not pull, rebase, reset, stash, or
+  clean valuable local changes as a shortcut. Pause architecture-changing work
+  when remote truth cannot be established unless the user explicitly authorizes
+  an offline baseline.
 - Generalize user bug or wrong behavior reports. See if such potential wrong behavior may happen elsewhere. 
 - Use ImageGen2 to design interfaces when fixing interfaces on user prompts. Confirm mockups with the user.
 - Total ban across all projects: never ship or present fake user-facing
