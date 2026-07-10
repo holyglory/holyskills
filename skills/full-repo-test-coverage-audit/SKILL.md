@@ -1,6 +1,6 @@
 ---
 name: full-repo-test-coverage-audit
-description: Run a full repository test coverage audit that combines a high-effort lead architectural test-strategy review with low-effort file-batch workers checking whether every reasonable function, method, UI journey, feature, UI element, and high-level behavior has meaningful unit, integration, visual, or e2e coverage. Use when the user asks to audit test coverage, find missing tests, assess scenario and edge-case coverage, or produce an implementation plan for closing test gaps across a repo.
+description: Run a manifest-verified test assurance audit with deterministic structural target discovery, exact per-target TESTED/UNTESTED/NOT_REASONABLE decisions, real test path/symbol validation, and optional LCOV/Cobertura/coverage.py/Istanbul evidence. Use to find missing tests and scenario gaps or plan unit, integration, visual, and e2e improvements without mislabeling structural review as empirical coverage.
 ---
 
 # Full Repo Test Coverage Audit
@@ -8,6 +8,8 @@ description: Run a full repository test coverage audit that combines a high-effo
 ## Overview
 
 Run a read-only, manifest-verified audit of test coverage. The lead agent reviews the repo architecture, test strategy, UI/user journeys, intended feature set, UI element set, and high-level behavior. Low-effort workers inspect deterministic file batches and manually identify reasonable test targets, existing test evidence, missing scenarios, boundary cases, failure paths, and recommended test types.
+
+This is an empirical coverage audit only when the user supplies a supported runtime coverage report. Without one, label results `structural/manual test assurance`; the presence of a test file is structural evidence, not proof that it ran or covered a line.
 
 Treat documented product intent, confirmed user journeys, source-backed feature promises, visible UI elements, and expected tests as one complete product contract. Every intended journey, feature, route, control, state, handler, persistence path, permission path, error path, and verification path needs meaningful coverage; otherwise report the gap.
 
@@ -31,6 +33,7 @@ Treat documented product intent, confirmed user journeys, source-backed feature 
    ```
 
 3. Inspect `audit_index.md`, `manifest.json`, and `excluded_files.json`. Resolve any `scope_warning: true` rows before claiming full coverage, or disclose downgraded coverage.
+   - Supply runtime evidence with repeated `--coverage-report <path>` arguments. Supported formats are LCOV, Cobertura XML, coverage.py JSON, and Istanbul JSON. The manifest records exact evidence path, SHA-256, format, measured lines, and covered lines.
 4. Fill `effort_ledger.json` as workers are dispatched and reconciled: lead effort status, subagent capability, batch worker ids/effort/report status, UI journey coverage worker, visual/e2e coverage worker, fallback status, and pruned-directory review decisions when applicable.
 5. Dispatch one low-effort worker per `batch_###.md`. Tell workers not to edit files.
 6. If generated, dispatch `ui_test_coverage_audit.md` and `visual_e2e_coverage_audit.md` as separate low-effort workers.
@@ -77,12 +80,20 @@ Each batch report must contain exactly these top-level headings in order:
 
 `File Coverage` must include one row per owned file or range with columns `Unit`, `Status`, `SHA-256`, and `Purpose`; every status must be `CHECKED`.
 
-`Test Target Inventory` must include one row per reviewed target or explicitly excluded non-target with columns `Unit`, `File`, `Target`, `Kind`, `Existing Test Evidence`, `Scenario Assessment`, and `Recommendation`.
+`manifest.json.test_coverage_audit.target_inventory` is the deterministic coverage floor. `Test Target Inventory` must map every exact target id once with columns `Target ID`, `Unit`, `File`, `Target`, `Kind`, `Disposition`, `Evidence Level`, `Existing Test Evidence`, `Scenario Assessment`, and `Recommendation`. Disposition is `TESTED`, `UNTESTED`, or `NOT_REASONABLE`. Evidence level is `EMPIRICAL`, `STRUCTURAL`, `MANUAL`, or `NONE`.
+Add behavior the scanner misses with a unique `manual-...` target id bound to an exact unit/file; the verifier accepts these additions but never permits omission of a deterministic target.
+
+- `EMPIRICAL` requires a supplied coverage artifact that marks the target line covered plus a real `test/path#test name` reference.
+- `STRUCTURAL` requires a real test path and test symbol/name present in that file; it does not claim execution.
+- `MANUAL` requires concrete `manual: ...` evidence, or `not reasonable: ...` rationale for excluded targets.
+- `NONE` is required for `UNTESTED` with `None found`.
+- Every `UNTESTED` target needs a finding bound by exact `Target ID`. Invented test paths or symbols fail verification.
 
 `Coverage Findings` must use either the exact sentinel `No findings.` or finding blocks with these fields:
 
 - Priority: `P0`, `P1`, `P2`, or `P3`
 - Files: repo-relative files owned by the batch
+- Target ID: exact deterministic target id
 - Target: function, method, component, journey, API, job, or behavior
 - Existing test evidence: concrete tests found or `None found`
 - Missing scenarios/boundaries: concrete missing cases
@@ -106,6 +117,8 @@ Return exactly these top-level headings:
 ## Implementation Plan
 ## Verification Plan
 ```
+
+`## Coverage` must state `empirical`, `structural`, and `manual` scopes separately. Name each supplied coverage artifact, format, SHA-256, and source-file scope. If none was supplied, say `No empirical runtime coverage evidence supplied`; never report a percentage inferred from source/test matching.
 
 Prioritize gaps with:
 

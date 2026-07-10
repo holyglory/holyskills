@@ -251,9 +251,13 @@ def main() -> int:
                 ".hero { color: #fff; background: linear-gradient(90deg, #0a3d62, #3c6382); padding: 24px; }",
             ),
         )
-        # Fix 3: a shadow-root host plus an iframe must surface metrics.notInspected and
-        # emit a not-inspected warning.
-        write(fixtures / "iframe-child.html", page("<p>Framed content.</p>"))
+        # Reachable open-shadow and iframe content must be inspected. Both
+        # contexts contain a realistic clipped control that the top document
+        # itself does not contain.
+        write(
+            fixtures / "iframe-child.html",
+            page("<button class='bad'>Framed action</button>", ".bad { width: 34px; overflow: hidden; white-space: nowrap; }"),
+        )
         write(
             fixtures / "shadow-iframe.html",
             page(
@@ -263,8 +267,37 @@ def main() -> int:
                 "<script>"
                 "const host = document.getElementById('host');"
                 "const root = host.attachShadow({mode: 'open'});"
-                "root.innerHTML = '<button>Inside shadow</button>';"
+                "root.innerHTML = '<style>.bad{width:34px;overflow:hidden;white-space:nowrap}</style>' +"
+                " '<button class=\"bad\">Shadow action</button>';"
                 "</script>",
+            ),
+        )
+        # A narrow viewport alone is not a mobile-device emulation. This page
+        # exposes a realistic touch/UA-only responsive defect so the descriptor
+        # path proves it sets device semantics as well as width and height.
+        write(
+            fixtures / "device-responsive.html",
+            page(
+                "<h1>Responsive account</h1><div id='slot'></div>"
+                "<script>"
+                "if (navigator.maxTouchPoints > 0 && /iPhone/.test(navigator.userAgent)) {"
+                " document.getElementById('slot').innerHTML = '<button class=\"bad\">Touch account actions</button>';"
+                "}"
+                "</script>",
+                ".bad { width: 38px; overflow: hidden; white-space: nowrap; }",
+            ),
+        )
+        # Hidden/transient states are measured only after explicit, auditable
+        # actions. The base state is clean; one opened state is broken and one
+        # opened state is an intentional clean disclosure.
+        write(
+            fixtures / "interaction-states.html",
+            page(
+                "<button id='open-bad' onclick=\"document.getElementById('bad-panel').hidden=false\">Open actions</button>"
+                "<button id='open-good' onclick=\"document.getElementById('good-panel').hidden=false\">Open help</button>"
+                "<section id='bad-panel' hidden><button class='bad'>Destructive account action</button></section>"
+                "<section id='good-panel' hidden><p>Keyboard-accessible help content.</p></section>",
+                ".bad { width: 40px; overflow: hidden; white-space: nowrap; }",
             ),
         )
         # Fix 1: a tall lazy-load page whose below-the-fold control is only created when
@@ -466,7 +499,126 @@ def main() -> int:
                 ".f { width: 120px; }",
             ),
         )
+        # Scroll-container reachability: a wide table row scrolled out of its own
+        # overflow-x container sits (in document coordinates) under a neighboring
+        # panel. That is reachable content, not an occlusion — hit-testing must
+        # scroll the container into view instead of blaming the neighbor.
+        write(
+            fixtures / "scroll-panel-neighbor.html",
+            page(
+                "<div class='cols'>"
+                "<div class='left'><div class='hscroll'><div class='wide'>"
+                "<span class='cell'>OpenFOAM long run condition name</span>"
+                "<span class='cell state'>pending</span>"
+                "</div></div></div>"
+                "<div class='right'><p>Neighbor panel content sits here.</p></div>"
+                "</div>",
+                ".cols { display: flex; gap: 8px; } .left { width: 160px; }"
+                " .hscroll { overflow-x: auto; } .wide { display: flex; gap: 12px; min-width: 480px; }"
+                " .cell { white-space: nowrap; flex: 0 0 auto; }"
+                " .right { width: 170px; background: #f4f6f8; padding: 8px; }",
+            ),
+        )
+        # Closed <details>: Chromium keeps layout boxes for the hidden content
+        # (content-visibility), so a later sibling legitimately occupies the same
+        # document coordinates. The hidden fields must not be reported occluded.
+        write(
+            fixtures / "details-closed-neighbor.html",
+            page(
+                "<details><summary>advanced settings</summary>"
+                "<label>Span <input value='1.0'></label>"
+                "<select><option>derived value</option></select>"
+                "</details>"
+                "<div class='after'>Preview panel that renders where the closed details content would be.</div>",
+                ".after { background: #f4f6f8; padding: 10px; }",
+            ),
+        )
+        # Framework dev overlays (Next.js badge portal) are dev-server artifacts,
+        # not page content: they must not count as occluders.
+        write(
+            fixtures / "dev-overlay-badge.html",
+            page(
+                "<div class='msg'>Status text pinned near the bottom left corner.</div>"
+                "<nextjs-portal class='badge'></nextjs-portal>",
+                ".msg { position: fixed; bottom: 12px; left: 12px; width: 260px; height: 36px; }"
+                " nextjs-portal.badge { position: fixed; bottom: 8px; left: 8px; width: 270px; height: 44px;"
+                " display: block; background: #000; border-radius: 22px; }",
+            ),
+        )
+        # Recall guard for the same code path: an opaque overlay covering content
+        # that IS visible inside the scroll container must still be caught.
+        write(
+            fixtures / "overlay-in-scroll.html",
+            page(
+                "<div class='hscroll'><div class='wide'>"
+                "<span class='cell'>Visible target text</span>"
+                "</div><div class='cover'></div></div>",
+                ".hscroll { position: relative; width: 300px; overflow-x: auto; }"
+                " .wide { min-width: 600px; } .cell { white-space: nowrap; }"
+                " .cover { position: absolute; left: 0; top: 0; width: 220px; height: 44px; background: #222; }",
+            ),
+        )
         server = Server(fixtures)
+
+        # Coverage recall: an explicit target that cannot be checked must fail
+        # the run instead of producing a successful zero-page report.
+        dead_target = run_verify("http://127.0.0.1:9/", tmp / "dead-target", expect=3)
+        if not dead_target.get("coverage", {}).get("failed"):
+            raise AssertionError("Dead explicit target should record a coverage failure")
+
+        not_found = run_verify(f"{server.base_url}/missing-route.html", tmp / "not-found", expect=3)
+        if not not_found.get("coverage", {}).get("failed"):
+            raise AssertionError("404 explicit target should record a coverage failure")
+
+        write(fixtures / "plain.txt", "not html\n")
+        non_html = run_verify(f"{server.base_url}/plain.txt", tmp / "non-html", expect=3)
+        if not non_html.get("coverage", {}).get("failed"):
+            raise AssertionError("Non-HTML explicit target should record a coverage failure")
+
+        allowed_missing = run_verify_config(
+            {
+                "targets": [
+                    {"url": f"{server.base_url}/clean.html"},
+                    {"url": f"{server.base_url}/optional.html", "allowFailure": "optional route is absent in this fixture"},
+                ],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "allowed-missing",
+            expect=0,
+        )
+        if allowed_missing.get("coverage", {}).get("failed") or len(allowed_missing.get("coverage", {}).get("tolerated", [])) != 1:
+            raise AssertionError("A reasoned optional-target exemption should remain reported without failing a checked run")
+
+        fake_coordinator = tmp / "fake-coordinator.py"
+        write(
+            fake_coordinator,
+            "import json\nprint(json.dumps({'urls': [{'url': 'http://127.0.0.1:9/', 'status': 'running'}]}))\n",
+        )
+        discovered_default = run_verify_config(
+            {
+                "fromCoordinator": True,
+                "coordinatorScript": str(fake_coordinator),
+                "minCheckedPages": 0,
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "discovered-default",
+            expect=3,
+        )
+        if not discovered_default.get("coverage", {}).get("failed"):
+            raise AssertionError("Coordinator-discovered failures should fail unless explicitly tolerated")
+        discovered_tolerated = run_verify_config(
+            {
+                "fromCoordinator": True,
+                "coordinatorScript": str(fake_coordinator),
+                "allowDiscoveredTargetFailures": True,
+                "minCheckedPages": 0,
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "discovered-tolerated",
+            expect=0,
+        )
+        if discovered_tolerated.get("coverage", {}).get("failed") or not discovered_tolerated.get("coverage", {}).get("tolerated"):
+            raise AssertionError("Explicitly tolerated discovered failures should stay visible without failing")
 
         clean = run_verify(f"{server.base_url}/clean.html", tmp / "clean", expect=0)
         assert_no_critical(clean)
@@ -484,6 +636,92 @@ def main() -> int:
         if not any(not page_report.get("skipped") for page_report in wait_for_config.get("pages", [])):
             raise AssertionError("Structured waitFor config skipped every page")
         assert_no_critical(wait_for_config)
+
+        narrow_not_device = run_verify_config(
+            {
+                "targets": [{"url": f"{server.base_url}/device-responsive.html"}],
+                "viewports": [{"name": "narrow-browser", "width": 390, "height": 844}],
+            },
+            tmp / "narrow-not-device",
+            expect=0,
+        )
+        assert_no_rule(narrow_not_device, "clipped-x")
+        mobile_descriptor = run_verify_config(
+            {
+                "targets": [{"url": f"{server.base_url}/device-responsive.html"}],
+                "viewports": [{"name": "iphone", "device": "iPhone 13"}],
+            },
+            tmp / "mobile-device-descriptor",
+            expect=1,
+        )
+        assert_critical_rule(mobile_descriptor, "clipped-x")
+
+        interaction_state = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/interaction-states.html",
+                    "states": [{
+                        "name": "actions-open",
+                        "actions": [{"action": "click", "selector": "#open-bad"}],
+                        "waitFor": {"selector": "#bad-panel:not([hidden])", "settleMs": 25},
+                    }],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "interaction-state",
+            expect=1,
+        )
+        pages_by_state = {page_report.get("target", {}).get("stateName"): page_report for page_report in interaction_state.get("pages", [])}
+        if set(pages_by_state) != {"base", "actions-open"}:
+            raise AssertionError(f"Expected independently checked base/open states, got {pages_by_state.keys()}")
+        if any(item.get("rule") == "clipped-x" for item in pages_by_state["base"].get("findings", [])):
+            raise AssertionError("Hidden base-state content must not be reported as a visible clip")
+        if not any(item.get("rule") == "clipped-x" for item in pages_by_state["actions-open"].get("findings", [])):
+            raise AssertionError("Opened transient state clip was not detected")
+        if any("actions" in page_report.get("target", {}) for page_report in interaction_state.get("pages", [])):
+            raise AssertionError("Interaction action payloads must not leak into public reports")
+
+        clean_interaction_state = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/interaction-states.html",
+                    "includeBase": False,
+                    "states": [{
+                        "name": "help-open",
+                        "actions": [{"action": "click", "selector": "#open-good"}],
+                    }],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "clean-interaction-state",
+            expect=0,
+        )
+        assert_no_critical(clean_interaction_state)
+
+        failed_interaction_state = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/interaction-states.html",
+                    "includeBase": False,
+                    "states": [{
+                        "name": "missing-trigger",
+                        "actions": [{
+                            "action": "fill",
+                            "selector": "#does-not-exist",
+                            "value": "SECRET_ACTION_VALUE_MUST_NOT_LEAK",
+                            "timeoutMs": 100,
+                        }],
+                    }],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "failed-interaction-state",
+            expect=3,
+        )
+        if not failed_interaction_state.get("coverage", {}).get("failed"):
+            raise AssertionError("A failed required interaction state must fail the coverage gate")
+        if "SECRET_ACTION_VALUE_MUST_NOT_LEAK" in json.dumps(failed_interaction_state):
+            raise AssertionError("Failed interaction report leaked an action value")
 
         clipped_button = run_verify(f"{server.base_url}/clipped-button.html", tmp / "clipped-button", expect=1)
         assert_rules(clipped_button, "clipped-x")
@@ -543,14 +781,17 @@ def main() -> int:
         if not any("gradient" in (entry.get("reason") or "") for entry in unmeasurable):
             raise AssertionError(f"Expected gradient entry in unmeasurableContrast, got {unmeasurable}")
 
-        # Fix 3: shadow root + iframe must surface notInspected and a not-inspected warning.
-        shadow = run_verify(f"{server.base_url}/shadow-iframe.html", tmp / "shadow-iframe", expect=0)
-        assert_rules(shadow, "not-inspected")
+        # Reachable open-shadow and iframe content is part of coverage and both
+        # clipped controls must be caught.
+        shadow = run_verify(f"{server.base_url}/shadow-iframe.html", tmp / "shadow-iframe", expect=1)
+        clipped_contexts = [item for item in shadow.get("findings", []) if item.get("rule") == "clipped-x"]
+        if len(clipped_contexts) < 2:
+            raise AssertionError(f"Expected clipped controls from shadow root and iframe, got {clipped_contexts}")
         not_inspected_totals = [m.get("notInspected", {}) for m in page_metrics(shadow)]
-        if not any(ni.get("shadowRoots", 0) >= 1 for ni in not_inspected_totals):
-            raise AssertionError(f"Expected >=1 shadow root in notInspected, got {not_inspected_totals}")
-        if not any(ni.get("iframes", 0) >= 1 for ni in not_inspected_totals):
-            raise AssertionError(f"Expected >=1 iframe in notInspected, got {not_inspected_totals}")
+        if any(ni.get("openShadowRoots", 0) for ni in not_inspected_totals):
+            raise AssertionError(f"Reachable open shadow roots should be inspected, got {not_inspected_totals}")
+        if any(ni.get("iframes", 0) for ni in not_inspected_totals):
+            raise AssertionError(f"Reachable iframes should be inspected, got {not_inspected_totals}")
 
         # Fix 1: below-the-fold lazy content is only found when scrolling is on.
         lazy_scroll_on = run_verify(f"{server.base_url}/lazy-scroll.html", tmp / "lazy-scroll-on", expect=1)
@@ -632,6 +873,36 @@ def main() -> int:
 
         form = run_verify(f"{server.base_url}/form-controls.html", tmp / "form-controls", expect=0)
         assert_no_critical(form)
+
+        # Scroll-container reachability: content scrolled out of an inner
+        # overflow-x container must not be reported as occluded by whatever
+        # neighbors its document coordinates.
+        scroll_neighbor = run_verify(
+            f"{server.base_url}/scroll-panel-neighbor.html", tmp / "scroll-panel-neighbor", expect=0
+        )
+        assert_no_critical(scroll_neighbor)
+        assert_no_rule(scroll_neighbor, "occluded")
+        assert_no_rule(scroll_neighbor, "partially-occluded")
+
+        # ...while an overlay really covering visible content inside a scroll
+        # container must still be caught (recall guard for the same code path).
+        overlay_scroll = run_verify(f"{server.base_url}/overlay-in-scroll.html", tmp / "overlay-in-scroll", expect=1)
+        assert_critical_rule(overlay_scroll, "occluded")
+
+        # Closed-details content keeps layout boxes but is not rendered: no
+        # occlusion findings for it.
+        details_closed = run_verify(
+            f"{server.base_url}/details-closed-neighbor.html", tmp / "details-closed-neighbor", expect=0
+        )
+        assert_no_critical(details_closed)
+        assert_no_rule(details_closed, "occluded")
+        assert_no_rule(details_closed, "partially-occluded")
+
+        # Framework dev overlays are ignored as occluders.
+        dev_overlay = run_verify(f"{server.base_url}/dev-overlay-badge.html", tmp / "dev-overlay-badge", expect=0)
+        assert_no_critical(dev_overlay)
+        assert_no_rule(dev_overlay, "occluded")
+        assert_no_rule(dev_overlay, "partially-occluded")
 
         print("self-test ok")
         return 0

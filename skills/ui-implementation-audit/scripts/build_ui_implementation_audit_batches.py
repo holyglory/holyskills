@@ -388,9 +388,9 @@ Briefly summarize the UI surfaces these files define.
 | exact unit id | CHECKED | exact sha256 | one-line UI purpose |
 
 ## UI Source Inventory
-| Unit | File | Surface | Visible Element | Source Evidence | Expected Behavior | Actual Implementation | Responsive/State Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| exact unit id | repo-relative file | screen/component/style/message catalog | label/control/state/layout | source line/copy/style evidence | mockup/journey/feature/test expectation or inferred standard | implemented/missing path | desktop/mobile/state notes |
+| Unit | File | Surface | Visible Element | Source Evidence | Expected Behavior | Actual Implementation | Handler Evidence | Backend/API Evidence | Permission Evidence | Persistence Evidence | Test Evidence | Responsive/State Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| exact unit id | repo-relative file | screen/component/style/message catalog | label/control/state/layout | source line/copy/style evidence | mockup/journey/feature/test expectation or inferred standard | implemented/missing path | `path#symbol`, `missing`, or `not-applicable: rationale` | same structured form | same structured form | same structured form | real `test-path#test-name`, `missing`, or justified not-applicable | desktop/mobile/state notes |
 
 ## Journey Decision Model
 | Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
@@ -524,6 +524,8 @@ Worker: `visual_comparison_audit`
 
 Do not edit files. Use available screenshot-capable tooling to compare the implemented UI against mockups/assets, required UI elements, feature behavior, tests, and user journey requirements. Prefer safe test/fixture/preview mode. If the UI cannot be rendered, create desktop and mobile `BLOCKED` rows with concrete tool/route evidence and report the missing visual harness as a finding.
 
+For every produced screenshot/native capture/formal-verifier JSON, add a record to `visual_evidence.json` with stable id, confined relative path, SHA-256, detected MIME, actual image dimensions when applicable, route, state, viewport width/height/label, and capture tool. Cite it as `evidence:<id>` in every applicable row. A filename or the word screenshot is not evidence. For rendered web UI, bind the formal-verifier JSON and preserve each checked page's visible scrollbar inventory.
+
 Before visual comparison, define the journey decision model and required UI element set. A visual check is not clear merely because it matches a mockup, has correct data, or avoids overflow. Each rendered viewport must support the primary journey decision unless the surface is itself primarily a data-entry form. If settings, filters, menus, target/configuration blocks, raw/debug detail, explanatory copy, or other low-relevance content dominates the visible surface while the primary decision is unclear or buried, report a journey-usability finding. Also run the interaction checklist for every rendered/source-inferred viewport that contains badges, flags, expandable rows, scrollable details, message streams, tool/result blocks, copy controls, navigation rows, or icon-only controls: badge-detail, row-hit-target, navigation-cursor, transient-disclosure, disclosure-scrollbar, icon-meaning, stable-expansion-width, hover-copy, status-summary, and message-metadata.
 
 ## Mockup And Asset Evidence
@@ -557,7 +559,7 @@ For relevant rows, include these exact checklist labels in `Detail access patter
 ## Visual Comparison Checks
 | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
 | --- | --- | --- | --- | --- | --- | --- |
-| journey or screen | desktop/mobile | route/screen/story | asset or requirement | screenshot/trace/tool command or blocker evidence | visual/responsive differences | MATCHED/GAP/BLOCKED/NOT_APPLICABLE |
+| journey or screen | desktop/mobile | route/screen/story | asset or requirement | tool command plus `evidence:<id>`, or concrete blocker | visual/responsive differences | MATCHED/GAP/BLOCKED/NOT_APPLICABLE |
 
 ## Findings
 Use `No findings.` or finding blocks with Priority, Files, Mockup/requirement evidence, Interface evidence, Expected behavior/standard, Gap, Suggested implementation direction. Start with `Interaction checklist: badge-detail=<pass/gap/blocked/not-applicable>; row-hit-target=<...>; navigation-cursor=<...>; transient-disclosure=<...>; disclosure-scrollbar=<...>; icon-meaning=<...>; stable-expansion-width=<...>; hover-copy=<...>; status-summary=<...>; message-metadata=<...>.` If screenshot production is blocked, include a finding that names the missing safe visual path. If a required element/state is absent, content is overloaded/crowded/unreadable, low-relevance detail dominates while the primary decision is unclear or buried, or any interaction checklist item is gap/blocked, include a finding.
@@ -785,6 +787,7 @@ def write_outputs(
         (out_dir / "mockup_asset_audit.md").write_text(render_mockup_asset_prompt(repo, run_id, visual_assets, requirements), encoding="utf-8")
         (out_dir / "visual_tooling_audit.md").write_text(render_visual_tooling_prompt(repo, run_id, entries, requirements), encoding="utf-8")
         (out_dir / "visual_comparison_audit.md").write_text(render_visual_comparison_prompt(repo, run_id, visual_assets, requirements), encoding="utf-8")
+        queue.write_json(out_dir / "visual_evidence.json", {"schema_version": 1, "run_id": run_id, "artifacts": []})
 
     verifier_args = [
         sys.executable,
@@ -800,7 +803,7 @@ def write_outputs(
         "excluded_files.json",
         "manifest.json",
         "queue_complete.json",
-        *(["mockup_asset_audit.md", "visual_tooling_audit.md", "visual_comparison_audit.md"] if visual_required else []),
+        *(["mockup_asset_audit.md", "visual_tooling_audit.md", "visual_comparison_audit.md", "visual_evidence.json"] if visual_required else []),
         *([archived_reports_name] if archived_reports_name else []),
         *[batch["prompt"] for batch in batch_records],
     ]

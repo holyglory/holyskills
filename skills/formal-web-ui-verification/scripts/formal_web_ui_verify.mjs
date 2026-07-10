@@ -30,6 +30,8 @@ Options:
   --coordinator-script <path>       Coordinator script path for --from-coordinator.
   --coordinator-project <path>      Optional inventory project filter for --from-coordinator.
   --only-current                    With --from-coordinator, skip stale/stopped/reused URLs.
+  --allow-discovered-target-failures
+                                      Tolerate failed coordinator-discovered URLs while reporting them.
   --area <name=selector>            Add an area of interest.
   --ignore <selector=reason>        Ignore selector with reason.
   --allow-truncation <selector=reason>
@@ -81,6 +83,7 @@ function parseArgs(argv) {
     coordinatorScript: undefined,
     coordinatorProject: undefined,
     onlyCurrent: false,
+    allowDiscoveredTargetFailures: false,
     screenshotDir: undefined,
     noScroll: false,
   };
@@ -116,6 +119,8 @@ function parseArgs(argv) {
       cli.coordinatorProject = next();
     } else if (arg === "--only-current") {
       cli.onlyCurrent = true;
+    } else if (arg === "--allow-discovered-target-failures") {
+      cli.allowDiscoveredTargetFailures = true;
     } else if (arg === "--area") {
       const [name, selector] = parseKeyValue(next(), "--area");
       cli.areas.push({ name: name.trim(), selector: selector.trim() });
@@ -216,14 +221,83 @@ async function applyWaitFor(page, waitFor) {
 
 function normalizeTargets(config, cli) {
   const targets = [];
+  const normalizeStates = (value) => {
+    if (value === undefined) return [];
+    if (!Array.isArray(value)) throw new Error("target.states must be an array");
+    return value.map((state, stateIndex) => {
+      if (!state || typeof state !== "object" || Array.isArray(state)) {
+        throw new Error(`target.states[${stateIndex}] must be an object`);
+      }
+      if (typeof state.name !== "string" || !state.name.trim()) {
+        throw new Error(`target.states[${stateIndex}].name must be a non-empty string`);
+      }
+      if (!Array.isArray(state.actions) || !state.actions.length) {
+        throw new Error(`target.states[${stateIndex}].actions must be a non-empty array`);
+      }
+      const actions = state.actions.map((action, actionIndex) => {
+        if (!action || typeof action !== "object" || Array.isArray(action)) {
+          throw new Error(`target.states[${stateIndex}].actions[${actionIndex}] must be an object`);
+        }
+        const kind = action.action;
+        if (!["click", "hover", "focus", "fill", "check", "uncheck", "press", "selectOption"].includes(kind)) {
+          throw new Error(`Unsupported declarative action: ${kind}`);
+        }
+        if (typeof action.selector !== "string" || !action.selector.trim()) {
+          throw new Error(`target.states[${stateIndex}].actions[${actionIndex}].selector must be non-empty`);
+        }
+        if (["fill", "press", "selectOption"].includes(kind) && action.value === undefined) {
+          throw new Error(`Declarative ${kind} action requires value`);
+        }
+        if (kind === "fill" && typeof action.value !== "string") {
+          throw new Error("Declarative fill action value must be a string");
+        }
+        if (kind === "press" && typeof action.value !== "string") {
+          throw new Error("Declarative press action value must be a string");
+        }
+        if (kind === "selectOption" && typeof action.value !== "string" && !Array.isArray(action.value)) {
+          throw new Error("Declarative selectOption value must be a string or string array");
+        }
+        if (Array.isArray(action.value) && !action.value.every((item) => typeof item === "string")) {
+          throw new Error("Declarative selectOption array values must all be strings");
+        }
+        const timeoutMs = action.timeoutMs === undefined ? 5000 : Number(action.timeoutMs);
+        if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+          throw new Error("Declarative action timeoutMs must be a non-negative number");
+        }
+        return { action: kind, selector: action.selector.trim(), value: action.value, timeoutMs };
+      });
+      if (state.allowFailure !== undefined && (typeof state.allowFailure !== "string" || !state.allowFailure.trim())) {
+        throw new Error(`target.states[${stateIndex}].allowFailure must be a non-empty reason string`);
+      }
+      return {
+        name: state.name.trim(),
+        actions,
+        waitFor: normalizeWaitFor(state.waitFor, `target.states[${stateIndex}].waitFor`),
+        allowFailure: state.allowFailure,
+      };
+    });
+  };
   if (Array.isArray(config.targets)) {
     for (const item of config.targets) {
-      if (typeof item === "string") targets.push({ url: item });
-      else if (item && typeof item === "object" && typeof item.url === "string") targets.push({ ...item });
+      if (typeof item === "string") targets.push({ url: item, source: "explicit" });
+      else if (item && typeof item === "object" && typeof item.url === "string") {
+        if (item.allowFailure !== undefined && (typeof item.allowFailure !== "string" || !item.allowFailure.trim())) {
+          throw new Error("target.allowFailure must be a non-empty reason string");
+        }
+        if (item.includeBase !== undefined && typeof item.includeBase !== "boolean") {
+          throw new Error("target.includeBase must be a boolean");
+        }
+        targets.push({
+          ...item,
+          states: normalizeStates(item.states),
+          includeBase: item.includeBase === undefined ? true : item.includeBase,
+          source: item.source || "explicit",
+        });
+      }
       else throw new Error("targets entries must be strings or objects with url");
     }
   }
-  for (const url of cli.urls) targets.push({ url });
+  for (const url of cli.urls) targets.push({ url, source: "explicit" });
   return targets;
 }
 
@@ -232,10 +306,23 @@ function normalizeViewports(config, cli) {
   if (Array.isArray(config.viewports)) {
     for (const item of config.viewports) {
       if (typeof item === "string") viewports.push(parseViewport(item));
-      else if (item && typeof item === "object" && item.name && item.width && item.height) {
-        viewports.push({ name: String(item.name), width: Number(item.width), height: Number(item.height) });
+      else if (item && typeof item === "object" && (item.device || (item.width && item.height))) {
+        const normalized = {
+          ...item,
+          name: String(item.name || item.device || "viewport"),
+          device: item.device === undefined ? undefined : String(item.device),
+          width: item.width === undefined ? undefined : Number(item.width),
+          height: item.height === undefined ? undefined : Number(item.height),
+        };
+        if (normalized.width !== undefined && (!Number.isFinite(normalized.width) || normalized.width <= 0)) {
+          throw new Error("viewport width must be a positive number");
+        }
+        if (normalized.height !== undefined && (!Number.isFinite(normalized.height) || normalized.height <= 0)) {
+          throw new Error("viewport height must be a positive number");
+        }
+        viewports.push(normalized);
       } else {
-        throw new Error("viewports entries must be name=WIDTHxHEIGHT strings or {name,width,height}");
+        throw new Error("viewports entries must be name=WIDTHxHEIGHT strings, {name,width,height}, or {name,device}");
       }
     }
   }
@@ -247,6 +334,10 @@ function normalizeConfig(config, cli) {
   const rules = config.rules && typeof config.rules === "object" ? config.rules : {};
   const failOn = cli.failOn || rules.failOn || "critical";
   if (!(failOn in SEVERITY_ORDER)) throw new Error(`Invalid failOn severity: ${failOn}`);
+  const minCheckedPages = config.minCheckedPages === undefined ? 1 : Number(config.minCheckedPages);
+  if (!Number.isInteger(minCheckedPages) || minCheckedPages < 0) {
+    throw new Error("minCheckedPages must be a non-negative integer");
+  }
   const areas = [
     ...(Array.isArray(config.areas) ? config.areas : []),
     ...cli.areas,
@@ -275,9 +366,103 @@ function normalizeConfig(config, cli) {
     coordinatorScript: cli.coordinatorScript || config.coordinatorScript,
     coordinatorProject: cli.coordinatorProject || config.coordinatorProject,
     onlyCurrent: cli.onlyCurrent || Boolean(config.onlyCurrent),
+    allowDiscoveredTargetFailures:
+      cli.allowDiscoveredTargetFailures || Boolean(config.allowDiscoveredTargetFailures),
+    minCheckedPages,
     screenshotDir: cli.screenshotDir || config.screenshotDir,
     scroll: cli.noScroll ? false : (config.scroll === undefined ? true : Boolean(config.scroll)),
   };
+}
+
+function resolveViewports(viewports, devices) {
+  return viewports.map((viewport) => {
+    let contextOptions = {};
+    if (viewport.device) {
+      const descriptor = devices[viewport.device];
+      if (!descriptor) throw new Error(`Unknown Playwright device descriptor: ${viewport.device}`);
+      contextOptions = { ...descriptor };
+      delete contextOptions.defaultBrowserType;
+    }
+    const descriptorViewport = contextOptions.viewport || {};
+    const width = viewport.width ?? descriptorViewport.width;
+    const height = viewport.height ?? descriptorViewport.height;
+    if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+      throw new Error(`Viewport ${viewport.name} does not resolve to positive width and height`);
+    }
+    contextOptions.viewport = { width, height };
+    const allowedContextOverrides = [
+      "userAgent", "deviceScaleFactor", "isMobile", "hasTouch", "locale",
+      "colorScheme", "reducedMotion", "forcedColors", "screen",
+    ];
+    for (const key of allowedContextOverrides) {
+      if (viewport[key] !== undefined) contextOptions[key] = viewport[key];
+    }
+    return {
+      name: viewport.name,
+      device: viewport.device,
+      width,
+      height,
+      contextOptions,
+    };
+  });
+}
+
+function publicTarget(target) {
+  const { states, verificationState, includeBase, ...safe } = target;
+  return safe;
+}
+
+function publicViewport(viewport) {
+  const { contextOptions, ...safe } = viewport;
+  return safe;
+}
+
+function expandTargetStates(targets) {
+  const expanded = [];
+  for (const target of targets) {
+    const states = Array.isArray(target.states) ? target.states : [];
+    const baseName = target.name || target.url;
+    if (target.includeBase !== false || !states.length) {
+      expanded.push({ ...target, name: baseName, stateName: "base" });
+    }
+    for (const state of states) {
+      expanded.push({
+        ...target,
+        name: `${baseName} [${state.name}]`,
+        stateName: state.name,
+        verificationState: state,
+        allowFailure: state.allowFailure || target.allowFailure,
+      });
+    }
+  }
+  return expanded;
+}
+
+async function applyInteractionState(page, state) {
+  if (!state) return;
+  for (const action of state.actions) {
+    const locator = page.locator(action.selector);
+    const options = { timeout: action.timeoutMs };
+    try {
+      if (action.action === "click") await locator.click(options);
+      else if (action.action === "hover") await locator.hover(options);
+      else if (action.action === "focus") await locator.focus(options);
+      else if (action.action === "fill") await locator.fill(action.value, options);
+      else if (action.action === "check") await locator.check(options);
+      else if (action.action === "uncheck") await locator.uncheck(options);
+      else if (action.action === "press") await locator.press(action.value, options);
+      else if (action.action === "selectOption") await locator.selectOption(action.value, options);
+    } catch (error) {
+      // Playwright call logs may echo entered values. Keep reports actionable
+      // without copying action payloads (which can be credentials or PII).
+      throw new Error(`${action.action} failed for ${action.selector} (${error.name || "interaction error"})`);
+    }
+  }
+  if (Object.keys(state.waitFor || {}).length) {
+    await applyWaitFor(page, state.waitFor);
+  } else {
+    await page.waitForTimeout(50);
+  }
 }
 
 function resolvePlaywright() {
@@ -459,6 +644,30 @@ function pageVerifier() {
   const ellipsisTruncations = [];
   const hiddenTextLike = { displayNone: 0, visibilityHidden: 0, zeroOpacity: 0, zeroSize: 0 };
   let pendingMedia = 0;
+  const allElements = [];
+  const roots = [document];
+  let inspectedOpenShadowRoots = 0;
+  while (roots.length) {
+    const root = roots.shift();
+    for (const element of root.querySelectorAll("*")) {
+      allElements.push(element);
+      if (element.shadowRoot) {
+        inspectedOpenShadowRoots += 1;
+        roots.push(element.shadowRoot);
+      }
+    }
+  }
+  const deepQueryAll = (selector) => allElements.filter((element) => {
+    try {
+      return element.matches(selector);
+    } catch {
+      return false;
+    }
+  });
+  const composedParent = (element) => {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return null;
+    return element.parentElement || element.getRootNode?.()?.host || null;
+  };
 
   const nowRect = (el) => el.getBoundingClientRect();
   const round = (value) => Math.round(value * 100) / 100;
@@ -487,7 +696,17 @@ function pageVerifier() {
         if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(node) + 1})`;
       }
       parts.unshift(part);
-      node = parent;
+      if (parent) {
+        node = parent;
+      } else {
+        const host = node.getRootNode?.()?.host;
+        if (host) {
+          parts.unshift(">>>");
+          node = host;
+        } else {
+          node = null;
+        }
+      }
     }
     return parts.join(" > ") || el.localName || "element";
   };
@@ -505,7 +724,13 @@ function pageVerifier() {
     const owner = el.closest(`[${attr}]`);
     return owner ? owner.getAttribute(attr) || attr : "";
   };
-  const isIgnored = (el) => Boolean(hasAttrReason(el, "data-ui-verify-ignore") || matchesList(el, selectorLists.ignore));
+  // Framework dev-tooling overlays (Next.js dev badge/error portal, build
+  // watcher) are injected by the dev server, absent from production builds,
+  // and sit above real content by design — they are not part of the page
+  // under test and must not count as occluders or candidates.
+  const DEV_OVERLAY_SELECTOR = "nextjs-portal, #__next-build-watcher, [data-nextjs-toast]";
+  const isDevOverlay = (el) => Boolean(el.closest && el.closest(DEV_OVERLAY_SELECTOR));
+  const isIgnored = (el) => Boolean(isDevOverlay(el) || hasAttrReason(el, "data-ui-verify-ignore") || matchesList(el, selectorLists.ignore));
   const truncationReason = (el) => hasAttrReason(el, "data-ui-allow-truncation") || matchesList(el, selectorLists.allowTruncation);
   const overlapReason = (el) => hasAttrReason(el, "data-ui-allow-overlap") || matchesList(el, selectorLists.allowOverlap);
 
@@ -523,7 +748,7 @@ function pageVerifier() {
     if (!el || el.nodeType !== Node.ELEMENT_NODE) return 1;
     const cached = opacityCache.get(el);
     if (cached !== undefined) return cached;
-    const value = Number(cs(el).opacity || 1) * effectiveOpacity(el.parentElement);
+    const value = Number(cs(el).opacity || 1) * effectiveOpacity(composedParent(el));
     opacityCache.set(el, value);
     return value;
   };
@@ -565,7 +790,7 @@ function pageVerifier() {
     let node = el;
     while (node && node.nodeType === Node.ELEMENT_NODE && node !== document.body) {
       if (nodeIsArtifact(node)) return true;
-      node = node.parentElement;
+      node = composedParent(node);
     }
     return false;
   };
@@ -574,6 +799,10 @@ function pageVerifier() {
     const style = cs(el);
     if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
     if (effectiveOpacity(el) <= 0.01) return false;
+    // Closed <details> (and content-visibility: hidden subtrees) keep layout
+    // boxes for content the browser does not render; checkVisibility() is the
+    // only reliable signal that such content is not actually shown.
+    if (typeof el.checkVisibility === "function" && !el.checkVisibility()) return false;
     const rect = nowRect(el);
     return rect.width > 1 && rect.height > 1;
   };
@@ -628,7 +857,7 @@ function pageVerifier() {
   const configuredAreaRoots = [];
   for (const area of config.areas || []) {
     try {
-      for (const el of document.querySelectorAll(area.selector)) configuredAreaRoots.push({ name: area.name, el });
+      for (const el of deepQueryAll(area.selector)) configuredAreaRoots.push({ name: area.name, el });
     } catch {
       findings.push({
         severity: "warning",
@@ -642,7 +871,7 @@ function pageVerifier() {
       });
     }
   }
-  for (const el of document.querySelectorAll("[data-ui-verify-area]")) {
+  for (const el of deepQueryAll("[data-ui-verify-area]")) {
     configuredAreaRoots.push({ name: el.getAttribute("data-ui-verify-area") || selectorPath(el), el });
   }
 
@@ -651,9 +880,8 @@ function pageVerifier() {
     "br", "hr", "wbr", "source", "track", "param", "slot", "option", "optgroup",
     "datalist", "iframe", "object", "embed", "area", "map", "svg", "canvas", "portal",
   ]);
-  const walkRoot = document.body || document.documentElement;
   const candidates = [];
-  for (const el of walkRoot.querySelectorAll("*")) {
+  for (const el of allElements) {
     if (SKIP_TAGS.has(el.localName) || el.ownerSVGElement) continue;
     if (isIgnored(el)) continue;
     const textLike = isControl(el) || isLeafText(el);
@@ -673,20 +901,19 @@ function pageVerifier() {
     candidates.push(el);
   }
 
-  // Blind spots: querySelectorAll does not pierce open shadow roots and we do not
-  // traverse iframe documents. Count them so the gap is visible in evidence rather
-  // than silently reporting ~0 elements as clean.
-  let shadowRootCount = 0;
-  for (const el of document.querySelectorAll("*")) {
-    if (el.shadowRoot) shadowRootCount += 1;
-  }
-  const iframeCount = document.querySelectorAll("iframe").length;
-  const notInspected = { shadowRoots: shadowRootCount, iframes: iframeCount };
-  if (shadowRootCount > 0 || iframeCount > 0) {
+  const iframeCount = deepQueryAll("iframe").length;
+  const notInspected = {
+    openShadowRoots: 0,
+    iframes: config.inspectFramesExternally ? 0 : iframeCount,
+    inspectedOpenShadowRoots,
+    discoveredOpenShadowRoots: inspectedOpenShadowRoots,
+    discoveredIframes: iframeCount,
+  };
+  if (notInspected.iframes > 0) {
     findings.push({
       severity: "warning",
       rule: "not-inspected",
-      message: `${shadowRootCount} shadow roots / ${iframeCount} iframes were not inspected; findings may be incomplete.`,
+      message: `${notInspected.iframes} iframe(s) were not inspected; findings may be incomplete.`,
       selector: "document",
       textSnippet: "",
       rect: null,
@@ -973,7 +1200,7 @@ function pageVerifier() {
   // Media health runs over every img/video that participates in rendering,
   // regardless of rect size: a broken image usually collapses to ~0x0, which is
   // exactly why it must not be filtered out by the visibility size gate.
-  for (const el of document.querySelectorAll("img,video")) {
+  for (const el of deepQueryAll("img,video")) {
     if (isIgnored(el)) continue;
     const style = cs(el);
     if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") continue;
@@ -1017,8 +1244,39 @@ function pageVerifier() {
     const bgAlpha = bg ? bg.a : 0;
     return ancestorOpacity * bgAlpha;
   };
+  const scrollAncestorClipBox = (element) => {
+    // The box the element can actually paint in right now: the viewport
+    // intersected with every scrollable ancestor's client box. Content outside
+    // this box is reachable by scrolling that container (the same reachability
+    // path ancestorClipReport honors), so occlusion sampling must not hit-test
+    // document coordinates there — elementsFromPoint would blame whatever
+    // legitimately paints in that space (e.g. a neighboring panel).
+    const box = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+    if (cs(element).position === "fixed") return box;
+    let anc = element.parentElement;
+    while (anc && anc.nodeType === Node.ELEMENT_NODE) {
+      if (anc === document.body || anc === document.documentElement) break;
+      const style = cs(anc);
+      const scrollableX = ["auto", "scroll", "overlay"].includes(style.overflowX);
+      const scrollableY = ["auto", "scroll", "overlay"].includes(style.overflowY);
+      if (scrollableX || scrollableY) {
+        const ancRect = anc.getBoundingClientRect();
+        if (scrollableX) {
+          box.left = Math.max(box.left, ancRect.left + (anc.clientLeft || 0));
+          box.right = Math.min(box.right, ancRect.left + (anc.clientLeft || 0) + anc.clientWidth);
+        }
+        if (scrollableY) {
+          box.top = Math.max(box.top, ancRect.top + (anc.clientTop || 0));
+          box.bottom = Math.min(box.bottom, ancRect.top + (anc.clientTop || 0) + anc.clientHeight);
+        }
+      }
+      if (style.position === "fixed") break;
+      anc = anc.parentElement;
+    }
+    return box;
+  };
   for (const el of occlusionCandidates) {
-    if (!document.body.contains(el) || !visible(el)) continue;
+    if (!el.isConnected || !visible(el)) continue;
     let measuredAfterScroll = false;
     if (!inViewport(nowRect(el))) {
       // Only elements outside the current viewport may be scrolled into view; those
@@ -1026,23 +1284,44 @@ function pageVerifier() {
       el.scrollIntoView({ block: "center", inline: "center" });
       measuredAfterScroll = true;
     }
-    const rect = nowRect(el);
+    let rect = nowRect(el);
     if (rect.width <= 1 || rect.height <= 1) continue;
+    // Scroll-container reachability: an element scrolled out of an inner
+    // overflow container can still sit inside the window viewport. Scroll it
+    // into view within its container first (mirroring the window case above);
+    // hit-testing where it is clipped away would report a false occlusion.
+    let clip = scrollAncestorClipBox(el);
+    if (
+      Math.min(rect.right, clip.right) - Math.max(rect.left, clip.left) <= 2 ||
+      Math.min(rect.bottom, clip.bottom) - Math.max(rect.top, clip.top) <= 2
+    ) {
+      el.scrollIntoView({ block: "center", inline: "center" });
+      measuredAfterScroll = true;
+      rect = nowRect(el);
+      clip = scrollAncestorClipBox(el);
+      if (rect.width <= 1 || rect.height <= 1) continue;
+    }
     const insetX = Math.min(8, Math.max(2, rect.width / 4));
     const insetY = Math.min(8, Math.max(2, rect.height / 4));
+    const sampleLeft = Math.max(0, clip.left);
+    const sampleTop = Math.max(0, clip.top);
+    const sampleRight = Math.min(window.innerWidth, clip.right);
+    const sampleBottom = Math.min(window.innerHeight, clip.bottom);
     const points = [
       { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 },
       { x: rect.left + insetX, y: rect.top + insetY },
       { x: rect.right - insetX, y: rect.top + insetY },
       { x: rect.left + insetX, y: rect.bottom - insetY },
       { x: rect.right - insetX, y: rect.bottom - insetY },
-    ].filter((point) => point.x >= 0 && point.y >= 0 && point.x <= window.innerWidth && point.y <= window.innerHeight);
+    ].filter((point) => point.x >= sampleLeft && point.y >= sampleTop && point.x <= sampleRight && point.y <= sampleBottom);
     if (points.length < 2) continue;
     let covered = 0;
     let maxOccluderOpacity = 0;
     const evidencePoints = [];
     for (const point of points) {
-      const stack = document.elementsFromPoint(point.x, point.y).filter((node) => node.nodeType === Node.ELEMENT_NODE && !isIgnored(node));
+      const root = el.getRootNode?.() || document;
+      const hitTestRoot = typeof root.elementsFromPoint === "function" ? root : document;
+      const stack = hitTestRoot.elementsFromPoint(point.x, point.y).filter((node) => node.nodeType === Node.ELEMENT_NODE && !isIgnored(node));
       const top = stack.find((node) => getComputedStyle(node).pointerEvents !== "none");
       const ok = top && (top === el || el.contains(top) || top.contains(el));
       evidencePoints.push({
@@ -1307,7 +1586,7 @@ function pageVerifier() {
         overflowY: scrollingStyle.overflowY,
       });
     }
-    for (const el of Array.from(document.querySelectorAll("body *"))) {
+    for (const el of allElements) {
       if (isIgnored(el) || !visible(el)) continue;
       const style = getComputedStyle(el);
       const hasX = scrollbarVisibleForAxis(el, "x", style);
@@ -1357,9 +1636,10 @@ function pageVerifier() {
 async function verifyTarget(page, target, viewport, config, screenshotDir) {
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
   const result = {
-    target,
-    viewport,
+    target: publicTarget(target),
+    viewport: publicViewport(viewport),
     skipped: false,
+    outcome: "pending",
     skipReason: null,
     url: target.url,
     status: null,
@@ -1375,6 +1655,7 @@ async function verifyTarget(page, target, viewport, config, screenshotDir) {
     await applyWaitFor(page, mergeWaitFor(config.waitFor, target.waitFor));
   } catch (error) {
     result.skipped = true;
+    result.outcome = "navigation_error";
     result.skipReason = `navigation-failed: ${error.message}`;
     return result;
   }
@@ -1382,9 +1663,29 @@ async function verifyTarget(page, target, viewport, config, screenshotDir) {
   result.contentType = response ? response.headers()["content-type"] || "" : "";
   if (!response || result.status >= 400 || (result.contentType && !/html|xhtml/i.test(result.contentType))) {
     result.skipped = true;
-    result.skipReason = result.status >= 400 ? `non-success-status-${result.status}` : `non-html-content-type-${result.contentType || "unknown"}`;
+    if (!response) {
+      result.outcome = "navigation_error";
+      result.skipReason = "navigation-no-response";
+    } else if (result.status >= 400) {
+      result.outcome = "http_error";
+      result.skipReason = `non-success-status-${result.status}`;
+    } else {
+      result.outcome = "non_html";
+      result.skipReason = `non-html-content-type-${result.contentType || "unknown"}`;
+    }
     result.title = await page.title().catch(() => "");
     return result;
+  }
+  if (target.verificationState) {
+    try {
+      await applyInteractionState(page, target.verificationState);
+    } catch (error) {
+      result.skipped = true;
+      result.outcome = "interaction_error";
+      result.skipReason = `interaction-state-${target.verificationState.name}-failed: ${error.message}`;
+      result.title = await page.title().catch(() => "");
+      return result;
+    }
   }
   await page.addInitScript(() => {});
   const pageConfig = {
@@ -1393,6 +1694,10 @@ async function verifyTarget(page, target, viewport, config, screenshotDir) {
     allowTruncation: [...config.allowTruncation, ...normalizeTargetList(target.allowTruncation)],
     allowOverlap: [...config.allowOverlap, ...normalizeTargetList(target.allowOverlap)],
     rules: config.rules,
+    // Playwright evaluates every reachable child frame separately below. This
+    // prevents the top document from claiming that reachable iframe content
+    // was ignored while still surfacing frames that detach or reject evaluation.
+    inspectFramesExternally: true,
   };
   await page.evaluate((injected) => {
     window.__FORMAL_WEB_UI_CONFIG__ = injected;
@@ -1402,11 +1707,121 @@ async function verifyTarget(page, target, viewport, config, screenshotDir) {
     scrollMetrics = await scrollThroughPage(page).catch(() => ({ skipped: true, error: true }));
   }
   const evaluated = await page.evaluate(pageVerifier);
+  const childFrames = page.frames().filter((frame) => frame !== page.mainFrame());
+  const frameEvaluations = [];
+  const frameFailures = [];
+  for (const frame of childFrames) {
+    const frameUrl = frame.url() || "about:blank";
+    const frameName = frame.name() || "unnamed";
+    try {
+      await frame.evaluate((injected) => {
+        window.__FORMAL_WEB_UI_CONFIG__ = injected;
+      }, pageConfig);
+      const frameResult = await frame.evaluate(pageVerifier);
+      frameEvaluations.push({ frameUrl, frameName, result: frameResult });
+    } catch (error) {
+      frameFailures.push({ frameUrl, frameName, error: error.message });
+    }
+  }
   result.title = evaluated.title;
+  result.outcome = "checked";
   result.url = evaluated.url;
   result.actualViewport = evaluated.viewport;
-  result.metrics = { ...evaluated.metrics, scroll: scrollMetrics };
-  result.findings = evaluated.findings;
+  const prefixSelector = (selector, frameUrl, frameName) =>
+    `[frame ${frameName} ${frameUrl}] ${selector || "document"}`;
+  const mergedFindings = [...evaluated.findings];
+  const mergedMetrics = {
+    ...evaluated.metrics,
+    scroll: scrollMetrics,
+    frames: [],
+    frameDocuments: [],
+  };
+  const mergeCounts = (left = {}, right = {}) => {
+    const merged = { ...left };
+    for (const [key, value] of Object.entries(right || {})) {
+      merged[key] = (merged[key] || 0) + (Number(value) || 0);
+    }
+    return merged;
+  };
+  for (const entry of frameEvaluations) {
+    const frameResult = entry.result;
+    mergedFindings.push(...frameResult.findings.map((finding) => ({
+      ...finding,
+      selector: prefixSelector(finding.selector, entry.frameUrl, entry.frameName),
+      evidence: {
+        ...(finding.evidence || {}),
+        frame: { url: entry.frameUrl, name: entry.frameName },
+      },
+    })));
+    mergedMetrics.candidateCount = (mergedMetrics.candidateCount || 0) + (frameResult.metrics?.candidateCount || 0);
+    mergedMetrics.visibleScrollbars = [
+      ...(mergedMetrics.visibleScrollbars || []),
+      ...(frameResult.metrics?.visibleScrollbars || []).map((scrollbar) => ({
+        ...scrollbar,
+        selector: prefixSelector(scrollbar.selector, entry.frameUrl, entry.frameName),
+        frame: { url: entry.frameUrl, name: entry.frameName },
+      })),
+    ];
+    mergedMetrics.unmeasurableContrast = [
+      ...(mergedMetrics.unmeasurableContrast || []),
+      ...(frameResult.metrics?.unmeasurableContrast || []).map((item) => ({
+        ...item,
+        selector: prefixSelector(item.selector, entry.frameUrl, entry.frameName),
+        frame: { url: entry.frameUrl, name: entry.frameName },
+      })),
+    ];
+    mergedMetrics.ellipsisTruncations = [
+      ...(mergedMetrics.ellipsisTruncations || []),
+      ...(frameResult.metrics?.ellipsisTruncations || []).map((item) => ({
+        ...item,
+        selector: prefixSelector(item.selector, entry.frameUrl, entry.frameName),
+        frame: { url: entry.frameUrl, name: entry.frameName },
+      })),
+    ];
+    mergedMetrics.hiddenTextLike = mergeCounts(mergedMetrics.hiddenTextLike, frameResult.metrics?.hiddenTextLike);
+    mergedMetrics.pendingMedia = (mergedMetrics.pendingMedia || 0) + (frameResult.metrics?.pendingMedia || 0);
+    mergedMetrics.suppressedFindings = mergeCounts(mergedMetrics.suppressedFindings, frameResult.metrics?.suppressedFindings);
+    mergedMetrics.frameDocuments.push({
+      url: entry.frameUrl,
+      name: entry.frameName,
+      document: frameResult.metrics?.document || {},
+    });
+    mergedMetrics.frames.push({
+      url: entry.frameUrl,
+      name: entry.frameName,
+      candidateCount: frameResult.metrics?.candidateCount || 0,
+      findingCount: frameResult.findings.length,
+      inspectedOpenShadowRoots: frameResult.metrics?.notInspected?.inspectedOpenShadowRoots || 0,
+    });
+  }
+  for (const failure of frameFailures) {
+    mergedFindings.push({
+      severity: "warning",
+      rule: "not-inspected",
+      message: `Reachable iframe could not be inspected: ${failure.error}`,
+      selector: prefixSelector("document", failure.frameUrl, failure.frameName),
+      textSnippet: "",
+      rect: null,
+      area: null,
+      evidence: { frame: { url: failure.frameUrl, name: failure.frameName }, error: failure.error },
+    });
+  }
+  const shadowMetrics = [evaluated, ...frameEvaluations.map((entry) => entry.result)]
+    .map((entry) => entry.metrics?.notInspected || {});
+  mergedMetrics.notInspected = {
+    openShadowRoots: shadowMetrics.reduce((sum, item) => sum + (item.openShadowRoots || 0), 0),
+    iframes: frameFailures.length,
+    inspectedOpenShadowRoots: shadowMetrics.reduce((sum, item) => sum + (item.inspectedOpenShadowRoots || 0), 0),
+    discoveredOpenShadowRoots: shadowMetrics.reduce((sum, item) => sum + (item.discoveredOpenShadowRoots || 0), 0),
+    inspectedIframes: frameEvaluations.length,
+    discoveredIframes: Math.max(
+      evaluated.metrics?.notInspected?.discoveredIframes || 0,
+      childFrames.length,
+    ),
+  };
+  mergedMetrics.findingCount = mergedFindings.length;
+  result.metrics = mergedMetrics;
+  result.findings = mergedFindings;
   if (screenshotDir) {
     fs.mkdirSync(screenshotDir, { recursive: true });
     const file = path.join(screenshotDir, `${sanitizeFilePart(target.name || target.url)}-${sanitizeFilePart(viewport.name)}.png`);
@@ -1436,6 +1851,42 @@ function summarizeFindings(pages) {
   return findings;
 }
 
+function summarizeCoverage(pages, config) {
+  const checkedPages = pages.filter((page) => page.outcome === "checked");
+  const failures = [];
+  const tolerated = [];
+  for (const page of pages) {
+    if (page.outcome === "checked") continue;
+    const explicitReason = typeof page.target.allowFailure === "string" ? page.target.allowFailure.trim() : "";
+    const discoveredAllowed = page.target.source === "coordinator" && config.allowDiscoveredTargetFailures;
+    const row = {
+      url: page.target.url,
+      viewport: page.viewport.name,
+      outcome: page.outcome,
+      reason: page.skipReason,
+    };
+    if (explicitReason || discoveredAllowed) {
+      tolerated.push({
+        ...row,
+        allowance: explicitReason || "coordinator-discovered target failure explicitly tolerated",
+      });
+    } else {
+      failures.push(row);
+    }
+  }
+  const minimumFailure = checkedPages.length < config.minCheckedPages
+    ? `checked ${checkedPages.length} page(s), below required minimum ${config.minCheckedPages}`
+    : null;
+  return {
+    failed: failures.length > 0 || Boolean(minimumFailure),
+    checkedPages: checkedPages.length,
+    requiredCheckedPages: config.minCheckedPages,
+    failures,
+    tolerated,
+    minimumFailure,
+  };
+}
+
 function markdownReport(report) {
   const findings = report.findings;
   const criticalCount = findings.filter((item) => item.severity === "critical").length;
@@ -1448,13 +1899,14 @@ function markdownReport(report) {
   lines.push(`- Targets: ${report.targets.length}`);
   lines.push(`- Pages checked: ${report.pages.filter((page) => !page.skipped).length}`);
   lines.push(`- Pages skipped: ${report.pages.filter((page) => page.skipped).length}`);
+  lines.push(`- Coverage gate: ${report.coverage.failed ? "failed" : "passed"}`);
   lines.push(`- Critical findings: ${criticalCount}`);
   lines.push(`- Warning findings: ${warningCount}`, "");
   lines.push("## Pages", "");
   lines.push("| Target | Viewport | Status | Result | Findings | Screenshot |");
   lines.push("| --- | --- | --- | --- | --- | --- |");
   for (const page of report.pages) {
-    const result = page.skipped ? `skipped: ${page.skipReason}` : "checked";
+    const result = page.skipped ? `${page.outcome}: ${page.skipReason}` : "checked";
     lines.push(`| ${escapeMd(page.target.name || page.target.url)} | ${escapeMd(page.viewport.name)} ${page.viewport.width}x${page.viewport.height} | ${page.status ?? ""} | ${escapeMd(result)} | ${(page.findings || []).length} | ${page.screenshot ? escapeMd(page.screenshot) : ""} |`);
   }
   lines.push("", "## Visible Scrollbars", "");
@@ -1487,22 +1939,38 @@ function markdownReport(report) {
     const pending = page.metrics?.pendingMedia || 0;
     if (page.skipped && !notInspected && !scroll) continue;
     const label = `${page.target.name || page.target.url} (${page.viewport.name})`;
-    const shadow = notInspected ? notInspected.shadowRoots : 0;
+    const shadow = notInspected ? notInspected.openShadowRoots : 0;
     const iframes = notInspected ? notInspected.iframes : 0;
+    const inspectedShadow = notInspected ? notInspected.inspectedOpenShadowRoots || 0 : 0;
+    const discoveredShadow = notInspected ? notInspected.discoveredOpenShadowRoots || inspectedShadow : 0;
+    const inspectedIframes = notInspected ? notInspected.inspectedIframes || 0 : 0;
+    const discoveredIframes = notInspected ? notInspected.discoveredIframes || inspectedIframes + iframes : 0;
     const hiddenTotal = (hidden.displayNone || 0) + (hidden.visibilityHidden || 0) + (hidden.zeroOpacity || 0) + (hidden.zeroSize || 0);
     const scrollNote = scroll && !scroll.skipped
       ? `scrolled to ${scroll.scrolledTo}px over ${scroll.scrollPasses} pass(es)${scroll.capped ? " (capped)" : ""}`
       : "scroll off";
-    coverageRows.push({ label, shadow, iframes, unmeasurable: unmeasurable.length, ellipsis: ellipsis.length, hiddenTotal, pending, scrollNote });
+    coverageRows.push({ label, shadow, iframes, inspectedShadow, discoveredShadow, inspectedIframes, discoveredIframes, unmeasurable: unmeasurable.length, ellipsis: ellipsis.length, hiddenTotal, pending, scrollNote });
   }
   if (!coverageRows.length) {
     lines.push("No coverage gaps recorded.");
   } else {
-    lines.push("| Target | Shadow roots (not inspected) | Iframes (not inspected) | Unmeasurable contrast | Allowed ellipsis/clamp | Hidden text/controls | Pending media | Scroll pass |");
+    lines.push("| Target | Open shadow roots (inspected/discovered; missed) | Iframes (inspected/discovered; missed) | Unmeasurable contrast | Allowed ellipsis/clamp | Hidden text/controls | Pending media | Scroll pass |");
     lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
     for (const row of coverageRows) {
-      lines.push(`| ${escapeMd(row.label)} | ${row.shadow} | ${row.iframes} | ${row.unmeasurable} | ${row.ellipsis} | ${row.hiddenTotal} | ${row.pending} | ${escapeMd(row.scrollNote)} |`);
+      lines.push(`| ${escapeMd(row.label)} | ${row.inspectedShadow}/${row.discoveredShadow}; ${row.shadow} | ${row.inspectedIframes}/${row.discoveredIframes}; ${row.iframes} | ${row.unmeasurable} | ${row.ellipsis} | ${row.hiddenTotal} | ${row.pending} | ${escapeMd(row.scrollNote)} |`);
     }
+  }
+  lines.push("", "## Target Coverage", "");
+  if (!report.coverage.failures.length && !report.coverage.minimumFailure) {
+    lines.push(`Coverage passed with ${report.coverage.checkedPages} checked page(s).`);
+  } else {
+    if (report.coverage.minimumFailure) lines.push(`- ${report.coverage.minimumFailure}`);
+    for (const failure of report.coverage.failures) {
+      lines.push(`- ${failure.url} (${failure.viewport}): ${failure.outcome} — ${failure.reason}`);
+    }
+  }
+  for (const item of report.coverage.tolerated) {
+    lines.push(`- Tolerated ${item.url} (${item.viewport}): ${item.outcome} — ${item.allowance}`);
   }
   lines.push("", "## Findings", "");
   if (!findings.length) {
@@ -1538,25 +2006,27 @@ function ensureTargets(config) {
 async function main() {
   const cli = parseArgs(process.argv.slice(2));
   const config = normalizeConfig(loadConfig(cli.configPath), cli);
-  const targets = ensureTargets(config);
-  const { chromium } = resolvePlaywright();
+  const targets = expandTargetStates(ensureTargets(config));
+  const { chromium, devices } = resolvePlaywright();
+  config.viewports = resolveViewports(config.viewports, devices);
   const { browser, browserLabel } = await launchBrowser(chromium, config.browserExecutable);
   const report = {
     runId: `formal-web-ui-${Date.now().toString(36)}`,
     generatedAt: new Date().toISOString(),
     browser: browserLabel,
-    targets,
+    targets: targets.map(publicTarget),
     pages: [],
     findings: [],
   };
   try {
     for (const target of targets) {
       for (const viewport of config.viewports) {
-        const page = await browser.newPage();
+        const context = await browser.newContext(viewport.contextOptions);
+        const page = await context.newPage();
         try {
           report.pages.push(await verifyTarget(page, target, viewport, config, config.screenshotDir));
         } finally {
-          await page.close().catch(() => {});
+          await context.close().catch(() => {});
         }
       }
     }
@@ -1564,6 +2034,7 @@ async function main() {
     await browser.close().catch(() => {});
   }
   report.findings = summarizeFindings(report.pages);
+  report.coverage = summarizeCoverage(report.pages, config);
   if (config.jsonOut) {
     fs.mkdirSync(path.dirname(path.resolve(config.jsonOut)), { recursive: true });
     fs.writeFileSync(config.jsonOut, `${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -1576,6 +2047,7 @@ async function main() {
   console.log(markdown);
   const failThreshold = SEVERITY_ORDER[config.rules.failOn];
   const blocking = report.findings.filter((finding) => SEVERITY_ORDER[finding.severity] >= failThreshold);
+  if (report.coverage.failed) process.exit(3);
   process.exit(blocking.length ? 1 : 0);
 }
 

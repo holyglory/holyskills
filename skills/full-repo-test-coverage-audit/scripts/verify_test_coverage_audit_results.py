@@ -46,6 +46,20 @@ REQUIRED_FINDING_FIELDS = [
     "Missing scenarios/boundaries",
     "Suggested test direction",
 ]
+TARGET_INVENTORY_COLUMNS = {
+    "target id",
+    "unit",
+    "file",
+    "target",
+    "kind",
+    "disposition",
+    "evidence level",
+    "existing test evidence",
+    "scenario assessment",
+    "recommendation",
+}
+DISPOSITIONS = {"TESTED", "UNTESTED", "NOT_REASONABLE"}
+EVIDENCE_LEVELS = {"EMPIRICAL", "STRUCTURAL", "MANUAL", "NONE"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -129,11 +143,77 @@ def load_manifest(path: Path) -> dict:
             f"coverage unit assignment mismatch; missing={missing_units} extra={extra_units} duplicates={duplicate_assignments}"
         )
 
+    coverage = manifest.get("test_coverage_audit")
+    if not isinstance(coverage, dict):
+        raise ValueError("manifest test_coverage_audit must be an object.")
+    raw_targets = coverage.get("target_inventory")
+    if not isinstance(raw_targets, list):
+        raise ValueError("test_coverage_audit.target_inventory must be a list.")
+    target_by_id: dict[str, dict] = {}
+    targets_by_batch: dict[str, set[str]] = {batch_id: set() for batch_id in expected_by_batch}
+    batch_by_unit = {unit: batch_id for batch_id, units in expected_by_batch.items() for unit in units}
+    for index, target in enumerate(raw_targets):
+        if not isinstance(target, dict):
+            raise ValueError(f"target_inventory[{index}] must be an object.")
+        target_id = target.get("target_id")
+        unit_id = target.get("unit_id")
+        rel_path = target.get("rel_path")
+        if not isinstance(target_id, str) or not target_id.startswith("target-"):
+            raise ValueError(f"target_inventory[{index}].target_id must be a deterministic target id.")
+        if target_id in target_by_id:
+            raise ValueError(f"target_inventory target ids must be unique: {target_id}")
+        if unit_id not in unit_to_file or rel_path != unit_to_file.get(unit_id):
+            raise ValueError(f"target_inventory[{index}] must bind an exact coverage unit and file.")
+        if not isinstance(target.get("symbol"), str) or not target.get("symbol") or not isinstance(target.get("line"), int):
+            raise ValueError(f"target_inventory[{index}] must include symbol and line.")
+        target_by_id[target_id] = target
+        targets_by_batch[batch_by_unit[unit_id]].add(target_id)
+    if coverage.get("target_count") != len(raw_targets):
+        raise ValueError("test_coverage_audit.target_count does not match target_inventory.")
+
+    empirical = coverage.get("empirical_coverage", [])
+    if not isinstance(empirical, list):
+        raise ValueError("test_coverage_audit.empirical_coverage must be a list.")
+    empirical_by_file: dict[str, set[int]] = {}
+    empirical_issues: list[dict] = []
+    for index, record in enumerate(empirical):
+        if not isinstance(record, dict):
+            empirical_issues.append({"record": index, "reason": "coverage evidence must be an object"})
+            continue
+        evidence_path = Path(str(record.get("path", "")))
+        if not evidence_path.is_absolute() or evidence_path.is_symlink() or not evidence_path.is_file():
+            empirical_issues.append({"record": index, "field": "path", "reason": "coverage evidence path must be an existing absolute regular file"})
+        elif record.get("sha256") != common.sha256_file(evidence_path):
+            empirical_issues.append({"record": index, "field": "sha256", "reason": "coverage evidence hash changed"})
+        if record.get("format") not in {"lcov", "cobertura-xml", "coverage.py-json", "istanbul-json"}:
+            empirical_issues.append({"record": index, "field": "format", "reason": "unsupported empirical coverage format"})
+        files = record.get("files")
+        if not isinstance(files, dict):
+            empirical_issues.append({"record": index, "field": "files", "reason": "must be an object"})
+            continue
+        for rel_path, line_data in files.items():
+            if rel_path not in source_set or not isinstance(line_data, dict):
+                empirical_issues.append({"record": index, "file": rel_path, "reason": "coverage file is not a manifest source or line data is invalid"})
+                continue
+            measured = line_data.get("measured_lines")
+            covered = line_data.get("covered_lines")
+            if not isinstance(measured, list) or not all(isinstance(line, int) and not isinstance(line, bool) and line > 0 for line in measured):
+                empirical_issues.append({"record": index, "file": rel_path, "field": "measured_lines", "reason": "must be positive integer lines"})
+                continue
+            if not isinstance(covered, list) or not all(isinstance(line, int) and not isinstance(line, bool) and line > 0 for line in covered) or not set(covered) <= set(measured):
+                empirical_issues.append({"record": index, "file": rel_path, "field": "covered_lines", "reason": "must be a subset of measured lines"})
+                continue
+            empirical_by_file.setdefault(rel_path, set()).update(covered)
+
     manifest["_source_hashes"] = source_hashes
     manifest["_unit_hashes"] = unit_hashes
     manifest["_unit_to_file"] = unit_to_file
     manifest["_expected_by_batch"] = expected_by_batch
     manifest["_files_by_batch"] = files_by_batch
+    manifest["_target_by_id"] = target_by_id
+    manifest["_targets_by_batch"] = targets_by_batch
+    manifest["_empirical_covered_lines"] = empirical_by_file
+    manifest["_empirical_issues"] = empirical_issues
     return manifest
 
 
@@ -169,6 +249,33 @@ def finding_blocks(text: str) -> list[dict[str, str]]:
     if current:
         blocks.append(current)
     return blocks
+
+
+def verify_test_reference(repo_root: Path, value: str) -> dict | None:
+    normalized = value.strip().strip("`")
+    if "#" not in normalized:
+        return {"reason": "structural/empirical test evidence must be real test/path#test-symbol", "actual": value}
+    raw_path, symbol = normalized.split("#", 1)
+    rel_path = Path(raw_path)
+    if rel_path.is_absolute() or ".." in rel_path.parts or not symbol.strip():
+        return {"reason": "test evidence path#symbol is invalid", "actual": value}
+    if not re.search(r"(?:^|/)(?:tests?|__tests__)(?:/|$)|\.(?:test|spec)\.", raw_path, re.IGNORECASE):
+        return {"reason": "test evidence path is not test/spec-shaped", "actual": value}
+    path = repo_root / rel_path
+    try:
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(repo_root.resolve())
+    except (FileNotFoundError, ValueError):
+        return {"reason": "test evidence path does not resolve inside the audited repo", "actual": value}
+    if path.is_symlink() or not path.is_file():
+        return {"reason": "test evidence must be a regular repository file", "actual": value}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return {"reason": "test evidence file is not UTF-8", "actual": value}
+    if symbol.strip() not in text:
+        return {"reason": "test symbol/name is absent from the referenced test file", "actual": value}
+    return None
 
 
 def validate_findings(text: str, allowed_files: set[str], path: Path, section: str) -> list[dict]:
@@ -234,7 +341,39 @@ def verify_batch_report(path: Path, manifest: dict, batch_id: str) -> list[dict]
     inventory_rows = common.parse_markdown_table_dicts(bodies.get("test target inventory", ""))
     if not inventory_rows:
         issues.append({"path": str(path), "section": "Test Target Inventory", "reason": "missing target inventory table"})
+    elif set(inventory_rows[0]) != TARGET_INVENTORY_COLUMNS:
+        issues.append(
+            {
+                "path": str(path),
+                "section": "Test Target Inventory",
+                "reason": "target inventory headers must exactly expose disposition and evidence level",
+                "expected": sorted(TARGET_INVENTORY_COLUMNS),
+                "actual": sorted(inventory_rows[0]),
+            }
+        )
+    expected_target_ids = manifest["_targets_by_batch"][batch_id]
+    observed_target_ids = [row.get("target id", "") for row in inventory_rows]
+    missing_targets = sorted(expected_target_ids - set(observed_target_ids))
+    all_extra_targets = sorted(set(observed_target_ids) - expected_target_ids)
+    extra_targets = sorted(item for item in all_extra_targets if not re.fullmatch(r"manual-[A-Za-z0-9_-]{4,80}", item))
+    duplicate_targets = common.duplicate_values(observed_target_ids)
+    if missing_targets or extra_targets or duplicate_targets:
+        issues.append(
+            {
+                "path": str(path),
+                "section": "Test Target Inventory",
+                "reason": "every deterministic target needs exactly one tested/untested/not-reasonable mapping",
+                "missing_targets": missing_targets,
+                "missing_target_details": [manifest["_target_by_id"][item] for item in missing_targets if item in manifest["_target_by_id"]],
+                "extra_targets": extra_targets,
+                "duplicate_targets": duplicate_targets,
+            }
+        )
+    untested_targets: set[str] = set()
+    repo_root = Path(manifest["repo_root"])
     for row in inventory_rows:
+        target_id = row.get("target id", "")
+        target = manifest["_target_by_id"].get(target_id)
         unit = row.get("unit", "")
         rel_file = row.get("file", "")
         if unit not in expected_units:
@@ -242,11 +381,50 @@ def verify_batch_report(path: Path, manifest: dict, batch_id: str) -> list[dict]
         expected_file = unit_to_file.get(unit)
         if rel_file not in expected_files or (expected_file and rel_file != expected_file):
             issues.append({"path": str(path), "section": "Test Target Inventory", "file": rel_file, "reason": "file is outside this batch or mismatched to unit"})
-        for field in ("target", "kind", "existing test evidence", "scenario assessment", "recommendation"):
+        for field in ("target", "kind", "disposition", "evidence level", "existing test evidence", "scenario assessment", "recommendation"):
             if not row.get(field, "").strip():
                 issues.append({"path": str(path), "section": "Test Target Inventory", "unit": unit, "field": field, "reason": "empty"})
+        if target:
+            for field, expected in (("unit", target["unit_id"]), ("file", target["rel_path"]), ("target", target["symbol"]), ("kind", target["kind"])):
+                if row.get(field) != expected:
+                    issues.append({"path": str(path), "section": "Test Target Inventory", "target_id": target_id, "field": field, "expected": expected, "actual": row.get(field)})
+        disposition = row.get("disposition", "")
+        level = row.get("evidence level", "")
+        evidence_value = row.get("existing test evidence", "")
+        if disposition not in DISPOSITIONS:
+            issues.append({"path": str(path), "section": "Test Target Inventory", "target_id": target_id, "field": "Disposition", "expected": sorted(DISPOSITIONS), "actual": disposition})
+        if level not in EVIDENCE_LEVELS:
+            issues.append({"path": str(path), "section": "Test Target Inventory", "target_id": target_id, "field": "Evidence Level", "expected": sorted(EVIDENCE_LEVELS), "actual": level})
+        if disposition == "TESTED":
+            if level in {"STRUCTURAL", "EMPIRICAL"}:
+                reference_issue = verify_test_reference(repo_root, evidence_value)
+                if reference_issue:
+                    issues.append({"path": str(path), "section": "Test Target Inventory", "target_id": target_id, **reference_issue})
+            elif level == "MANUAL":
+                if not evidence_value.lower().startswith("manual:") or len(evidence_value.split(":", 1)[-1].strip()) < 12:
+                    issues.append({"path": str(path), "section": "Test Target Inventory", "target_id": target_id, "reason": "manual TESTED claims require concrete 'manual: ...' evidence"})
+            else:
+                issues.append({"path": str(path), "section": "Test Target Inventory", "target_id": target_id, "reason": "TESTED targets cannot use NONE evidence"})
+            if level == "EMPIRICAL" and target and target["line"] not in manifest["_empirical_covered_lines"].get(target["rel_path"], set()):
+                issues.append({"path": str(path), "section": "Test Target Inventory", "target_id": target_id, "reason": "EMPIRICAL claim is not backed by a supplied coverage report at the target line"})
+        elif disposition == "UNTESTED":
+            untested_targets.add(target_id)
+            if level != "NONE" or evidence_value.strip().lower() != "none found":
+                issues.append({"path": str(path), "section": "Test Target Inventory", "target_id": target_id, "reason": "UNTESTED targets must use NONE / None found honestly"})
+        elif disposition == "NOT_REASONABLE":
+            if level != "MANUAL" or not evidence_value.lower().startswith("not reasonable:") or len(evidence_value.split(":", 1)[-1].strip()) < 12:
+                issues.append({"path": str(path), "section": "Test Target Inventory", "target_id": target_id, "reason": "NOT_REASONABLE requires MANUAL evidence and a concrete 'not reasonable: ...' rationale"})
 
-    issues.extend(validate_findings(bodies.get("coverage findings", ""), expected_files, path, "Coverage Findings"))
+    findings_text = bodies.get("coverage findings", "")
+    issues.extend(validate_findings(findings_text, expected_files, path, "Coverage Findings"))
+    finding_blocks_parsed = finding_blocks(findings_text)
+    for index, block in enumerate(finding_blocks_parsed, start=1):
+        if not block.get("Target ID"):
+            issues.append({"path": str(path), "section": "Coverage Findings", "finding": index, "missing_fields": ["Target ID"]})
+    finding_target_ids = {block.get("Target ID", "") for block in finding_blocks_parsed}
+    missing_untested_findings = sorted(untested_targets - finding_target_ids)
+    if missing_untested_findings:
+        issues.append({"path": str(path), "section": "Coverage Findings", "reason": "every UNTESTED target requires a finding bound by Target ID", "missing_targets": missing_untested_findings})
     if not bodies.get("batch summary", "").strip():
         issues.append({"path": str(path), "section": "Batch Summary", "reason": "empty"})
     if not bodies.get("no gap notes", "").strip():
@@ -395,6 +573,7 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
         "missing_reports": [],
         "report_issues": [],
         "current_hash_mismatches": [],
+        "empirical_coverage_issues": manifest["_empirical_issues"],
     }
     _, excluded_issues = verify_excluded_files(manifest_path, manifest)
     issues["excluded_file_issues"] = excluded_issues

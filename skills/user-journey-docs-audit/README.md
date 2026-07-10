@@ -1,9 +1,14 @@
 # User Journey Docs Audit
 
-`user-journey-docs-audit` checks whether a repo has enough product and
+`user-journey-docs-audit` performs a lexical and structural check of whether a repo has enough product and
 development documentation to build an app that is genuinely easy to use and
 complete: journeys, features, UI elements, implementation expectations, and
 tests are all spelled out.
+
+Policy files and source hints are classified separately and never establish
+confirmed product truth. Native SwiftUI, XAML, AppKit/UIKit, Compose, Flutter,
+and QML source can expose undocumented UI surfaces, but user confirmation or
+product documentation remains required.
 
 Use it before UI implementation, redesign, or a full-repo interface audit when
 the app idea, target users, journey set, feature set, UI element set, screen
@@ -35,6 +40,12 @@ python3 skills/user-journey-docs-audit/scripts/build_journey_docs_inventory.py -
 ```
 
 Use `--json` when another script or agent needs machine-readable inventory output.
+
+Validate a completed audit report with:
+
+```bash
+python3 skills/user-journey-docs-audit/scripts/verify_journey_docs_audit_results.py report.md
+```
 
 ## References
 

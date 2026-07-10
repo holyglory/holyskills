@@ -12,7 +12,10 @@ from pathlib import Path, PurePosixPath
 
 
 DOC_EXTENSIONS = {".md", ".mdx", ".markdown", ".rst", ".adoc", ".asciidoc"}
-SOURCE_HINT_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte", ".html", ".cshtml", ".razor"}
+SOURCE_HINT_EXTENSIONS = {
+    ".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte", ".html", ".cshtml", ".razor",
+    ".swift", ".xaml", ".axaml", ".kt", ".kts", ".dart", ".m", ".mm", ".qml",
+}
 COMMENT_LINE_RE = re.compile(r"^\s*(?://+|#+|\*+|/\*+|<!--)")
 COMMENT_JOURNEY_TERMS = ("journey", "user flow", "workflow", "onboarding", "use case", "user story")
 
@@ -397,6 +400,18 @@ LOW_IMPORTANCE_CLASSIFICATION_TERMS = {
     "secondary-occasional",
 }
 ROUTE_HINT_RE = re.compile(r"(?:route|path|href|to)\s*[:=]\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
+VISIBLE_TEXT_PATTERNS = (
+    re.compile(r">[^<]{3,}<|aria-label\s*=|placeholder\s*=|title\s*=", re.IGNORECASE),
+    re.compile(
+        r"\b(?:Text|Label|Button|Toggle|TextField|SecureField|navigationTitle|accessibilityLabel)"
+        r"\s*\(\s*[\"'][^\"']{2,}[\"']",
+    ),
+    re.compile(
+        r"\b(?:Text|Content|Header|Title|Placeholder|AutomationProperties\.Name)"
+        r"\s*=\s*[\"'][^\"']{2,}[\"']",
+        re.IGNORECASE,
+    ),
+)
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 GITMODULES_PATH_RE = re.compile(r"^\s*path\s*=\s*(.+?)\s*$", re.MULTILINE)
 
@@ -519,6 +534,11 @@ def is_operational_skill_doc(rel_path: str) -> bool:
     return len(parts) >= 2 and parts[0] == "skills"
 
 
+def is_policy_or_governance_doc(rel_path: str) -> bool:
+    name = PurePosixPath(rel_path).name.lower()
+    return name in {"agents.md", "claude.md", "decisionhistory.md"}
+
+
 def is_operational_docs_repo_text(text: str) -> bool:
     lowered = text.lower()
     markers = (
@@ -534,7 +554,11 @@ def is_operational_docs_repo_text(text: str) -> bool:
 
 
 def is_operational_doc(rel_path: str, text: str) -> bool:
-    return is_operational_skill_doc(rel_path) or is_operational_docs_repo_text(text)
+    return (
+        is_operational_skill_doc(rel_path)
+        or is_policy_or_governance_doc(rel_path)
+        or is_operational_docs_repo_text(text)
+    )
 
 
 def is_likely_journey_doc(rel_path: str, text: str, journey_hits: int) -> bool:
@@ -618,6 +642,8 @@ def has_prescriptive_ui_risk(rel_path: str, text: str) -> bool:
 
 def classify_doc(rel_path: str, text: str) -> str:
     lowered = rel_path.lower()
+    if is_policy_or_governance_doc(rel_path):
+        return "policy-or-decision-history"
     if "readme" in lowered:
         return "readme"
     if any(term in lowered for term in ("journey", "workflow", "flow", "persona", "product", "spec", "feature", "requirement")):
@@ -669,7 +695,7 @@ def doc_record(repo: Path, path: Path) -> DocRecord:
 def source_hint(repo: Path, path: Path) -> SourceHint | None:
     text = read_text(path)
     routes = sorted(set(match.group(1) for match in ROUTE_HINT_RE.finditer(text)))[:30]
-    visible_text_hits = len(re.findall(r">[^<]{3,}<|aria-label=|placeholder=|title=", text))
+    visible_text_hits = sum(len(pattern.findall(text)) for pattern in VISIBLE_TEXT_PATTERNS)
     if not routes and not visible_text_hits:
         return None
     return SourceHint(path=path.relative_to(repo).as_posix(), routes=routes, visible_text_hits=visible_text_hits)

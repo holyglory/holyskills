@@ -4,7 +4,7 @@
 repository has meaningful tests for its functions, methods, UI journeys,
 intended features, UI elements, integration paths, and important edge or
 failure cases. It produces a verified coverage record and a prioritized plan
-for closing test gaps.
+for closing test gaps. Without supplied runtime coverage it is a structural/manual test-assurance audit, not an empirical coverage measurement.
 
 ## Target
 
@@ -46,7 +46,7 @@ spawning is unavailable, the skill may use disclosed manual fallback coverage.
 The harness creates an audit output directory containing:
 
 - `manifest.json`: source files, coverage units, batches, hashes, and coverage
-  invariants.
+  invariants, deterministic target inventory, and optional empirical coverage evidence.
 - `audit_index.md`: dispatch guide for the lead agent.
 - `batch_###.md`: prompts for low-effort file-audit workers.
 - `ui_test_coverage_audit.md`: UI and journey test coverage prompt when
@@ -83,6 +83,7 @@ Useful builder options match the full repo audit harness: `--out`,
 `--include-generated`, `--include-vendor`, `--include-env`, `--include-assets`,
 `--include-file`, `--include-glob`, `--batch-size`, and
 `--max-batch-bytes`.
+Use repeated `--coverage-report` arguments for LCOV, Cobertura XML, coverage.py JSON, or Istanbul JSON. Each target must be mapped exactly once as `TESTED`, `UNTESTED`, or `NOT_REASONABLE`, with evidence honestly labeled `EMPIRICAL`, `STRUCTURAL`, `MANUAL`, or `NONE`.
 
 ## Coverage Rules
 

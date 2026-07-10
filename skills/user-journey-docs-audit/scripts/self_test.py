@@ -13,6 +13,7 @@ from shutil import rmtree
 
 ROOT = Path(__file__).resolve().parents[1]
 INVENTORY = ROOT / "scripts" / "build_journey_docs_inventory.py"
+REPORT_VERIFY = ROOT / "scripts" / "verify_journey_docs_audit_results.py"
 REQUIRED_REFERENCES = {
     "references/ux_principles.md": ["# UX Principles", "Nielsen Norman Group", "WCAG"],
     "references/journey_doc_template.md": [
@@ -46,6 +47,19 @@ def run_inventory(repo: Path) -> dict:
 def check(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def run_report_verify(path: Path, *, expect: int) -> None:
+    result = subprocess.run(
+        [sys.executable, str(REPORT_VERIFY), str(path)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != expect:
+        raise AssertionError(
+            f"Expected report verifier exit {expect}, got {result.returncode}: {result.stdout}\n{result.stderr}"
+        )
 
 
 def main() -> int:
@@ -372,6 +386,38 @@ Acceptance: admin can recover from failed upload
         source = run_inventory(source_repo)
         check(source["source_hint_count"] == 1, "source route/visible text hints should be detected")
 
+        native_source_repo = tmp / "native-source"
+        write(native_source_repo / "README.md", "# Native App\n\nA local operator tool.\n")
+        write(
+            native_source_repo / "Sources" / "Dashboard.swift",
+            'struct Dashboard: View { var body: some View { VStack { Text("Service health"); Button("Restart") {} } } }\n',
+        )
+        write(
+            native_source_repo / "Views" / "MainWindow.axaml",
+            '<StackPanel><TextBlock Text="Database backups"/><Button Content="Verify backup"/></StackPanel>\n',
+        )
+        native_source = run_inventory(native_source_repo)
+        check(native_source["source_hint_count"] == 2, "SwiftUI and XAML visible-text hints should be detected")
+
+        policy_repo = tmp / "policy-only"
+        write(
+            policy_repo / "AGENTS.md",
+            """# Global Agent Instructions
+
+## Journey Decision Model
+Primary user goal: audit every user workflow.
+Primary decision: decide whether the app is complete.
+Required facts: product routes and acceptance criteria.
+
+## Information Relevance Inventory
+critical-always user journey evidence.
+""",
+        )
+        write(policy_repo / "CLAUDE.md", "# Claude Policy\n\nAgents must check product and user journeys.\n")
+        policy_only = run_inventory(policy_repo)
+        check(policy_only["journey_doc_count"] == 0, "agent policy must not count as product journey truth")
+        check(policy_only["product_doc_count"] == 0, "agent policy must not count as product documentation")
+
         skill_repo = tmp / "skill-repo"
         write(
             skill_repo / "skills" / "sample-skill" / "SKILL.md",
@@ -418,6 +464,58 @@ This is a local curation repository for Codex skills.
         write(rst_repo / "docs" / "guide.rst", "User Guide\n=========\n\nThe app helps users.\n")
         rst_inventory = run_inventory(rst_repo)
         check(rst_inventory["doc_count"] >= 1, "reStructuredText docs should be inventoried")
+
+        headings = [
+            "Coverage",
+            "Interview Summary",
+            "Confirmed App Idea",
+            "Confirmed Users And Contexts",
+            "Confirmed Journey Inventory",
+            "Missing Or Weak Journeys",
+            "Journey Decision Model Gaps",
+            "Information Relevance Inventory Gaps",
+            "Documentation Completeness Findings",
+            "Information Hierarchy And Navigation Gaps",
+            "Interaction Affordance And Metadata Gaps",
+            "UX Documentation Gaps",
+            "UI Handoff Constraints",
+            "Recommended Documentation Plan",
+            "Readiness Score",
+            "Questions Still Unanswered",
+        ]
+        good_report = tmp / "good-report.md"
+        sections = []
+        for heading in headings:
+            body = "Confirmed from the user interview and docs with file evidence."
+            if heading == "Coverage":
+                body = "Journey status confirmed; documentation and source hints were inspected."
+            elif heading == "Interview Summary":
+                body = "The user confirmed the app idea, operators, and prioritized service-health journey."
+            elif heading == "Confirmed Journey Inventory":
+                body = "| Journey | Status | Evidence |\n| --- | --- | --- |\n| Review health | confirmed | user interview |"
+            elif heading == "Interaction Affordance And Metadata Gaps":
+                body = "No gaps: activation targets, focus feedback, destination, disclosure lifecycle, detail access, scrollbar separation, stable dimensions, hover-copy, concise status, icon meaning, and passive metadata are explicitly documented."
+            elif heading == "Readiness Score":
+                body = "Confirmed readiness: 3/3 for journey definition with user evidence."
+            elif heading == "Questions Still Unanswered":
+                body = "None after the recorded user interview."
+            sections.append(f"## {heading}\n\n{body}\n")
+        write(good_report, "\n".join(sections))
+        run_report_verify(good_report, expect=0)
+
+        missing_interaction = tmp / "missing-interaction.md"
+        write(missing_interaction, good_report.read_text(encoding="utf-8").replace("## Interaction Affordance And Metadata Gaps", "## Generic UI Gaps"))
+        run_report_verify(missing_interaction, expect=1)
+
+        unconfirmed = tmp / "unconfirmed-report.md"
+        write(
+            unconfirmed,
+            good_report.read_text(encoding="utf-8")
+            .replace("Journey status confirmed; documentation and source hints were inspected.", "journey assumptions unconfirmed")
+            .replace("Confirmed readiness: 3/3 for journey definition with user evidence.", "Readiness cannot be confirmed.")
+            .replace("None after the recorded user interview.", "No questions recorded."),
+        )
+        run_report_verify(unconfirmed, expect=1)
 
         print("self-test ok")
         return 0

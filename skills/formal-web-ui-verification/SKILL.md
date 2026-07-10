@@ -1,17 +1,21 @@
 ---
 name: formal-web-ui-verification
-description: Run deterministic browser-side formal verification of rendered web UI geometry, visibility, text fit, overlap, media health, and area-of-interest boundaries. Use when a coding agent (Codex, Claude Code) implements, changes, audits, or validates frontend/web UI and needs software-detectable evidence for cropped text, hidden content, off-canvas controls, unintended overlap, broken media, invisible text, document overflow, or noisy visual-test misses across desktop and mobile viewports.
+description: Run deterministic browser-side heuristic verification of rendered web UI geometry, visibility, text fit, overlap, media health, target coverage, and area-of-interest boundaries. Use when a coding agent (Codex, Claude Code) implements, changes, audits, or validates frontend/web UI and needs software-detectable evidence for cropped text, hidden content, off-canvas controls, unintended overlap, broken media, invisible text, document overflow, unchecked routes, or noisy visual-test misses across desktop and mobile viewports.
 ---
 
 # Formal Web UI Verification
 
 ## Overview
 
-Use this skill to verify rendered web interfaces with DOM geometry and computed
+Use this skill to inspect rendered web interfaces with deterministic DOM
+geometry and computed
 style measurements instead of relying only on screenshots or model vision. The
 bundled verifier injects JavaScript into real pages through Playwright, checks
 desktop and mobile viewports, emits JSON plus Markdown evidence, and exits
-nonzero only when findings meet the configured severity threshold.
+nonzero when findings meet the configured severity threshold or when required
+targets could not be checked. It is a heuristic browser-side detector, not a
+mathematical proof of UI correctness; inaccessible states and browser contexts
+remain explicit coverage limits.
 Text detection covers any element that directly owns rendered text (including
 `div`-based layouts), not just classic heading/paragraph tags, and clipping
 checks cover both self-overflow and cuts made by ancestor `overflow` clipping
@@ -19,11 +23,12 @@ checks cover both self-overflow and cuts made by ancestor `overflow` clipping
 full-page scroll pass before measuring so below-the-fold and lazy-loaded
 content is exercised. Every run inventories visible/active document and
 element scrollbars, records contrast it could not measure against a solid
-background, counts shadow roots and iframes it did not inspect, and lists
+background, traverses discoverable open shadow roots, evaluates every
+Playwright-reachable iframe, records any reachable context it could not inspect, and lists
 allowed ellipsis/line-clamp truncations, hidden text-like elements, and
 still-loading media, even when the page has no critical layout findings.
 
-This is a formal verification layer, not a replacement for human visual
+This deterministic verification layer is not a replacement for human visual
 judgment. Use it before reporting changed web UI as done, and include its
 critical findings in the implementation or audit result.
 
@@ -52,6 +57,10 @@ node "$FORMAL_WEB_UI_SKILL_DIR/scripts/formal_web_ui_verify.mjs" \
   --fail-on critical
 ```
 
+Exit codes are stable: `0` checked with no blocking findings, `1` blocking UI
+findings, `2` setup/configuration failure, and `3` required-target coverage
+failure. Explicit targets fail closed on navigation, HTTP, or non-HTML errors.
+
 Verify healthy coordinator-managed web URLs without starting duplicate servers:
 
 ```bash
@@ -76,13 +85,28 @@ node "$FORMAL_WEB_UI_SKILL_DIR/scripts/formal_web_ui_verify.mjs" \
 2. **Run the formal verifier**
    - Check at least one narrow/mobile viewport and one desktop viewport for web
      UI changes.
+   - When the journey depends on touch, mobile user-agent behavior, device pixel
+     ratio, or mobile browser layout semantics, use a Playwright descriptor such
+     as `{"name":"iphone","device":"iPhone 13"}`. A narrow desktop viewport is
+     useful responsive evidence, but it is not equivalent to device emulation.
+   - Declare transient states under a target's `states` list. Each state runs in
+     a fresh browser context after an ordered set of bounded `click`, `hover`,
+     `focus`, `fill`, `check`, `uncheck`, `press`, or `selectOption` actions.
+     Action failures fail the target-coverage gate; arbitrary injected JavaScript
+     is deliberately unsupported. Values used by actions are omitted from the
+     public report.
    - The verifier scrolls the full page top-to-bottom before measuring so
      below-the-fold and lazy-loaded content is exercised; how far it scrolled is
      reported in `metrics.scroll`. Pass `--no-scroll` (or `"scroll": false` in a
      config) only when the page must not scroll during inspection.
    - Use `--from-coordinator --only-current` only for already-running current
-     coordinator URLs. Stopped, stale, reused-port, non-HTML, and 4xx URLs
-     should be recorded as skipped evidence, not as UI failures.
+     coordinator URLs. A discovered URL that cannot be checked fails the
+     coverage gate by default. Use `--allow-discovered-target-failures` only
+     when stale discovery is expected and the incomplete coverage is acceptable.
+   - An optional explicit target may use `"allowFailure": "reason"` in config.
+     The exemption remains in the report. `minCheckedPages` defaults to `1`, so
+     a run cannot pass solely through exemptions unless the config deliberately
+     sets the minimum to `0`.
    - Keep `--fail-on critical` as the default for low-noise delivery gates.
      Use stricter settings only when the project asks for warning-level gates.
 
@@ -92,8 +116,10 @@ node "$FORMAL_WEB_UI_SKILL_DIR/scripts/formal_web_ui_verify.mjs" \
      document why it is acceptable.
    - `unmeasurable-contrast` and `not-inspected` are always warnings, never
      criticals: they mark coverage gaps (gradient/image or translucent
-     backgrounds; uninspected shadow roots and iframes). Review those elements
-     visually rather than trusting a pass.
+     backgrounds; a reachable iframe whose execution context could not be
+     evaluated). Open shadow roots and Playwright-reachable frames are inspected;
+     closed shadow roots cannot be discovered from outside the component.
+     Review uncovered contexts visually rather than trusting a pass.
    - `clipped-hidden`, `offcanvas-hidden`, and `fixed-offscreen-hidden` mark
      content that is fully invisible in a way that is often intentional
      (closed accordions, offscreen slides/drawers, skip links). When the
@@ -149,8 +175,9 @@ Warnings by default:
   themselves unless they also cause overflow, clipping, or area violations.
 - Coverage gaps are always reported in the Markdown `Coverage & Unmeasurable`
   section: `metrics.unmeasurableContrast`, `metrics.notInspected`
-  (`shadowRoots`/`iframes` counted but not traversed, raising a `not-inspected`
-  warning), `metrics.ellipsisTruncations` (allowed single-line ellipsis and
+  (discovered/inspected open-shadow and iframe counts plus reachable frame
+  evaluation failures, which raise a `not-inspected` warning),
+  `metrics.ellipsisTruncations` (allowed single-line ellipsis and
   line-clamp truncations), `metrics.hiddenTextLike` (text/controls present in
   the DOM but not rendered), and `metrics.pendingMedia` (media still loading at
   measurement time).
@@ -193,8 +220,18 @@ Use a config file when allowances are route-specific:
 
 ```json
 {
-  "targets": [{"url": "http://127.0.0.1:3000/dashboard"}],
-  "viewports": [{"name": "mobile", "width": 390, "height": 844}],
+  "targets": [{
+    "url": "http://127.0.0.1:3000/dashboard",
+    "states": [{
+      "name": "account-menu-open",
+      "actions": [{"action": "click", "selector": "[aria-label='Account']"}],
+      "waitFor": {"selector": "[role='menu']"}
+    }]
+  }],
+  "viewports": [
+    {"name": "iphone", "device": "iPhone 13"},
+    {"name": "desktop", "width": 1440, "height": 900}
+  ],
   "areas": [{"name": "main", "selector": "main"}],
   "ignore": [{"selector": ".third-party-map", "reason": "vendor map internals"}],
   "allowTruncation": [{"selector": ".filename", "reason": "intentional ellipsis"}],
@@ -211,6 +248,8 @@ pass when a page must not scroll during inspection.
 
 - Do not report changed web UI as verified if the formal verifier found
   unresolved critical findings on the relevant desktop or mobile route.
+- Do not report a run as verified when it exits `3`, checks fewer than the
+  configured minimum pages, or leaves a required explicit target unchecked.
 - Do not treat screenshots alone as formal evidence for clipped text, overlap,
   off-canvas controls, or invisible text when this verifier can run.
 - Keep generated reports outside the product repo unless the user asks to save

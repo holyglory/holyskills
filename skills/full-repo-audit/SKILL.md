@@ -1,6 +1,6 @@
 ---
 name: full-repo-audit
-description: Run a full repository source-code, interface, and user-journey audit that combines an extra-high-effort lead architectural review with low-effort subagent batches that manually inspect every queued source file plus separate journey and visual UI workers. Use when the user asks to audit a repo for incomplete or partial features, TODO/stub behavior, industry-standard gaps, user-expectation gaps, architectural risk, UI controls or messages that imply unimplemented behavior, unclear user journeys, missing implementation or tests for the intended feature set, visual/test-mode gaps, UI assumption status, or to produce a prioritized implementation plan from repository-wide findings.
+description: Run a manifest-verified repository source, interface, and user-journey audit with a lead architectural review, deterministic file batches, explicit high-risk lead rechecks, real hashed visual evidence, and honest runtime capability/effort provenance. Use for incomplete features, TODO/stub behavior, architecture and security risk, misleading UI promises, unclear journeys, missing implementation/tests, and prioritized repository-wide plans.
 ---
 
 # Full Repo Audit
@@ -26,12 +26,12 @@ escalate to screenshot-based visual review or `ui-implementation-audit`.
 
 ## Required Execution Model
 
-- Execute the lead audit with extra-high reasoning effort. If the current lead run cannot be confirmed or configured as extra-high effort, tell the user before starting; when the environment supports spawned agents, run the formal lead architectural pass as an extra-high-effort agent and disclose that handoff. If no current or spawned lead can be confirmed as extra-high, stop before dispatching the audit and ask the user to rerun in an x-high-capable runtime; do not produce a degraded full-audit result. Manual fallback applies only to worker coverage; do not downgrade or waive the lead x-high requirement.
+- Request extra-high reasoning effort for the lead audit. Call it `runtime-attested x-high` only when immutable/runtime provenance actually reports that setting. A configured or self-reported value must be labeled `ledger-recorded-unverified`; never call it confirmed. If runtime attestation is unavailable, the audit may continue only as `unattested lead review`, must disclose that limitation, and must not claim x-high assurance.
 - Use low-effort subagents for file-batch inspection. When spawning these agents, set `reasoning_effort` to `low`.
 - When interface-relevant files are queued, use separate low-effort workers for `journey_audit.md` and `visual_journey_audit.md`. Manual fallback may process these prompts in the current agent only when worker spawning is unavailable, but the final coverage label must disclose that fallback.
 - Treat the user's request to run this audit as authorization for the batch subagents required by this workflow.
 - After the lead x-high gate above is satisfied, check whether the active runtime exposes a subagent tool that can set `reasoning_effort` for spawned worker agents. If that worker tool is absent, fails, or cannot set low effort, record the reason and enter manual fallback mode for worker coverage only.
-- Keep a lead-recorded effort/capability ledger: record the subagent capability check, lead effort status, and each batch's assigned agent id plus `reasoning_effort` or manual fallback status from the runtime spawn results. The verifier checks the recorded ledger values and consistency, but it cannot independently prove platform scheduler settings; describe effort status as ledger-recorded unless the runtime provides separate immutable provenance.
+- Keep a lead-recorded effort/capability ledger. Every capability and effort claim needs a claim basis (`runtime-attested`, `tool-schema-inspected`, `self-reported`, or `manual-fallback`), a consistent claim label, and concrete provenance/evidence. The verifier checks ledger consistency, not hidden scheduler state.
 - If the lead x-high gate is satisfied but the runtime cannot spawn worker subagents or set low worker effort, continue only in **manual fallback mode** for worker coverage: disclose the limitation, run each generated batch sequentially in the current agent, save one report per batch under `<audit-output>/reports/batch_###.md`, verify coverage with `verify_audit_results.py`, and label final coverage as `manual fallback coverage` rather than subagent coverage.
 - Keep subagent ownership disjoint: one batch prompt per subagent, no overlapping file ownership unless a batch must be rechecked.
 - Keep the audited repo read-only unless the user separately asks to implement the resulting plan. Generated audit artifacts are allowed, but place them outside the audited repo by default and disclose their path.
@@ -65,6 +65,7 @@ escalate to screenshot-based visual review or `ui-implementation-audit`.
    - Use `--batch-size` and `--max-batch-bytes` to keep batches small enough for manual inspection. Oversized UTF-8 multi-line files are split into line-range coverage units; long/minified single-line or non-UTF-8 files are split into byte-range coverage units. Dispatch and verify each unit instead of treating a very large file as one undifferentiated worker task.
    - Confirm `queue_complete.json` exists, its `phase` is `queue_generated`, and its `run_id` matches `manifest.json` before dispatching subagents. This marker means queue generation completed; it is not proof that the audit reports are complete.
    - Fill `effort_ledger.json` as you dispatch and reconcile: subagent capability check, spawn tool, capability notes/evidence, lead effort status, fallback status, pruned-directory review status/notes when required, journey worker agent id/effort/status/report, per-batch agent id/effort/status/report, per-batch runtime provenance, and the ledger's self-reported provenance scope.
+   - Review every `manifest.json.high_risk_files` entry directly as lead. Complete the exact `lead_high_risk_review.files[]` row with the manifest hash, risk reasons, concrete source evidence, and security/data-loss/recovery notes. Batch-worker review alone cannot close a high-risk file.
    - Inspect `excluded_files.json` after generation and resolve any `scope_warning: true` rows before claiming full coverage. If `manifest.json` has `pruned_directory_review_hint_count > 0`, inspect `pruned_directory_review_hints`, requeue first-party source-like samples when needed, and record one structured `pruned_directory_review.decisions[]` entry per hinted path in `effort_ledger.json` using `requeued`, `excluded-with-rationale`, or `out-of-scope-with-user-confirmation` plus a concrete rationale.
    - A scope warning is verifier-cleared only by re-running the queue with the needed include flag or requeuing the specific file in a new/manual batch. If the user confirms an exclusion or the lead downgrades the final coverage claim, keep the verifier failure visible and list the exclusion explicitly.
 
@@ -105,6 +106,7 @@ escalate to screenshot-based visual review or `ui-implementation-audit`.
    - If a run is interrupted or the ledger claims a worker is complete but its report file is missing, treat the verifier as authoritative and recover from the manifest rather than the stale ledger: inspect `manifest.json` and `reports/`, mark missing batch/journey reports back to pending or rerun them, save the exact report filenames, update `effort_ledger.json` with the new agent/fallback status, and rerun the verifier. Do not claim completion from ledger status alone.
    - Requeue any source-like unknown file or source-backed UI asset needed to resolve a warning by regenerating the queue with `--include-file`, `--include-glob`, or `--include-assets`, then rerun the affected batch and verifier.
    - Inspect suspicious high-impact findings directly as lead before including them.
+   - When visual checks are applicable, populate `<audit-output>/visual_evidence.json`. Reports must cite stable `evidence:<id>` values. Each screenshot/native snapshot must be a real confined file with verified SHA-256, MIME, dimensions, route, state, viewport, and capture tool. Web audits must bind the actual formal-verifier JSON, including checked-page coverage and visible scrollbar inventory. Filenames or words such as “screenshot” are not evidence.
 
 6. **Synthesize the implementation plan**
    - For large repos, first consolidate findings mechanically instead of merging
@@ -146,6 +148,7 @@ Return a concise but complete plan with exactly these top-level Markdown heading
 
 ## Coverage
 Repo root, audit output path, run id, source files queued, coverage units queued, files or units checked by subagents or manual fallback, files rechecked by the lead, journey workers run, scope warnings, exclusions, unchecked files or units, verifier result, subagent capability check result, ledger-recorded lead effort status, and per-batch/journey effort/fallback ledger.
+State effort as `runtime-attested`, `ledger-recorded-unverified`, or `manual-fallback`; never shorten an unattested claim to “confirmed x-high.” List every high-risk file and lead-review status. List every bound visual evidence id/path/hash/viewport and formal-verifier evidence id.
 
 ## Architecture Findings
 Repo-wide design, feature-completeness, and product-flow gaps from the lead pass, or `No confirmed findings.`
@@ -216,6 +219,7 @@ During the visual journey pass, use available visual tooling such as Playwright,
 - `.full-repo-audit-artifacts.json`: ownership marker that lets reruns clean stale harness artifacts without deleting user files.
 - `queue_complete.json`: queue-generation marker written last with `phase: queue_generated` and `audit_verified: false`; if it is absent or the run id differs from `manifest.json`, regenerate the queue before dispatch.
 - `effort_ledger.json`: lead-recorded capability, effort, fallback, and per-batch assignment ledger that must be completed before final synthesis.
+- `visual_evidence.json`: real screenshot/native/formal-verifier artifact bindings; generated empty and completed by the visual worker when visual checks apply.
 - `journey_audit.md`: source-level user-journey worker prompt generated when interface-relevant files exist.
 - `visual_journey_audit.md`: visual journey worker prompt generated when interface-relevant files exist.
 - `batch_###.md`: subagent-ready prompts with exact file or range ownership and interface-specific checks when relevant.

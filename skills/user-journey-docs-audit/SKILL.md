@@ -1,6 +1,6 @@
 ---
 name: user-journey-docs-audit
-description: Audit Markdown and development documentation for app idea clarity, user context, complete user journeys, journey decision models, information relevance, feature inventory, UI handoff constraints, edge cases, implementation expectations, test expectations, and usability acceptance criteria. Use when an agent (Codex, Claude Code) needs to inspect README/docs/MDX/product specs for whether they define user intent and decision needs well enough to design, build, test, and improve a rich, easy-to-use application or prepare reliable inputs for ui-implementation-audit; must actively interview the user with questions or surveys when app purpose, users, journeys, feature intent, decision needs, or UI assumptions are missing or ambiguous.
+description: Run a lexical and structural audit of product and journey documentation for app idea clarity, user context, journey decision models, information relevance, feature inventory, UI handoff constraints, edge cases, implementation expectations, test expectations, and usability acceptance criteria. Use when an agent (Codex, Claude Code) needs to determine whether docs define user intent and decision needs well enough to design, build, test, and improve an application or prepare reliable inputs for ui-implementation-audit; policy files and source hints are not product truth, and the user must be interviewed when purpose, users, journeys, feature intent, or UI assumptions remain ambiguous.
 ---
 
 # User Journey Docs Audit
@@ -8,6 +8,13 @@ description: Audit Markdown and development documentation for app idea clarity, 
 ## Overview
 
 Audit whether a repo's docs are sufficient to drive excellent product and UI work. This skill is not a source-code feature audit and must not prescribe layout on its own. It checks whether Markdown/product/development docs explain the app idea, users, contexts, complete journey set, complete feature set, UI elements, decisions users make, information needed for those decisions, action frequency, edge cases, implementation expectations, test expectations, and acceptance criteria well enough that designers, engineers, QA, support, and agents can build a rich, easy-to-use app without guessing.
+
+The inventory is a lexical/structural detector, not semantic proof. It
+classifies policy, decision-history, operational-skill, product, and journey
+documents separately. `AGENTS.md`, `CLAUDE.md`, and source code can surface
+missing-context hints but cannot confirm product intent. Native source hints
+include SwiftUI, XAML/Avalonia/WPF, AppKit/UIKit, Compose/Kotlin, Flutter,
+Qt/QML, and web UI files.
 
 Hard reporting gate: the final answer is invalid if it omits the exact heading
 `## Interaction Affordance And Metadata Gaps`. Do not merge those findings into
@@ -80,6 +87,12 @@ Recommended first interview:
    - Recommend exact docs or sections to add.
    - Use `references/journey_doc_template.md` when proposing replacement or new documentation structure.
    - Include enough detail that another engineer or agent can write the missing docs without inventing product intent.
+   - When a deterministic completion gate is required, save the final Markdown
+     report and run
+     `python3 <skill-dir>/scripts/verify_journey_docs_audit_results.py <report.md>`.
+     This checks report shape, interview/confirmation status, journey-status
+     labels, unconfirmed-assumption propagation, and the interaction/metadata
+     checklist; it does not replace lead judgment.
 
 ## Audit Rubric
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "Full Repo Test Coverage Audit"
-  short_description: "Audit repo-wide test coverage gaps"
-  default_prompt: "Use $full-repo-test-coverage-audit to run the read-only manifest-verified test coverage audit when the runtime can satisfy the high-effort lead gate; it dispatches low-effort file batches plus UI journey and visual coverage workers when applicable, then returns a prioritized plan to close unit, integration, e2e, feature, UI element, edge-case, and failure-path gaps."
+  short_description: "Map exact test targets and empirical evidence"
+  default_prompt: "Use $full-repo-test-coverage-audit to map every deterministic source target exactly once as TESTED, UNTESTED, or NOT_REASONABLE; validate real test paths and symbols; label evidence EMPIRICAL, STRUCTURAL, MANUAL, or NONE; ingest supplied LCOV/Cobertura/coverage.py/Istanbul artifacts; audit UI journeys and failure paths; and return a prioritized test plan without overstating structural review as runtime coverage."
