@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import importlib.util
 import os
@@ -292,10 +293,14 @@ description: Fixture skill contract.
     write(root / ".nuxt" / "app.js", "export default {}\n")
     write(root / ".svelte-kit" / "output" / "server.js", "export const server = true;\n")
     write(root / ".terraform" / "generated.tf", "resource \"null_resource\" \"fixture\" {}\n")
+    write(root / ".build" / "debug" / "Generated.swift", "let generatedBySwiftPM = true\n")
+    write(root / ".swiftpm" / "configuration" / "registries.json", "{}\n")
+    write(root / ".claude" / "CLAUDE.md", "# Project Claude Instructions\n")
+    write(root / ".claude" / "settings.local.json", '{"permissions": {}}\n')
     write(root / "src" / "foo---bar.ts", "export const dashed = true;\n")
     write_bytes(root / "src" / "late_binary.ts", b"a" * 5000 + b"\0tail\n")
     write(root / "scratch.local.py", "LOCAL_ONLY = True\n")
-    write(root / ".gitignore", "dist/\n.next/\n.nuxt/\n.svelte-kit/\n.terraform/\n.env*\nvendor/\nnode_modules/\n.cache/\n*.local.py\n")
+    write(root / ".gitignore", "dist/\n.next/\n.nuxt/\n.svelte-kit/\n.terraform/\n.build/\n.swiftpm/\n.claude/settings.local.json\n.env*\nvendor/\nnode_modules/\n.cache/\n*.local.py\n")
     write(
         root / "src" / "components" / "SaveButton.tsx",
         """export function SaveButton() {
@@ -551,6 +556,9 @@ def complete_effort_ledger(output_dir: Path, *, fallback: bool = False) -> None:
         "status": "completed",
         "spawn_tool": "self-test",
         "can_set_reasoning_effort": not fallback,
+        "claim_basis": "self-reported" if not fallback else "manual-fallback",
+        "claim_label": "ledger-recorded-unverified" if not fallback else "manual-fallback",
+        "evidence": "self-test inspected its local fixture runner; no immutable scheduler attestation exists",
         "notes": "self-test ledger completion",
     }
     ledger["lead"] = {
@@ -558,6 +566,9 @@ def complete_effort_ledger(output_dir: Path, *, fallback: bool = False) -> None:
         "required_reasoning_effort": "xhigh",
         "actual_reasoning_effort": "xhigh",
         "agent_id": "lead-self-test",
+        "effort_claim_basis": "self-reported",
+        "effort_claim_label": "ledger-recorded-unverified",
+        "runtime_provenance": "self-test lead declaration without scheduler attestation",
         "notes": None,
     }
     ledger["fallback_mode"] = {"active": fallback, "reason": "self-test fallback" if fallback else None}
@@ -569,6 +580,13 @@ def complete_effort_ledger(output_dir: Path, *, fallback: bool = False) -> None:
             if isinstance(decision, dict):
                 decision["decision"] = "excluded-with-rationale"
                 decision["rationale"] = "Fixture generated directory is intentionally excluded after lead review."
+    high_risk_review = ledger.get("lead_high_risk_review")
+    if isinstance(high_risk_review, dict) and high_risk_review.get("status") != "not-applicable":
+        high_risk_review["status"] = "completed"
+        for item in high_risk_review.get("files", []):
+            item["status"] = "completed"
+            item["evidence"] = f"Lead opened {item['rel_path']} and reviewed its recorded SHA-256 and risk reasons."
+            item["notes"] = "Fixture lead review covered security, data-loss, process, and recovery implications."
     reports_dir = output_dir / "reports"
     reports_dir.mkdir(exist_ok=True)
     for worker_key, worker_label in (
@@ -586,6 +604,8 @@ def complete_effort_ledger(output_dir: Path, *, fallback: bool = False) -> None:
             if fallback
             else f"self-test spawned low-effort {worker_label} execution"
         )
+        worker["effort_claim_basis"] = "manual-fallback" if fallback else "self-reported"
+        worker["effort_claim_label"] = "manual-fallback" if fallback else "ledger-recorded-unverified"
         report = worker.get("report")
         if isinstance(report, str) and report:
             if worker_label == "journey_source":
@@ -645,11 +665,74 @@ None.
             batch["agent_id"] = None
             batch["actual_reasoning_effort"] = "manual-fallback"
             batch["runtime_provenance"] = "self-test manual fallback batch execution"
+            batch["effort_claim_basis"] = "manual-fallback"
+            batch["effort_claim_label"] = "manual-fallback"
         else:
             batch["agent_id"] = f"agent-{batch['batch_id']}"
             batch["actual_reasoning_effort"] = "low"
             batch["runtime_provenance"] = "self-test spawned low-effort batch execution"
+            batch["effort_claim_basis"] = "self-reported"
+            batch["effort_claim_label"] = "ledger-recorded-unverified"
     write(ledger_path, json.dumps(ledger, indent=2))
+
+
+def write_visual_evidence(output_dir: Path, run_id: str) -> None:
+    artifacts = output_dir / "artifacts"
+    desktop = artifacts / "fixture-desktop.png"
+    mobile = artifacts / "fixture-mobile.png"
+    formal = artifacts / "formal-web.json"
+    write_bytes(desktop, PNG_1X1)
+    write_bytes(mobile, PNG_1X1)
+    write(
+        formal,
+        json.dumps(
+            {
+                "runId": "formal-self-test",
+                "generatedAt": "2026-07-10T00:00:00Z",
+                "browser": "chromium",
+                "targets": [{"url": "http://127.0.0.1/fixture"}],
+                "pages": [
+                    {"outcome": "checked", "metrics": {"visibleScrollbars": []}, "findings": []},
+                    {"outcome": "checked", "metrics": {"visibleScrollbars": []}, "findings": []},
+                ],
+                "findings": [],
+                "coverage": {"failed": False, "checkedPages": 2, "requiredCheckedPages": 1, "failures": [], "tolerated": []},
+            },
+            indent=2,
+        ),
+    )
+
+    def record(record_id: str, path: Path, kind: str, viewport: dict, *, dimensions: bool = False) -> dict:
+        value = {
+            "id": record_id,
+            "kind": kind,
+            "path": path.relative_to(output_dir).as_posix(),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "mime": "image/png" if kind == "screenshot" else "application/json",
+            "route": "Fixture UI",
+            "state": "default fixture state",
+            "viewport": viewport,
+            "captured_by": "self-test fixture",
+        }
+        if dimensions:
+            value.update({"width": 1, "height": 1})
+        return value
+
+    write(
+        output_dir / "visual_evidence.json",
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "artifacts": [
+                    record("shot-desktop", desktop, "screenshot", {"width": 1440, "height": 900, "label": "desktop"}, dimensions=True),
+                    record("shot-mobile", mobile, "screenshot", {"width": 390, "height": 844, "label": "narrow mobile"}, dimensions=True),
+                    record("formal-web", formal, "formal-web-verifier", {"width": 1440, "height": 900, "label": "desktop and narrow mobile"}),
+                ],
+            },
+            indent=2,
+        ),
+    )
 
 
 def assert_manifest(manifest_path: Path) -> None:
@@ -662,6 +745,8 @@ def assert_manifest(manifest_path: Path) -> None:
     check(manifest["coverage_unit_count"] >= manifest["source_file_count"], "coverage units should cover every source file")
     check(manifest["run_id"], "manifest should include a run_id")
     check(all(item.get("sha256") for item in manifest["source_files"]), "every source file should include sha256")
+    source_paths = {item["rel_path"] for item in manifest["source_files"]}
+    check(".claude/CLAUDE.md" in source_paths, "tracked Claude project instructions should remain auditable")
     check(str(VERIFY) in manifest["verifier_command"], "manifest should include absolute verifier command")
     expected_reports_dir = str((manifest_path.parent / "reports").resolve())
     check(expected_reports_dir in manifest["verifier_command"], "manifest should point verification at reports/")
@@ -726,8 +811,8 @@ def assert_manifest(manifest_path: Path) -> None:
             check(required_field in journey_prompt_text, "journey source prompt should spell out verifier-required finding fields")
             check(required_field in visual_prompt_text, "visual journey prompt should spell out verifier-required finding fields")
         check(
-            "screenshot, trace, recording, formal verifier report, or other artifact" in visual_prompt_text,
-            "visual journey prompt should require command/tool, formal verifier report, and visual artifact evidence when applicable",
+            "visual_evidence.json" in visual_prompt_text and "evidence:<id>" in visual_prompt_text and "formal-verifier JSON" in visual_prompt_text,
+            "visual journey prompt should require hashed artifact ids and bound formal-verifier evidence when applicable",
         )
         check(
             "UI assumption status" in journey_prompt_text and "source-inferred" in journey_prompt_text,
@@ -882,8 +967,13 @@ def assert_exclusions(excluded_path: Path) -> None:
         "prod.env.local should be excluded as secret-bearing env file",
     )
     check(reasons.get("src/late_binary.ts") == "binary file content", "late NUL bytes should exclude binary file content")
+    check(".claude/settings.local.json" in reasons, "Claude local settings should be excluded")
+    local_settings = next(item for item in excluded if item["path"] == ".claude/settings.local.json")
+    check(local_settings["scope_warning"] is False, "Claude local settings should not create a scope warning")
     dir_rows = {item["path"]: item for item in excluded if item.get("entry_type") == "directory"}
     check("dist" in dir_rows, "dist directory should be summarized in exclusions")
+    check(".build" in dir_rows, "SwiftPM .build should be summarized as generated output")
+    check(".swiftpm" in dir_rows, "SwiftPM metadata should be summarized as generated output")
     check("node_modules" in dir_rows, "node_modules directory should be summarized in exclusions")
     check(".cache" in dir_rows, ".cache tooling directory should be summarized in exclusions")
     check(dir_rows["dist"]["file_count"] >= 1, "directory exclusions should include file counts")
@@ -2397,13 +2487,13 @@ None.
 visual_journey
 
 ## Visual Tooling
-- Ran command `npx playwright test --project=chromium` for {interface_mentions}; screenshots saved at `artifacts/fixture-desktop.png` and `artifacts/fixture-mobile.png`.
+- Ran command `npx playwright test --project=chromium` for {interface_mentions}; screenshots are bound as evidence:shot-desktop and evidence:shot-mobile; formal verifier JSON is evidence:formal-web.
 
 ## Visual Journey Checks
 | Journey | Viewport | Route/screen | Evidence | Navigation visibility | Decision information | Visual quality | Result |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Fixture audit | desktop | Fixture UI | Playwright command with screenshot `artifacts/fixture-desktop.png` for {interface_mentions} | primary actions visible | decision labels visible | readable contrast and no crop | pass |
-| Fixture audit | narrow mobile | Fixture UI | Playwright command with screenshot `artifacts/fixture-mobile.png` for {interface_mentions} | primary actions visible | decision labels visible | readable contrast and no horizontal scroll | pass |
+| Fixture audit | desktop | Fixture UI | Playwright screenshot evidence:shot-desktop for {interface_mentions} | primary actions visible | decision labels visible | readable contrast and no crop | pass |
+| Fixture audit | narrow mobile | Fixture UI | Playwright screenshot evidence:shot-mobile for {interface_mentions} | primary actions visible | decision labels visible | readable contrast and no horizontal scroll | pass |
 
 Interaction checklist: badge-detail=pass; row-hit-target=pass; navigation-cursor=pass; transient-disclosure=pass; disclosure-scrollbar=pass; icon-meaning=pass; stable-expansion-width=pass; hover-copy=pass; status-summary=pass; message-metadata=pass.
 
@@ -2414,6 +2504,19 @@ No findings.
 None.
 """,
         )
+        missing_real_artifact_result = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--reports",
+                str(canonical_complete),
+            ],
+            expect=1,
+        )
+        check_output(missing_real_artifact_result, "visual evidence", "artifact")
+        write_visual_evidence(output, output_manifest["run_id"])
         run(
             [
                 sys.executable,
@@ -2628,6 +2731,25 @@ None.
         canonical_complete = install_report(output, complete)
         output_ledger_path = output / "effort_ledger.json"
         output_ledger_text = output_ledger_path.read_text(encoding="utf-8")
+        dishonest_claim_ledger = json.loads(output_ledger_text)
+        dishonest_claim_ledger["lead"]["effort_claim_label"] = "runtime-attested"
+        write(output_ledger_path, json.dumps(dishonest_claim_ledger, indent=2))
+        dishonest_claim_result = run(
+            [sys.executable, str(VERIFY), "--manifest", str(output / "manifest.json"), "--reports", str(canonical_complete)],
+            expect=1,
+        )
+        check_output(dishonest_claim_result, "effort_claim_label", "ledger-recorded-unverified")
+        write(output_ledger_path, output_ledger_text)
+        high_risk_ledger = json.loads(output_ledger_text)
+        if high_risk_ledger.get("lead_high_risk_review", {}).get("files"):
+            high_risk_ledger["lead_high_risk_review"]["files"][0]["status"] = "pending"
+            write(output_ledger_path, json.dumps(high_risk_ledger, indent=2))
+            high_risk_result = run(
+                [sys.executable, str(VERIFY), "--manifest", str(output / "manifest.json"), "--reports", str(canonical_complete)],
+                expect=1,
+            )
+            check_output(high_risk_result, "lead_high_risk_review", "status/hash/risk reasons")
+            write(output_ledger_path, output_ledger_text)
         misleading_ledger = json.loads(output_ledger_text)
         misleading_ledger["lead"]["required_reasoning_effort"] = "medium"
         for batch in misleading_ledger["batches"]:

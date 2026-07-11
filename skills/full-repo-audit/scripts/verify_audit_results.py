@@ -26,6 +26,7 @@ for root in reversed([item for item in path_roots if item.is_dir()]):
     if root_text not in sys.path:
         sys.path.insert(0, root_text)
 
+from full_repo_harness import evidence as audit_evidence
 from full_repo_harness import verify_common as common
 
 
@@ -107,6 +108,20 @@ ALLOWED_PRUNED_REVIEW_DECISIONS = {
     "out-of-scope-with-user-confirmation",
     "requeued",
 }
+ALLOWED_CLAIM_BASES = {"runtime-attested", "tool-schema-inspected", "self-reported", "manual-fallback"}
+
+
+def validate_effort_claim(row: dict, *, basis_field: str, label_field: str, prefix: str) -> list[dict]:
+    issues: list[dict] = []
+    basis = row.get(basis_field)
+    label = row.get(label_field)
+    if basis not in ALLOWED_CLAIM_BASES:
+        issues.append({"field": f"{prefix}.{basis_field}", "expected": sorted(ALLOWED_CLAIM_BASES), "actual": basis})
+        return issues
+    expected_label = "runtime-attested" if basis == "runtime-attested" else ("manual-fallback" if basis == "manual-fallback" else "ledger-recorded-unverified")
+    if label != expected_label:
+        issues.append({"field": f"{prefix}.{label_field}", "expected": expected_label, "actual": label})
+    return issues
 FINDING_HEADING_RE = re.compile(r"^###\s+P[0-3]\s+-\s+\S", re.IGNORECASE)
 FINDING_FIELD_RE = re.compile(r"^-\s*([^:]+):")
 REQUIRED_FINDING_FIELDS = {
@@ -1137,6 +1152,51 @@ def validate_journey_report(
                 }
             )
         if visual_rows and not report_is_not_applicable:
+            rendered_rows = [
+                row
+                for row in visual_rows
+                if normalized_text(row.get("result", "")) not in {"blocked", "not applicable", "not-applicable", "n/a"}
+            ]
+            evidence_records, evidence_issues = audit_evidence.validate_visual_evidence_manifest(
+                report_path.parent.parent,
+                expected_run_id or "",
+                required=bool(rendered_rows),
+            )
+            for issue in evidence_issues:
+                issues.append({"path": str(report_path), "section": "visual evidence", **issue})
+            if rendered_rows:
+                required_kinds = {"screenshot"}
+                if any(Path(rel_path).suffix.lower() in WEB_UI_EXTENSIONS for rel_path in interface_files):
+                    required_kinds.add("formal-web-verifier")
+                for issue in audit_evidence.validate_references(text, evidence_records, required_kinds=required_kinds):
+                    issues.append({"path": str(report_path), "section": "visual evidence", **issue})
+                for index, row in enumerate(rendered_rows, start=1):
+                    row_ids = audit_evidence.evidence_references(row.get("evidence", ""))
+                    screenshots = [
+                        evidence_records[item]
+                        for item in row_ids
+                        if item in evidence_records and evidence_records[item].get("kind") in {"screenshot", "native-snapshot"}
+                    ]
+                    if not screenshots:
+                        issues.append(
+                            {
+                                "path": str(report_path),
+                                "section": "visual evidence",
+                                "row": index,
+                                "reason": "each rendered viewport row must bind a real screenshot/native snapshot with evidence:<id>",
+                            }
+                        )
+                        continue
+                    route = normalized_text(row.get("route/screen", ""))
+                    viewport = normalized_text(row.get("viewport", ""))
+                    if not any(normalized_text(str(item.get("route", ""))) == route for item in screenshots):
+                        issues.append({"path": str(report_path), "section": "visual evidence", "row": index, "reason": "screenshot route metadata does not match the report row"})
+                    if not any(
+                        viewport in normalized_text(str(item.get("viewport", {}).get("label", "")))
+                        or normalized_text(str(item.get("viewport", {}).get("label", ""))) in viewport
+                        for item in screenshots
+                    ):
+                        issues.append({"path": str(report_path), "section": "visual evidence", "row": index, "reason": "screenshot viewport metadata does not match the report row"})
             viewports_by_journey: dict[str, set[str]] = defaultdict(set)
             for row in visual_rows:
                 journey = normalized_text(row.get("journey", ""))
@@ -1264,6 +1324,11 @@ def verify_effort_ledger(
         issues.append({"path": str(ledger_path), "field": "subagent_capability_check.spawn_tool", "expected": "non-empty string", "actual": capability.get("spawn_tool") if isinstance(capability, dict) else None})
     if not isinstance(capability, dict) or not isinstance(capability.get("notes"), str) or not capability.get("notes"):
         issues.append({"path": str(ledger_path), "field": "subagent_capability_check.notes", "expected": "non-empty string", "actual": capability.get("notes") if isinstance(capability, dict) else None})
+    if isinstance(capability, dict):
+        for issue in validate_effort_claim(capability, basis_field="claim_basis", label_field="claim_label", prefix="subagent_capability_check"):
+            issues.append({"path": str(ledger_path), **issue})
+        if not isinstance(capability.get("evidence"), str) or len(capability.get("evidence", "").strip()) < 12:
+            issues.append({"path": str(ledger_path), "field": "subagent_capability_check.evidence", "expected": "concrete capability evidence", "actual": capability.get("evidence")})
 
     fallback = ledger.get("fallback_mode")
     if not isinstance(fallback, dict):
@@ -1364,6 +1429,34 @@ def verify_effort_ledger(
     elif isinstance(pruned_review, dict) and pruned_review.get("status") != "not-applicable":
         issues.append({"path": str(ledger_path), "field": "pruned_directory_review.status", "expected": "not-applicable", "actual": pruned_review.get("status")})
 
+    expected_high_risk = {
+        item.get("rel_path"): item
+        for item in manifest.get("high_risk_files", [])
+        if isinstance(item, dict) and isinstance(item.get("rel_path"), str)
+    }
+    high_risk_review = ledger.get("lead_high_risk_review")
+    if expected_high_risk:
+        if not isinstance(high_risk_review, dict) or high_risk_review.get("status") != "completed":
+            issues.append({"path": str(ledger_path), "field": "lead_high_risk_review.status", "expected": "completed", "actual": high_risk_review.get("status") if isinstance(high_risk_review, dict) else None})
+        else:
+            rows = high_risk_review.get("files")
+            if not isinstance(rows, list):
+                issues.append({"path": str(ledger_path), "field": "lead_high_risk_review.files", "expected": "one row per high-risk file", "actual": type(rows).__name__})
+            else:
+                by_path = {row.get("rel_path"): row for row in rows if isinstance(row, dict) and isinstance(row.get("rel_path"), str)}
+                if set(by_path) != set(expected_high_risk):
+                    issues.append({"path": str(ledger_path), "field": "lead_high_risk_review.files", "missing": sorted(set(expected_high_risk) - set(by_path)), "extra": sorted(set(by_path) - set(expected_high_risk))})
+                for rel_path, expected in expected_high_risk.items():
+                    row = by_path.get(rel_path, {})
+                    if row.get("status") != "completed" or row.get("sha256") != expected.get("sha256") or row.get("risk_reasons") != expected.get("risk_reasons"):
+                        issues.append({"path": str(ledger_path), "field": f"lead_high_risk_review.files[{rel_path}]", "reason": "status/hash/risk reasons must match the manifest", "actual": row})
+                    if not isinstance(row.get("evidence"), str) or len(plain_cell(row.get("evidence", ""))) < 20:
+                        issues.append({"path": str(ledger_path), "field": f"lead_high_risk_review.files[{rel_path}].evidence", "reason": "lead review needs concrete source/risk evidence"})
+                    if not isinstance(row.get("notes"), str) or len(plain_cell(row.get("notes", ""))) < 20:
+                        issues.append({"path": str(ledger_path), "field": f"lead_high_risk_review.files[{rel_path}].notes", "reason": "lead review needs concrete risk notes"})
+    elif not isinstance(high_risk_review, dict) or high_risk_review.get("status") != "not-applicable":
+        issues.append({"path": str(ledger_path), "field": "lead_high_risk_review.status", "expected": "not-applicable", "actual": high_risk_review.get("status") if isinstance(high_risk_review, dict) else None})
+
     lead = ledger.get("lead")
     if not isinstance(lead, dict):
         issues.append({"path": str(ledger_path), "field": "lead", "expected": "object", "actual": type(lead).__name__})
@@ -1378,6 +1471,10 @@ def verify_effort_ledger(
             issues.append({"path": str(ledger_path), "field": "lead.actual_reasoning_effort", "expected": "xhigh", "actual": lead.get("actual_reasoning_effort")})
         if not lead.get("agent_id"):
             issues.append({"path": str(ledger_path), "field": "lead.agent_id", "expected": "agent id", "actual": lead.get("agent_id")})
+        for issue in validate_effort_claim(lead, basis_field="effort_claim_basis", label_field="effort_claim_label", prefix="lead"):
+            issues.append({"path": str(ledger_path), **issue})
+        if not isinstance(lead.get("runtime_provenance"), str) or len(lead.get("runtime_provenance", "").strip()) < 12:
+            issues.append({"path": str(ledger_path), "field": "lead.runtime_provenance", "expected": "concrete runtime provenance", "actual": lead.get("runtime_provenance")})
 
     journey = manifest.get("journey_audit") if isinstance(manifest.get("journey_audit"), dict) else {}
     journey_required = bool(journey.get("required"))
@@ -1433,6 +1530,8 @@ def verify_effort_ledger(
                 issues.append({"path": str(ledger_path), "field": f"{worker_key}.actual_reasoning_effort", "expected": "low", "actual": worker.get("actual_reasoning_effort")})
         if not isinstance(worker.get("runtime_provenance"), str) or not worker.get("runtime_provenance"):
             issues.append({"path": str(ledger_path), "field": f"{worker_key}.runtime_provenance", "expected": "non-empty string", "actual": worker.get("runtime_provenance")})
+        for issue in validate_effort_claim(worker, basis_field="effort_claim_basis", label_field="effort_claim_label", prefix=worker_key):
+            issues.append({"path": str(ledger_path), **issue})
 
     batches = ledger.get("batches")
     if not isinstance(batches, list):
@@ -1482,6 +1581,8 @@ def verify_effort_ledger(
                 issues.append({"path": str(ledger_path), "field": f"batches[{index}].actual_reasoning_effort", "expected": "low", "actual": batch.get("actual_reasoning_effort")})
         if not isinstance(batch.get("runtime_provenance"), str) or not batch.get("runtime_provenance"):
             issues.append({"path": str(ledger_path), "field": f"batches[{index}].runtime_provenance", "expected": "non-empty string", "actual": batch.get("runtime_provenance")})
+        for issue in validate_effort_claim(batch, basis_field="effort_claim_basis", label_field="effort_claim_label", prefix=f"batches[{index}]"):
+            issues.append({"path": str(ledger_path), **issue})
 
     missing = sorted(known_batch_ids - seen_batch_ids)
     extra = sorted(item for item in seen_batch_ids - known_batch_ids if item is not None)

@@ -6,6 +6,8 @@ requirements. It combines source-level UI batching with rendered desktop/mobile
 visual checks and produces a prioritized implementation plan for missing UI,
 interaction, implementation, and test gaps.
 
+Rendered evidence is real and bound: `visual_evidence.json` records confined artifact paths, hashes, MIME, dimensions, route, state, viewport, capture tool, and formal-verifier JSON. UI action rows also bind handlers, backend/API, permissions, persistence, and tests through real `path#symbol` references or report them missing.
+
 ## Target
 
 Use this skill when you want to audit:
@@ -63,6 +65,7 @@ The harness creates an audit output directory containing:
 - `visual_tooling_audit.md`: prompt for finding runnable screenshot paths.
 - `visual_comparison_audit.md`: prompt for desktop/mobile screenshot
   comparison.
+- `visual_evidence.json`: real screenshot/native/formal-verifier artifact records referenced as `evidence:<id>`.
 - `effort_ledger.json`: lead-recorded worker/effort/fallback ledger.
 - `excluded_files.json`: skipped files and scope-warning reasons.
 - `reports/`: required returned worker reports.

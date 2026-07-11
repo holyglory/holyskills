@@ -134,27 +134,79 @@ def assert_ledger_mutation_fails(out: Path, tmp: Path, label: str, mutate) -> No
     check("effort_ledger" in result.stdout or "runtime_provenance" in result.stdout or "agent_id" in result.stdout, f"{label} should fail effort ledger verification")
 
 
-def batch_report(manifest: dict, batch: dict, *, out_of_scope_file: str | None = None, omit_inventory: bool = False) -> str:
+def batch_report(
+    manifest: dict,
+    batch: dict,
+    *,
+    out_of_scope_file: str | None = None,
+    omit_inventory: bool = False,
+    omit_target_symbol: str | None = None,
+) -> str:
     unit_rows = []
     inventory_rows = []
+    finding_blocks = []
     unit_by_id = {unit["unit_id"]: unit for unit in manifest["coverage_units"]}
     for unit_id in batch["coverage_units"]:
         unit = unit_by_id[unit_id]
         unit_rows.append(f"| {unit_id} | CHECKED | {unit['sha256']} | Source/test coverage unit |")
-        target = "clamp" if unit["rel_path"] == "src/math.ts" else unit["rel_path"]
-        evidence = "tests/math.test.ts covers in-range clamp" if unit["rel_path"] == "src/math.ts" else "No behavior targets or existing test evidence found"
-        assessment = "Missing invalid range, min boundary, max boundary, async error path" if unit["rel_path"] == "src/math.ts" else "Reviewed as non-target or supporting file"
-        recommendation = "Add unit tests for boundaries and failure paths" if unit["rel_path"] == "src/math.ts" else "No additional tests required in this fixture"
-        inventory_rows.append(f"| {unit_id} | {unit['rel_path']} | {target} | unit | {evidence} | {assessment} | {recommendation} |")
-    finding_file = out_of_scope_file or ("src/math.ts" if "src/math.ts" in batch["files"] else "")
-    findings = "No findings."
-    if finding_file:
-        findings = f"""- Priority: P1
-- Files: {finding_file}
+    targets = manifest["test_coverage_audit"]["target_inventory"]
+    for target in targets:
+        if target["unit_id"] not in batch["coverage_units"] or target["symbol"] == omit_target_symbol:
+            continue
+        if target["symbol"] == "clamp":
+            disposition = "TESTED"
+            covered_lines = {
+                line
+                for record in manifest["test_coverage_audit"].get("empirical_coverage", [])
+                for line in record.get("files", {}).get("src/math.ts", {}).get("covered_lines", [])
+            }
+            level = "EMPIRICAL" if target["line"] in covered_lines else "STRUCTURAL"
+            evidence = "tests/math.test.ts#clamp returns in-range values"
+            assessment = "Happy path exists; invalid range and boundary scenarios are missing"
+            recommendation = "Add boundary and thrown-error unit tests"
+            finding_blocks.append(
+                f"""- Priority: P1
+- Files: src/math.ts
+- Target ID: {target['target_id']}
 - Target: clamp
-- Existing test evidence: tests/math.test.ts covers only the in-range happy path
-- Missing scenarios/boundaries: invalid min/max ordering, lower boundary, upper boundary, async fetcher failure
+- Existing test evidence: tests/math.test.ts#clamp returns in-range values
+- Missing scenarios/boundaries: invalid min/max ordering, lower boundary, upper boundary
 - Suggested test direction: add unit tests that assert thrown errors and boundary return values"""
+            )
+        elif target["kind"] == "unit-review":
+            disposition = "NOT_REASONABLE"
+            level = "MANUAL"
+            evidence = "Not reasonable: supporting fixture or test/config file has no independently executable behavior target"
+            assessment = "Reviewed structurally as support-only in this fixture"
+            recommendation = "No direct target test; behavior is covered through owning source targets"
+        else:
+            disposition = "UNTESTED"
+            level = "NONE"
+            evidence = "None found"
+            assessment = "No bound test path or runtime evidence; success and failure scenarios are absent"
+            recommendation = "Add focused unit/component coverage with observable assertions"
+            finding_blocks.append(
+                f"""- Priority: P1
+- Files: {target['rel_path']}
+- Target ID: {target['target_id']}
+- Target: {target['symbol']}
+- Existing test evidence: None found
+- Missing scenarios/boundaries: happy path, invalid input, failure behavior, and relevant state transitions
+- Suggested test direction: add focused unit/component tests with observable result assertions"""
+            )
+        inventory_rows.append(
+            f"| {target['target_id']} | {target['unit_id']} | {target['rel_path']} | {target['symbol']} | {target['kind']} | {disposition} | {level} | {evidence} | {assessment} | {recommendation} |"
+        )
+    findings = "\n\n".join(finding_blocks) if finding_blocks else "No findings."
+    if out_of_scope_file:
+        target_id = next(iter(target["target_id"] for target in targets if target["unit_id"] in batch["coverage_units"]), "target-missing")
+        findings = f"""- Priority: P1
+- Files: {out_of_scope_file}
+- Target ID: {target_id}
+- Target: out-of-scope target
+- Existing test evidence: None found
+- Missing scenarios/boundaries: finding is intentionally outside the batch
+- Suggested test direction: keep findings scoped to owned files"""
     inventory = "\n".join(inventory_rows) if not omit_inventory else ""
     return f"""## Run ID
 {manifest['run_id']}
@@ -171,8 +223,8 @@ Fixture batch used by the self-test.
 {chr(10).join(unit_rows)}
 
 ## Test Target Inventory
-| Unit | File | Target | Kind | Existing Test Evidence | Scenario Assessment | Recommendation |
-| --- | --- | --- | --- | --- | --- | --- |
+| Target ID | Unit | File | Target | Kind | Disposition | Evidence Level | Existing Test Evidence | Scenario Assessment | Recommendation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 {inventory}
 
 ## Coverage Findings
@@ -186,7 +238,13 @@ None.
 """
 
 
-def write_complete_reports(out: Path, *, out_of_scope: bool = False, omit_inventory: bool = False) -> dict:
+def write_complete_reports(
+    out: Path,
+    *,
+    out_of_scope: bool = False,
+    omit_inventory: bool = False,
+    omit_target_symbol: str | None = None,
+) -> dict:
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     complete_ledger(out, manifest)
     reports = out / "reports"
@@ -195,7 +253,16 @@ def write_complete_reports(out: Path, *, out_of_scope: bool = False, omit_invent
     fallback_out_of_scope = next((path for path in all_files if path != manifest["batches"][0]["files"][0]), "outside.ts")
     for index, batch in enumerate(manifest["batches"]):
         out_file = fallback_out_of_scope if out_of_scope and index == 0 else None
-        write(reports / f"{batch['id']}.md", batch_report(manifest, batch, out_of_scope_file=out_file, omit_inventory=omit_inventory and index == 0))
+        write(
+            reports / f"{batch['id']}.md",
+            batch_report(
+                manifest,
+                batch,
+                out_of_scope_file=out_file,
+                omit_inventory=omit_inventory and index == 0,
+                omit_target_symbol=omit_target_symbol,
+            ),
+        )
     coverage = manifest.get("test_coverage_audit", {})
     if coverage.get("ui_required"):
         write(
@@ -270,6 +337,7 @@ def main() -> int:
             if import_root.exists() and str(import_root) not in sys.path:
                 sys.path.insert(0, str(import_root))
         from full_repo_harness import verify_common
+        from full_repo_harness import test_targets as target_tools
 
         escaped_rows = verify_common.parse_markdown_table_dicts(
             "| Unit | File | Target |\n"
@@ -280,13 +348,115 @@ def main() -> int:
 
         fixture = tmp / "ui-fixture"
         make_ui_fixture(fixture)
+        coverage_formats = tmp / "coverage-formats"
+        write(
+            coverage_formats / "coverage.xml",
+            '<coverage><packages><package><classes><class filename="src/math.ts"><lines><line number="1" hits="1"/><line number="8" hits="0"/></lines></class></classes></package></packages></coverage>',
+        )
+        write(
+            coverage_formats / "coverage.json",
+            json.dumps({"files": {"src/math.ts": {"executed_lines": [1], "missing_lines": [8]}}}),
+        )
+        write(
+            coverage_formats / "istanbul.json",
+            json.dumps(
+                {
+                    str(fixture / "src" / "math.ts"): {
+                        "statementMap": {"0": {"start": {"line": 1}, "end": {"line": 1}}},
+                        "s": {"0": 1},
+                    }
+                }
+            ),
+        )
+        parsed_formats = target_tools.ingest_coverage_reports(
+            fixture,
+            [
+                str(coverage_formats / "coverage.xml"),
+                str(coverage_formats / "coverage.json"),
+                str(coverage_formats / "istanbul.json"),
+            ],
+        )
+        check(
+            {record["format"] for record in parsed_formats} == {"cobertura-xml", "coverage.py-json", "istanbul-json"},
+            "all advertised empirical JSON/XML formats should parse",
+        )
         out = tmp / "out"
         manifest = build(fixture, out)
         check(manifest["audit_kind"] == "test-coverage", "manifest should record test-coverage audit kind")
         check("test_coverage_audit" in manifest, "manifest should include test_coverage_audit block")
+        omitted_target_out = tmp / "omitted-target-out"
+        build(fixture, omitted_target_out)
+        write_complete_reports(omitted_target_out, omit_target_symbol="loadUser")
+        omitted_target_result = verify(omitted_target_out, expect=1)
+        check("loadUser" in omitted_target_result.stdout, "omitting a real exported target must fail verification")
         write_complete_reports(out)
         result = verify(out)
         check("ok: true" in result.stdout, "complete report should verify")
+
+        manual_target_out = tmp / "manual-target-out"
+        shutil.copytree(out, manual_target_out)
+        manual_manifest = json.loads((manual_target_out / "manifest.json").read_text(encoding="utf-8"))
+        app_unit = next(unit["unit_id"] for unit in manual_manifest["coverage_units"] if unit["rel_path"] == "src/App.tsx")
+        manual_report = next(
+            path
+            for path in (manual_target_out / "reports").glob("batch_*.md")
+            if "src/App.tsx" in path.read_text(encoding="utf-8")
+        )
+        manual_row = f"| manual-focus-check | {app_unit} | src/App.tsx | keyboard focus walkthrough | manual-journey | TESTED | MANUAL | manual: keyboard walkthrough exercised tab order and activation in fixture mode | focus and activation worked in the recorded walkthrough | retain repeatable keyboard acceptance steps |"
+        manual_report.write_text(
+            manual_report.read_text(encoding="utf-8").replace("\n\n## Coverage Findings", f"\n{manual_row}\n\n## Coverage Findings"),
+            encoding="utf-8",
+        )
+        manual_target_result = verify(manual_target_out)
+        check("ok: true" in manual_target_result.stdout, "honest manually discovered targets should be accepted alongside deterministic targets")
+
+        invalid_test_reference_out = tmp / "invalid-test-reference-out"
+        shutil.copytree(out, invalid_test_reference_out)
+        report_with_reference = next((invalid_test_reference_out / "reports").glob("batch_*.md"))
+        report_with_reference.write_text(
+            report_with_reference.read_text(encoding="utf-8").replace(
+                "tests/math.test.ts#clamp returns in-range values",
+                "tests/math.test.ts#invented test symbol",
+            ),
+            encoding="utf-8",
+        )
+        invalid_test_reference_result = verify(invalid_test_reference_out, expect=1)
+        check("test symbol/name is absent" in invalid_test_reference_result.stdout, "invented test symbols must fail verification")
+
+        weak_exclusion_out = tmp / "weak-exclusion-out"
+        shutil.copytree(out, weak_exclusion_out)
+        weak_exclusion_report = next((weak_exclusion_out / "reports").glob("batch_*.md"))
+        weak_exclusion_report.write_text(
+            weak_exclusion_report.read_text(encoding="utf-8").replace(
+                "Not reasonable: supporting fixture or test/config file has no independently executable behavior target",
+                "Not reasonable: trivial",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        weak_exclusion_result = verify(weak_exclusion_out, expect=1)
+        check("NOT_REASONABLE requires" in weak_exclusion_result.stdout, "weak not-reasonable rationales must fail")
+
+        mislabeled_empirical_out = tmp / "mislabeled-empirical-out"
+        shutil.copytree(out, mislabeled_empirical_out)
+        mislabeled_report = next((mislabeled_empirical_out / "reports").glob("batch_*.md"))
+        mislabeled_report.write_text(mislabeled_report.read_text(encoding="utf-8").replace("| STRUCTURAL |", "| EMPIRICAL |", 1), encoding="utf-8")
+        mislabeled_result = verify(mislabeled_empirical_out, expect=1)
+        check("not backed by a supplied coverage report" in mislabeled_result.stdout, "structural evidence must not be mislabeled empirical")
+
+        coverage_file = tmp / "runtime evidence" / "lcov.info"
+        write(
+            coverage_file,
+            f"TN:self-test\nSF:{fixture / 'src' / 'math.ts'}\nDA:1,1\nDA:8,0\nend_of_record\n",
+        )
+        empirical_out = tmp / "empirical-out"
+        build(fixture, empirical_out, "--coverage-report", str(coverage_file))
+        write_complete_reports(empirical_out)
+        empirical_result = verify(empirical_out)
+        check("ok: true" in empirical_result.stdout, "valid LCOV evidence should support an EMPIRICAL target claim")
+        write(coverage_file, coverage_file.read_text(encoding="utf-8") + "# changed\n")
+        stale_empirical_result = verify(empirical_out, expect=1)
+        check("coverage evidence hash changed" in stale_empirical_result.stdout, "changed empirical evidence must fail hash verification")
 
         missing_report_out = tmp / "missing-report-out"
         shutil.copytree(out, missing_report_out)

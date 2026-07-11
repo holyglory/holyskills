@@ -286,10 +286,12 @@ MESSAGE_CATALOG_CONFIG_EXTENSIONS = {
 }
 
 GENERATED_DIRS = {
+    ".build",
     ".next",
     ".nuxt",
     ".parcel-cache",
     ".svelte-kit",
+    ".swiftpm",
     ".terraform",
     ".turbo",
     "bin",
@@ -327,6 +329,7 @@ TOOLING_DIRS = {
 
 HIDDEN_PROJECT_DIRS = {
     ".changeset",
+    ".claude",
     ".devcontainer",
     ".github",
     ".gitlab",
@@ -355,6 +358,12 @@ FIRST_PARTY_HIDDEN_PROJECT_PARENT_DIRS = {
 EXCLUDED_FILENAMES = {
     ".DS_Store",
 }
+
+
+def is_local_tooling_file(rel_path: str) -> bool:
+    """Return true only for runtime-local files that are never project truth."""
+    parts = PurePosixPath(rel_path).parts
+    return len(parts) >= 2 and ".claude" in parts[:-1] and parts[-1] == "settings.local.json"
 
 ENV_EXAMPLE_MARKERS = (
     ".dist",
@@ -1365,6 +1374,8 @@ def should_warn_excluded(rel_path: str, fs_path: Path, reason: str | None, inclu
         return False
     if reason.startswith("secret-bearing env file"):
         return False
+    if reason == "local Claude settings excluded":
+        return False
     if reason.startswith("excluded generated/build directory") or reason.startswith("excluded vendor directory"):
         return False
     if reason == "binary/static asset extension":
@@ -1451,6 +1462,8 @@ def collect_files(
             reason = "symlink skipped"
         if reason is None and path.name in EXCLUDED_FILENAMES:
             reason = "excluded filename"
+        if reason is None and is_local_tooling_file(rel_path):
+            reason = "local Claude settings excluded"
         if reason is None and not include_env and is_secret_env_file(path.name):
             reason = "secret-bearing env file excluded; pass --include-env to audit intentionally"
         kind = None
@@ -1511,6 +1524,22 @@ def collect_files(
         if excluded_by_dir(rel_path, include_generated, include_vendor):
             continue
         if not path.exists() or not path.is_file() or path.is_symlink():
+            continue
+        if path.name in EXCLUDED_FILENAMES:
+            continue
+        if is_local_tooling_file(rel_path):
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = 0
+            excluded.append(
+                {
+                    "path": rel_path,
+                    "reason": "local Claude settings excluded",
+                    "size_bytes": size,
+                    "scope_warning": False,
+                }
+            )
             continue
         if not is_high_signal_ignored(rel_path, path, include_config, include_env):
             continue
@@ -1787,7 +1816,7 @@ For CLI, library, plugin, or skill packages that expose only metadata/Markdown a
 7. Check interaction affordances: decision badges/flags should react to hover/focus/click and reveal useful detail when interactive; meaningful rows should activate as rows rather than tiny icon-only targets; navigational explanations/rows should have a predictable destination and pointer/focus affordance; temporary popovers and expanded panels should have an intentional close or timeout lifecycle; expand/collapse controls should not overlap or fight scrollbars; expanded/collapsed tool or result blocks should keep stable widths; copy controls should not permanently clutter message reading and should stay reachable when revealed; concise status blocks should avoid duplicate status/severity/duration noise; and timestamps or passive metadata should not be selectable content unless the journey justifies it. Explicitly mark these checklist labels for every relevant visual/source-inferred surface: `badge-detail`, `row-hit-target`, `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`, `status-summary`, `message-metadata`.
 8. Check broad layout quality: overload, crowding, ambiguous hierarchy, clipped/truncated text, oversized controls, unscannable information, nested cards/blocks, border/background stacks, grid/alignment discipline, stable expand/collapse controls, icon meaning, instruction noise, avatar/decorative clutter, message alignment, sender/routing label noise, theme consistency, readable font sizes, contrast, text/background colors, scrollability for overflow, menu/detail usability, and whether heavy-load actions can be avoided in test mode.
 9. When a web UI has a safe render path, run `formal-web-ui-verification` or explicitly report why formal DOM/layout verification is blocked. Treat unresolved critical formal findings for clipped text, hidden controls, unintended overlap, off-canvas controls, broken media, invisible text, horizontal overflow, or area violations as gaps. Always record the verifier's visible scrollbar inventory as evidence.
-10. When visual checks are applicable, cite the command/tool you used and at least one screenshot, trace, recording, formal verifier report, or other artifact path/evidence in `Visual Tooling` or the `Evidence` column. If required screens, elements, states, formal DOM checks, or visual tests are missing, report them as gaps. If no repo-owned rendered UI exists, explicitly mark checks `not applicable` with evidence.
+10. When visual checks are applicable, populate `visual_evidence.json` with a stable id, confined relative artifact path, SHA-256, MIME, actual image dimensions, route, state, viewport width/height/label, and capture tool. Cite each real artifact as `evidence:<id>` in the applicable row. Filenames or screenshot keywords alone are rejected. For rendered web UI, bind the formal-verifier JSON and preserve checked-page coverage plus visible scrollbar inventory. If required screens, elements, states, formal DOM checks, or visual tests are missing, report them as gaps. If no repo-owned rendered UI exists, explicitly mark checks `not applicable` with evidence.
 
 ## Required Output
 
@@ -2122,6 +2151,9 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
             "status": "pending",
             "spawn_tool": None,
             "can_set_reasoning_effort": None,
+            "claim_basis": None,
+            "claim_label": None,
+            "evidence": None,
             "notes": "Lead agent must record whether subagent spawning and reasoning_effort settings are available before dispatch.",
         },
         "lead": {
@@ -2129,6 +2161,9 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
             "required_reasoning_effort": "xhigh",
             "actual_reasoning_effort": None,
             "agent_id": None,
+            "effort_claim_basis": None,
+            "effort_claim_label": None,
+            "runtime_provenance": None,
             "notes": None,
         },
         "fallback_mode": {
@@ -2154,6 +2189,18 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
                 else "No pruned directories contained source-like samples."
             ),
         },
+        "lead_high_risk_review": {
+            "status": "pending" if manifest.get("high_risk_file_count") else "not-applicable",
+            "files": [
+                {
+                    **item,
+                    "status": "pending",
+                    "evidence": None,
+                    "notes": None,
+                }
+                for item in manifest.get("high_risk_files", [])
+            ],
+        },
         "journey_source_worker": {
             "status": "pending" if journey_required else "not-applicable",
             "prompt": journey.get("source_prompt"),
@@ -2162,6 +2209,8 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
             "actual_reasoning_effort": None,
             "report": journey.get("source_report"),
             "runtime_provenance": None,
+            "effort_claim_basis": None,
+            "effort_claim_label": None,
             "notes": (
                 "Required when interface-relevant files are queued; inspect source-level user journeys, relevance, "
                 "decision information, and test-mode support."
@@ -2177,6 +2226,8 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
             "actual_reasoning_effort": None,
             "report": journey.get("visual_report"),
             "runtime_provenance": None,
+            "effort_claim_basis": None,
+            "effort_claim_label": None,
             "notes": (
                 "Required when interface-relevant files are queued; use available visual tooling in test mode "
                 "or report the blocker."
@@ -2194,12 +2245,63 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
                 "status": "pending",
                 "report": f"reports/{batch['id']}.md",
                 "runtime_provenance": None,
+                "effort_claim_basis": None,
+                "effort_claim_label": None,
                 "notes": None,
             }
             for batch in manifest["batches"]
         ],
     }
     write_json(out_dir / "effort_ledger.json", ledger)
+
+
+HIGH_RISK_PATH_TOKENS = {
+    "auth",
+    "authorization",
+    "backup",
+    "billing",
+    "coordinator",
+    "crypto",
+    "database",
+    "deploy",
+    "docker",
+    "migration",
+    "payment",
+    "permission",
+    "restore",
+    "security",
+    "server",
+    "worker",
+}
+HIGH_RISK_SOURCE_PATTERNS = (
+    (re.compile(r"\b(?:subprocess\.(?:Popen|run|call)|child_process|Runtime\.getRuntime\(\)\.exec|ProcessBuilder)\b"), "process execution"),
+    (re.compile(r"\bshell\s*=\s*True\b|\beval\s*\(|\bexec\s*\("), "dynamic or shell execution"),
+    (re.compile(r"\b(?:DROP|TRUNCATE|DELETE\s+FROM|pg_restore|pg_dump|pg_dumpall)\b", re.IGNORECASE), "destructive or backup database operation"),
+    (re.compile(r"\b(?:password|secret|access[_-]?token|private[_-]?key)\b", re.IGNORECASE), "credential or secret handling"),
+)
+HIGH_RISK_CODE_SUFFIXES = {"", ".c", ".cc", ".cpp", ".cs", ".go", ".java", ".js", ".jsx", ".kt", ".kts", ".m", ".mm", ".php", ".py", ".rb", ".rs", ".sh", ".swift", ".ts", ".tsx"}
+
+
+def high_risk_file_inventory(repo: Path, entries: list[FileEntry]) -> list[dict]:
+    result: list[dict] = []
+    for entry in entries:
+        reasons: set[str] = set()
+        path = Path(entry.rel_path)
+        tokens = set(path.parts[:-1]) | filename_words(path.name)
+        matched_tokens = sorted(token for token in tokens if token.lower() in HIGH_RISK_PATH_TOKENS)
+        if matched_tokens:
+            reasons.add("high-risk path/domain tokens: " + ", ".join(matched_tokens))
+        try:
+            text = read_initial_bytes(repo / entry.rel_path, limit=600_000).decode("utf-8", errors="ignore")
+        except OSError:
+            text = ""
+        if path.suffix.lower() in HIGH_RISK_CODE_SUFFIXES:
+            for pattern, reason in HIGH_RISK_SOURCE_PATTERNS:
+                if pattern.search(text):
+                    reasons.add(reason)
+        if reasons:
+            result.append({"rel_path": entry.rel_path, "sha256": entry.sha256, "risk_reasons": sorted(reasons)})
+    return result
 
 
 def relative_dir_if_child(parent: Path, child: Path) -> str | None:
@@ -2351,6 +2453,7 @@ def write_outputs(
         if item.get("entry_type") == "directory" and item.get("contains_source_like_samples")
     ]
     interface_entries = [item for item in entries if item.interface_relevant]
+    high_risk_files = high_risk_file_inventory(repo, entries)
     journey_required = bool(interface_entries)
     journey_audit = {
         "required": journey_required,
@@ -2369,6 +2472,7 @@ def write_outputs(
             render_visual_journey_prompt(repo, run_id, interface_entries),
             encoding="utf-8",
         )
+        write_json(out_dir / "visual_evidence.json", {"schema_version": 1, "run_id": run_id, "artifacts": []})
 
     verifier_args = [
         sys.executable,
@@ -2386,7 +2490,7 @@ def write_outputs(
         "manifest.json",
         "queue_complete.json",
         *(
-            ["journey_audit.md", "visual_journey_audit.md"]
+            ["journey_audit.md", "visual_journey_audit.md", "visual_evidence.json"]
             if journey_required
             else []
         ),
@@ -2409,6 +2513,7 @@ def write_outputs(
         "interface_file_count": sum(1 for item in entries if item.interface_relevant),
         "scope_warning_count": len(scope_warnings),
         "pruned_directory_review_hint_count": len(pruned_directory_review_hints),
+        "high_risk_file_count": len(high_risk_files),
         "excluded_file_count": len(excluded),
         "excluded_files_sha256": canonical_json_sha256(excluded),
         "batch_count": len(batches),
@@ -2431,6 +2536,7 @@ def write_outputs(
         },
         "scope_warnings": scope_warnings,
         "pruned_directory_review_hints": pruned_directory_review_hints,
+        "high_risk_files": high_risk_files,
     }
     write_json(out_dir / "manifest.json", manifest)
     write_json(out_dir / "excluded_files.json", excluded)

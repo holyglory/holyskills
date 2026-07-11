@@ -1,35 +1,40 @@
 # Trace Fix Root Causes
 
-`trace-fix-root-causes` investigates Codex implementation mistakes, recently
-fixed bugs, UI flaws, regressions, or audit misses and turns the evidence into
-a prevention-first fix plan.
+`trace-fix-root-causes` investigates mistakes caused or missed by Codex or
+Claude Code: implementation and UI defects, factual and reasoning errors,
+incorrect tool use, broken artifacts, local-service crashes, audit misses,
+regressions, and incomplete verification.
 
-Use it when a user reports an implementation mistake made by Codex, asks why a
-problem happened, asks why an audit missed it, or asks how to adjust workflow
-so the same class of mistake is caught next time.
+The skill is evidence-driven rather than a generic postmortem. It requires:
 
-It requires reproduction when possible, checks whether the user changed the
-requirement, traces how Codex perceived the request, patches the nearest
-system guardrail first, audits the testing procedure for other possible missed
-failures, closes the implementation gap, and runs comprehensive post-fix tests
-that prove the user gets the expected result. It outputs a fixed symptom,
-reproduction, intent/scope check, evidence, causal chain, recurrence
-classification, system fix, testing procedure audit, implementation closure,
-focused retest results, comprehensive retest results, and boundaries for
-one-off causes.
+- reproduction through the original user-visible surface when reasonable;
+- an explicit `diagnose-only` or `authorized-fix` mode before mutation;
+- one explicit incident class, so ruled-out phrases cannot trigger the wrong contract;
+- a structured evidence ledger and evidence-linked causal chain;
+- separate origin, immediate-defect, and missed-detection findings;
+- changed-requirement and external-change checks;
+- incident-specific evidence for facts, tools, artifacts, and services;
+- prevention-first fixes and realistic detector recall tests when authorized;
+- original-path and comprehensive post-fix verification.
 
-Guardrail updates must be scoped and proportional: repo `AGENTS.md` is
-repo-wide policy, not global policy; policy text should contain generalized
-reusable rules only. Put one-off incident explanations in the root-cause report,
-`DecisionHistory.md`, a targeted test, or a fixture.
+A report alone does not authorize changes. In `diagnose-only`, the skill uses
+read-only evidence and records proposed work. In `authorized-fix`, it updates
+the smallest durable guardrail, closes the implementation gap, and proves the
+result.
 
-When the problem is general enough to affect Codex behavior across tasks or
-repos, and a global instruction would prevent recurrence, the global Codex
-app-wide `/Users/holyglory/.codex/AGENTS.md` must be updated with that
-generalized reusable instruction.
+Policy paths are runtime-portable. Repository policies remain repository
+scoped; global rules use the active runtime's supplied policy path, normally
+`CODEX_HOME/AGENTS.md` or `CLAUDE_CONFIG_DIR/CLAUDE.md`. The skill never embeds
+a username-specific path or assumes `$HOME` identifies the host installation.
 
-Validation:
+Validate the skill and its realistic incident fixtures with:
 
 ```bash
 python3 skills/trace-fix-root-causes/scripts/self_test.py
+```
+
+Validate a report with:
+
+```bash
+python3 skills/trace-fix-root-causes/scripts/verify_root_cause_report.py REPORT.md
 ```

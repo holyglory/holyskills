@@ -1,4 +1,4 @@
 interface:
   display_name: "UI Implementation Audit"
-  short_description: "Compare UI code, screenshots, and rendered journey usability"
-  default_prompt: "Use $ui-implementation-audit to run the read-only manifest-verified UI audit; it batches only interface source files, compares rendered desktop/mobile/native UI against mockups, journey requirements, required UI elements, implementation paths, and test evidence, checks rendered journey usability, readability, visual hierarchy, overload, and blockers, then returns a prioritized implementation plan."
+  short_description: "Audit UI with hashed visuals and action traces"
+  default_prompt: "Use $ui-implementation-audit to batch interface source, bind real hashed desktop/mobile/native screenshots and formal-verifier JSON through visual_evidence.json, compare them to mockups and journey decisions, trace each visible action through real handler/backend/permission/persistence/test path#symbol evidence, report missing or not-applicable layers honestly, and return a prioritized implementation and verification plan."

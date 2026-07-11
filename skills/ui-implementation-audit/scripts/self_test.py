@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -266,10 +268,29 @@ def write_batch_report(out: Path, manifest: dict, batch: dict, *, out_of_scope: 
     for unit_id in batch["coverage_units"]:
         unit = next(item for item in manifest["coverage_units"] if item["unit_id"] == unit_id)
         rows.append(f"| {unit_id} | CHECKED | {unit['sha256']} | Defines dashboard UI surface |")
+        if unit["rel_path"] == "src/App.tsx":
+            traces = "missing | missing | not-applicable: fixture has no authenticated role model | missing | missing"
+        else:
+            traces = (
+                "not-applicable: static stylesheet has no event handler | "
+                "not-applicable: static stylesheet has no backend call | "
+                "not-applicable: static stylesheet has no permission decision | "
+                "not-applicable: static stylesheet has no persistence behavior | "
+                "not-applicable: rendered evidence verifies stylesheet layout separately"
+            )
         inventory.append(
-            f"| {unit_id} | {unit['rel_path']} | dashboard | Operations Dashboard / Resolve incident | visible label and class names | urgent incident first | source renders nav, hero, button, and archive detail | CSS grid has desktop and mobile risk notes |"
+            f"| {unit_id} | {unit['rel_path']} | dashboard | Operations Dashboard / Resolve incident | visible label and class names | urgent incident first | source renders nav, hero, button, and archive detail | {traces} | CSS grid has desktop and mobile risk notes |"
         )
     findings = "No findings."
+    if "src/App.tsx" in batch["files"]:
+        findings = """- Priority: P1
+- Files: src/App.tsx
+- Mockup/requirement evidence: dashboard journey requires a real incident resolution path
+- Interface evidence: Resolve incident button has no handler, backend, persistence, or test trace
+- Expected behavior/standard: primary action should bind handler, backend result, persistence, failure states, and tests
+- Gap: action trace records missing implementation and verification paths
+- Suggested implementation direction: implement the real resolution workflow and cover success, permission, persistence, and failure behavior
+"""
     if out_of_scope:
         findings = """- Priority: P2
 - Files: src/not-owned.tsx
@@ -296,8 +317,8 @@ Dashboard UI source and styles for visual comparison.
 {chr(10).join(rows)}
 
 ## UI Source Inventory
-| Unit | File | Surface | Visible Element | Source Evidence | Expected Behavior | Actual Implementation | Responsive/State Notes |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+| Unit | File | Surface | Visible Element | Source Evidence | Expected Behavior | Actual Implementation | Handler Evidence | Backend/API Evidence | Permission Evidence | Persistence Evidence | Test Evidence | Responsive/State Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 {chr(10).join(inventory)}
 
 ## Journey Decision Model
@@ -326,12 +347,79 @@ None.
     )
 
 
-def write_complete_reports(out: Path, *, out_of_scope: bool = False, weak_visual_evidence: bool = False) -> dict:
+def write_visual_evidence(out: Path, manifest: dict, *, route: str = "/dashboard") -> None:
+    artifacts = out / "artifacts"
+    desktop = artifacts / "desktop.png"
+    mobile = artifacts / "mobile.png"
+    formal = artifacts / "formal-web.json"
+    write_bytes(desktop, PNG_1X1)
+    write_bytes(mobile, PNG_1X1)
+    write(
+        formal,
+        json.dumps(
+            {
+                "runId": "formal-self-test",
+                "generatedAt": "2026-07-10T00:00:00Z",
+                "browser": "chromium",
+                "targets": [{"url": "http://127.0.0.1/dashboard"}],
+                "pages": [
+                    {"outcome": "checked", "metrics": {"visibleScrollbars": []}, "findings": []},
+                    {"outcome": "checked", "metrics": {"visibleScrollbars": []}, "findings": []},
+                ],
+                "findings": [],
+                "coverage": {"failed": False, "checkedPages": 2, "requiredCheckedPages": 1, "failures": [], "tolerated": []},
+            },
+            indent=2,
+        ),
+    )
+
+    def record(record_id: str, path: Path, kind: str, viewport: dict, *, dimensions: bool = False) -> dict:
+        value = {
+            "id": record_id,
+            "kind": kind,
+            "path": path.relative_to(out).as_posix(),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "mime": "image/png" if kind == "screenshot" else "application/json",
+            "route": route,
+            "state": "default fixture state",
+            "viewport": viewport,
+            "captured_by": "self-test fixture",
+        }
+        if dimensions:
+            value.update({"width": 1, "height": 1})
+        return value
+
+    write(
+        out / "visual_evidence.json",
+        json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": manifest["run_id"],
+                "artifacts": [
+                    record("shot-desktop", desktop, "screenshot", {"width": 1440, "height": 900, "label": "desktop"}, dimensions=True),
+                    record("shot-mobile", mobile, "screenshot", {"width": 390, "height": 844, "label": "mobile"}, dimensions=True),
+                    record("formal-web", formal, "formal-web-verifier", {"width": 1440, "height": 900, "label": "desktop and mobile"}),
+                ],
+            },
+            indent=2,
+        ),
+    )
+
+
+def write_complete_reports(
+    out: Path,
+    *,
+    out_of_scope: bool = False,
+    weak_visual_evidence: bool = False,
+    real_visual_evidence: bool = True,
+) -> dict:
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     complete_ledger(out, manifest)
     for batch in manifest["batches"]:
         write_batch_report(out, manifest, batch, out_of_scope=out_of_scope)
     if manifest.get("ui_implementation_audit", {}).get("visual_required"):
+        if real_visual_evidence:
+            write_visual_evidence(out, manifest)
         source_file = manifest["source_files"][0]["rel_path"]
         write(
             out / "reports" / "mockup_asset_audit.md",
@@ -381,7 +469,7 @@ No findings.
 None.
 """,
         )
-        evidence = "looked fine" if weak_visual_evidence else "playwright screenshot artifacts desktop.png and mobile.png"
+        evidence = "looked fine" if weak_visual_evidence else "playwright capture with formal verifier evidence:formal-web"
         write(
             out / "reports" / "visual_comparison_audit.md",
             f"""## Run ID
@@ -398,14 +486,14 @@ visual_comparison_audit
 ## Rendered Journey Usability
 | Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop | decide which incident to resolve | navigation and active incident hero | archive detail | inline secondary aside | playwright screenshot artifact desktop.png and DOM viewport measurement | PASS | playwright screenshot artifact desktop.png and DOM viewport measurement 12% controls |
-| mobile | decide which incident to resolve | active incident summary and Resolve incident action | archive detail | secondary content after primary action | playwright screenshot artifact mobile.png and DOM viewport measurement | PASS | playwright screenshot artifact mobile.png and DOM viewport measurement 10% controls |
+| desktop | decide which incident to resolve | navigation and active incident hero | archive detail | inline secondary aside | playwright screenshot evidence:shot-desktop and DOM viewport measurement | PASS | playwright screenshot evidence:shot-desktop and DOM viewport measurement 12% controls |
+| mobile | decide which incident to resolve | active incident summary and Resolve incident action | archive detail | secondary content after primary action | playwright screenshot evidence:shot-mobile and DOM viewport measurement | PASS | playwright screenshot evidence:shot-mobile and DOM viewport measurement 10% controls |
 
 ## Visual Comparison Checks
 | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
 | --- | --- | --- | --- | --- | --- | --- |
-| Dashboard review | desktop | / dashboard | design/mockups/dashboard-mobile.png and docs/journeys.md | {evidence} | No material desktop mismatch in fixture report | MATCHED |
-| Dashboard review | mobile | / dashboard | design/mockups/dashboard-mobile.png and docs/journeys.md | {evidence} | No material mobile mismatch in fixture report | MATCHED |
+| Dashboard review | desktop | /dashboard | design/mockups/dashboard-mobile.png and docs/journeys.md | {evidence} evidence:shot-desktop | No material desktop mismatch in fixture report | MATCHED |
+| Dashboard review | mobile | /dashboard | design/mockups/dashboard-mobile.png and docs/journeys.md | {evidence} evidence:shot-mobile | No material mobile mismatch in fixture report | MATCHED |
 
 {INTERACTION_CHECKLIST_LINE}
 
@@ -421,6 +509,7 @@ None.
 
 def write_currency_priority_visual_report(out: Path, *, include_p1: bool) -> None:
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    write_visual_evidence(out, manifest, route="/currency-rates")
     source_file = next(item["rel_path"] for item in manifest["source_files"] if item["rel_path"].endswith(".tsx"))
     first_viewport_result = "GAP" if include_p1 else "PASS"
     visual_result = "GAP" if include_p1 else "MATCHED"
@@ -450,14 +539,14 @@ visual_comparison_audit
 ## Rendered Journey Usability
 | Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop | decide current rates | rates chart and most-used rates | target settings | inline secondary panel | playwright screenshot currency-rates-desktop.png and DOM viewport measurement | PASS | playwright screenshot currency-rates-desktop.png and DOM viewport measurement 18% secondary controls |
-| mobile | only target currency configuration is supported; rate decision is buried | Target Currency settings form and Apply settings button | target/settings controls dominate while most-used rates are buried under duplicate summaries and vague labels | secondary controls dominate visible surface | playwright screenshot currency-rates-mobile.png and DOM viewport measurement | {first_viewport_result} | playwright screenshot currency-rates-mobile.png and DOM viewport measurement 82% controls before rates |
+| desktop | decide current rates | rates chart and most-used rates | target settings | inline secondary panel | playwright screenshot evidence:shot-desktop and DOM viewport measurement | PASS | playwright screenshot evidence:shot-desktop and DOM viewport measurement 18% secondary controls |
+| mobile | only target currency configuration is supported; rate decision is buried | Target Currency settings form and Apply settings button | target/settings controls dominate while most-used rates are buried under duplicate summaries and vague labels | secondary controls dominate visible surface | playwright screenshot evidence:shot-mobile and DOM viewport measurement | {first_viewport_result} | playwright screenshot evidence:shot-mobile and DOM viewport measurement 82% controls before rates |
 
 ## Visual Comparison Checks
 | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
 | --- | --- | --- | --- | --- | --- | --- |
-| Currency rates decision | desktop | /currency-rates | docs/currency-rates-journey.md | playwright screenshot currency-rates-desktop.png | Desktop still exposes primary rates | MATCHED |
-| Currency rates decision | mobile | /currency-rates | docs/currency-rates-journey.md | playwright screenshot currency-rates-mobile.png and DOM viewport measurement | Target Currency block dominates the visible surface and buries most-used rates | {visual_result} |
+| Currency rates decision | desktop | /currency-rates | docs/currency-rates-journey.md | playwright screenshot evidence:shot-desktop and formal evidence:formal-web | Desktop still exposes primary rates | MATCHED |
+| Currency rates decision | mobile | /currency-rates | docs/currency-rates-journey.md | playwright screenshot evidence:shot-mobile and DOM viewport measurement | Target Currency block dominates the visible surface and buries most-used rates | {visual_result} |
 
 {INTERACTION_CHECKLIST_LINE}
 
@@ -472,6 +561,7 @@ None.
 
 def write_layout_noise_visual_report(out: Path, *, include_p1: bool) -> None:
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    write_visual_evidence(out, manifest, route="/review")
     source_file = manifest["source_files"][0]["rel_path"]
     result = "GAP" if include_p1 else "MATCHED"
     usability_result = "GAP" if include_p1 else "PASS"
@@ -501,14 +591,14 @@ visual_comparison_audit
 ## Rendered Journey Usability
 | Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop | next-case decision is hard to scan | decision-critical facts are weakly placed inside nested blocks inside blocks | low-importance raw metadata, sender labels, selectable timestamps, permanent instruction noise, avatar clutter, and helper text dominate | unstable expander jumps horizontally, width changes, row is not clickable except a tiny icon-only target, and the disclosure icon interferes with the scrollbar | playwright screenshot review-workspace-desktop.png and DOM viewport measurement | {usability_result} | playwright screenshot review-workspace-desktop.png and DOM viewport measurement |
-| mobile | next-case decision is hard to scan | decision-critical facts are buried below noisy surfaces | secondary detail and decorative clutter dominate | flags have no hover feedback and no popover detail, while expanded and collapsed result blocks have different widths | playwright screenshot review-workspace-mobile.png and DOM viewport measurement | {usability_result} | playwright screenshot review-workspace-mobile.png and DOM viewport measurement |
+| desktop | next-case decision is hard to scan | decision-critical facts are weakly placed inside nested blocks inside blocks | low-importance raw metadata, sender labels, selectable timestamps, permanent instruction noise, avatar clutter, and helper text dominate | unstable expander jumps horizontally, width changes, row is not clickable except a tiny icon-only target, and the disclosure icon interferes with the scrollbar | playwright screenshot evidence:shot-desktop and DOM viewport measurement | {usability_result} | playwright screenshot evidence:shot-desktop and DOM viewport measurement |
+| mobile | next-case decision is hard to scan | decision-critical facts are buried below noisy surfaces | secondary detail and decorative clutter dominate | flags have no hover feedback and no popover detail, while expanded and collapsed result blocks have different widths | playwright screenshot evidence:shot-mobile and DOM viewport measurement | {usability_result} | playwright screenshot evidence:shot-mobile and DOM viewport measurement |
 
 ## Visual Comparison Checks
 | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
 | --- | --- | --- | --- | --- | --- | --- |
-| Review workspace | desktop | /review | docs/journeys.md | playwright screenshot review-workspace-desktop.png | nested cards, border stacks, visual noise, misalignment, unintuitive icons, permanent instruction helper text, avatar clutter, icon-only row activation, expander/scrollbar collision, and unstable disclosure width changes | {result} |
-| Review workspace | mobile | /review | docs/journeys.md | playwright screenshot review-workspace-mobile.png | weak grid, badge no hover/click popover detail, low-importance detail dominates, sender labels and selectable timestamps add noise, and message alignment problems hide the decision hierarchy | {result} |
+| Review workspace | desktop | /review | docs/journeys.md | playwright screenshot evidence:shot-desktop and formal evidence:formal-web | nested cards, border stacks, visual noise, misalignment, unintuitive icons, permanent instruction helper text, avatar clutter, icon-only row activation, expander/scrollbar collision, and unstable disclosure width changes | {result} |
+| Review workspace | mobile | /review | docs/journeys.md | playwright screenshot evidence:shot-mobile | weak grid, badge no hover/click popover detail, low-importance detail dominates, sender labels and selectable timestamps add noise, and message alignment problems hide the decision hierarchy | {result} |
 
 {INTERACTION_CHECKLIST_LINE}
 
@@ -545,9 +635,70 @@ def main() -> int:
         check(queued == {"src/App.tsx", "src/styles.css"}, f"unexpected source queue: {queued}")
         check(manifest["ui_implementation_audit"]["mockup_asset_count"] >= 1, "mockup asset should be discovered")
         check(manifest["ui_implementation_audit"]["requirement_source_count"] >= 1, "journey requirement should be discovered")
+        missing_visual_artifacts_out = tmp / "missing-visual-artifacts-out"
+        build(ui_fixture, missing_visual_artifacts_out)
+        write_complete_reports(missing_visual_artifacts_out, real_visual_evidence=False)
+        missing_visual_artifacts_result = verify(missing_visual_artifacts_out, expect=1)
+        check("visual evidence" in missing_visual_artifacts_result.stdout.lower(), "named but nonexistent screenshots must fail verification")
         write_complete_reports(out)
         result = verify(out)
         check("ok: true" in result.stdout, "complete report should verify")
+
+        tampered_visual_out = tmp / "tampered-visual-out"
+        shutil.copytree(out, tampered_visual_out)
+        write_bytes(tampered_visual_out / "artifacts" / "desktop.png", PNG_1X1 + b"tampered")
+        tampered_visual_result = verify(tampered_visual_out, expect=1)
+        check("sha256" in tampered_visual_result.stdout, "tampered screenshot bytes must fail evidence hash verification")
+
+        wrong_metadata_out = tmp / "wrong-visual-metadata-out"
+        shutil.copytree(out, wrong_metadata_out)
+        wrong_metadata_path = wrong_metadata_out / "visual_evidence.json"
+        wrong_metadata = json.loads(wrong_metadata_path.read_text(encoding="utf-8"))
+        next(item for item in wrong_metadata["artifacts"] if item["id"] == "shot-desktop")["route"] = "/invented-route"
+        write(wrong_metadata_path, json.dumps(wrong_metadata, indent=2))
+        wrong_metadata_result = verify(wrong_metadata_out, expect=1)
+        check("route metadata does not match" in wrong_metadata_result.stdout, "screenshot route metadata must bind to the report row")
+
+        weak_formal_out = tmp / "weak-formal-out"
+        shutil.copytree(out, weak_formal_out)
+        formal_path = weak_formal_out / "artifacts" / "formal-web.json"
+        formal_payload = json.loads(formal_path.read_text(encoding="utf-8"))
+        formal_payload["pages"][0]["metrics"].pop("visibleScrollbars")
+        write(formal_path, json.dumps(formal_payload, indent=2))
+        weak_formal_manifest_path = weak_formal_out / "visual_evidence.json"
+        weak_formal_manifest = json.loads(weak_formal_manifest_path.read_text(encoding="utf-8"))
+        next(item for item in weak_formal_manifest["artifacts"] if item["id"] == "formal-web")["sha256"] = hashlib.sha256(formal_path.read_bytes()).hexdigest()
+        write(weak_formal_manifest_path, json.dumps(weak_formal_manifest, indent=2))
+        weak_formal_result = verify(weak_formal_out, expect=1)
+        check("visibleScrollbars" in weak_formal_result.stdout, "formal verifier JSON must preserve visible scrollbar inventory")
+
+        invented_action_trace_out = tmp / "invented-action-trace-out"
+        shutil.copytree(out, invented_action_trace_out)
+        action_report = next((invented_action_trace_out / "reports").glob("batch_*.md"))
+        action_report.write_text(
+            action_report.read_text(encoding="utf-8").replace(
+                "| missing | missing | not-applicable: fixture has no authenticated role model |",
+                "| src/App.tsx#inventedHandler | missing | not-applicable: fixture has no authenticated role model |",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        invented_action_result = verify(invented_action_trace_out, expect=1)
+        check("symbol/text is absent" in invented_action_result.stdout, "invented handler symbols must fail action-trace verification")
+
+        missing_trace_without_finding_out = tmp / "missing-trace-without-finding-out"
+        shutil.copytree(out, missing_trace_without_finding_out)
+        missing_trace_report = next((missing_trace_without_finding_out / "reports").glob("batch_*.md"))
+        missing_trace_report.write_text(
+            re.sub(
+                r"(?s)(## Implementation Gap Findings\n).*?\n\n## No Gap Notes",
+                r"\1No findings.\n\n## No Gap Notes",
+                missing_trace_report.read_text(encoding="utf-8"),
+            ),
+            encoding="utf-8",
+        )
+        missing_trace_result = verify(missing_trace_without_finding_out, expect=1)
+        check("missing handler/backend/permission/persistence/test traces require a finding" in missing_trace_result.stdout, "missing action traces must not pass under No findings")
 
         checklist_missing_out = tmp / "checklist-missing-out"
         shutil.copytree(out, checklist_missing_out)

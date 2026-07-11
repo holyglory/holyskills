@@ -34,7 +34,7 @@ Or name a specific repository:
 Use $full-repo-audit to audit /path/to/repo.
 ```
 
-The skill requires an extra-high-effort lead audit. File batches and journey checks are handled by low-effort workers when the runtime supports subagents. If worker spawning is not available, the skill may use disclosed manual fallback coverage, but the lead x-high requirement is not waived.
+The skill requests an extra-high-effort lead audit. It calls that effort runtime-attested only when the runtime supplies immutable provenance; configured or self-reported effort remains `ledger-recorded-unverified`. File batches and journey checks use low-effort workers or disclosed fallback.
 
 ## What It Produces
 
@@ -46,6 +46,7 @@ The harness creates an audit output directory containing:
 - `journey_audit.md`: source-level user-journey worker prompt when interface files exist.
 - `visual_journey_audit.md`: visual journey worker prompt when interface files exist.
 - `effort_ledger.json`: lead-recorded worker/effort/fallback ledger.
+- `visual_evidence.json`: hashes and metadata for real screenshots/native captures and formal-verifier JSON.
 - `excluded_files.json`: skipped files and scope-warning reasons.
 - `reports/`: required returned worker reports.
 - `queue_complete.json`: queue-generation marker, not proof that the audit is finished.
@@ -103,7 +104,9 @@ Do not treat queue generation as audit completion. A run is complete only after:
 1. Every generated batch prompt has a saved report in `reports/batch_###.md`.
 2. Required journey reports exist when interface-relevant files are queued.
 3. `effort_ledger.json` records completed lead, worker, journey, and fallback status.
-4. `verify_audit_results.py` returns `ok: true`.
+4. Every high-risk manifest file has a direct lead-review row.
+5. Applicable visual reports bind real `evidence:<id>` artifacts.
+6. `verify_audit_results.py` returns `ok: true`.
 
 If a run is interrupted, trust the manifest and verifier over stale ledger notes. Rerun missing batch or journey prompts, save the exact report filenames, update the ledger, and verify again.
 

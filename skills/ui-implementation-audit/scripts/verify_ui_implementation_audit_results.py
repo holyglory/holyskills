@@ -23,6 +23,7 @@ for root in reversed([item for item in path_roots if item.is_dir()]):
     if root_text not in sys.path:
         sys.path.insert(0, root_text)
 
+from full_repo_harness import evidence as audit_evidence
 from full_repo_harness import verify_common as common
 
 
@@ -103,6 +104,21 @@ RENDERED_USABILITY_COLUMNS = {
     "readability/contrast evidence",
     "layout quality result",
     "evidence",
+}
+UI_SOURCE_INVENTORY_COLUMNS = {
+    "unit",
+    "file",
+    "surface",
+    "visible element",
+    "source evidence",
+    "expected behavior",
+    "actual implementation",
+    "handler evidence",
+    "backend/api evidence",
+    "permission evidence",
+    "persistence evidence",
+    "test evidence",
+    "responsive/state notes",
 }
 USABILITY_RESULT_VALUES = {"PASS", "GAP", "BLOCKED", "NOT_APPLICABLE"}
 WEB_UI_EXTENSIONS = {".astro", ".css", ".html", ".jsx", ".mdx", ".scss", ".svelte", ".tsx", ".vue"}
@@ -351,6 +367,41 @@ def has_visual_danger_finding(findings: str) -> bool:
     return False
 
 
+def verify_action_trace_value(repo_root: Path, value: str, *, field: str) -> tuple[str, dict | None]:
+    normalized = value.strip().strip("`")
+    lowered = normalized.lower()
+    if lowered == "missing":
+        return "missing", None
+    if lowered.startswith("not-applicable:") or lowered.startswith("not applicable:"):
+        rationale = normalized.split(":", 1)[1].strip()
+        if len(rationale) < 12:
+            return "invalid", {"field": field, "reason": "not-applicable action traces require a concrete rationale", "actual": value}
+        return "not-applicable", None
+    if "#" not in normalized:
+        return "invalid", {"field": field, "reason": "action trace must be path#symbol, missing, or not-applicable: rationale", "actual": value}
+    raw_path, symbol = normalized.split("#", 1)
+    rel_path = Path(raw_path)
+    if rel_path.is_absolute() or ".." in rel_path.parts or not symbol.strip():
+        return "invalid", {"field": field, "reason": "action trace path#symbol is invalid", "actual": value}
+    path = repo_root / rel_path
+    try:
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(repo_root.resolve())
+    except (FileNotFoundError, ValueError):
+        return "invalid", {"field": field, "reason": "action trace path does not resolve inside the audited repo", "actual": value}
+    if path.is_symlink() or not path.is_file():
+        return "invalid", {"field": field, "reason": "action trace must reference a regular repository file", "actual": value}
+    try:
+        source = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return "invalid", {"field": field, "reason": "action trace source is not UTF-8 text", "actual": value}
+    if symbol.strip() not in source:
+        return "invalid", {"field": field, "reason": "action trace symbol/text is absent from the referenced file", "actual": value}
+    if field == "test evidence" and not re.search(r"(?:^|/)(?:tests?|__tests__)(?:/|$)|\.(?:test|spec)\.", raw_path, re.IGNORECASE):
+        return "invalid", {"field": field, "reason": "test evidence must reference a test/spec path", "actual": value}
+    return "bound", None
+
+
 def verify_journey_decision_model(path: Path, body: str) -> list[dict]:
     issues: list[dict] = []
     rows = common.parse_markdown_table_dicts(body)
@@ -465,6 +516,18 @@ def verify_batch_report(path: Path, manifest: dict, batch_id: str) -> list[dict]
     inventory_rows = common.parse_markdown_table_dicts(bodies.get("ui source inventory", ""))
     if not inventory_rows:
         issues.append({"path": str(path), "section": "UI Source Inventory", "reason": "missing UI source inventory table"})
+    elif set(inventory_rows[0]) != UI_SOURCE_INVENTORY_COLUMNS:
+        issues.append(
+            {
+                "path": str(path),
+                "section": "UI Source Inventory",
+                "reason": "UI source inventory headers must include exact handler/backend/permission/persistence/test trace columns",
+                "expected": sorted(UI_SOURCE_INVENTORY_COLUMNS),
+                "actual": sorted(inventory_rows[0]),
+            }
+        )
+    missing_trace_rows: list[dict] = []
+    repo_root = Path(manifest["repo_root"])
     for row in inventory_rows:
         unit = row.get("unit", "")
         rel_file = row.get("file", "")
@@ -476,8 +539,23 @@ def verify_batch_report(path: Path, manifest: dict, batch_id: str) -> list[dict]
         for field in ("surface", "visible element", "source evidence", "expected behavior", "actual implementation", "responsive/state notes"):
             if not row.get(field, "").strip():
                 issues.append({"path": str(path), "section": "UI Source Inventory", "unit": unit, "field": field, "reason": "empty"})
+        for field in ("handler evidence", "backend/api evidence", "permission evidence", "persistence evidence", "test evidence"):
+            status, trace_issue = verify_action_trace_value(repo_root, row.get(field, ""), field=field)
+            if trace_issue:
+                issues.append({"path": str(path), "section": "UI Source Inventory", "unit": unit, **trace_issue})
+            if status == "missing":
+                missing_trace_rows.append({"unit": unit, "visible_element": row.get("visible element", ""), "field": field})
 
     findings = bodies.get("implementation gap findings", "")
+    if missing_trace_rows and findings.strip() == "No findings.":
+        issues.append(
+            {
+                "path": str(path),
+                "section": "Implementation Gap Findings",
+                "reason": "missing handler/backend/permission/persistence/test traces require a finding",
+                "missing_traces": missing_trace_rows,
+            }
+        )
     issues.extend(verify_journey_decision_model(path, bodies.get("journey decision model", "")))
     issues.extend(verify_rendered_usability_table(path, bodies.get("rendered journey usability", ""), findings))
     issues.extend(validate_findings(findings, expected_files, path, "Implementation Gap Findings"))
@@ -532,6 +610,48 @@ def verify_aux_report(path: Path, manifest: dict, expected_sections: list[str], 
                     "missing": missing_labels,
                 }
             )
+        visual_rows = common.parse_markdown_table_dicts(bodies.get("visual comparison checks", ""))
+        rendered_rows = [row for row in visual_rows if row.get("result", "").strip() in {"MATCHED", "GAP"}]
+        evidence_records, evidence_issues = audit_evidence.validate_visual_evidence_manifest(
+            path.parent.parent,
+            manifest["run_id"],
+            required=bool(rendered_rows),
+        )
+        for issue in evidence_issues:
+            issues.append({"path": str(path), "section": "Visual Evidence", **issue})
+        if rendered_rows:
+            required_kinds = {"screenshot"}
+            if mobile_viewport_required(manifest):
+                required_kinds.add("formal-web-verifier")
+            for issue in audit_evidence.validate_references(text, evidence_records, required_kinds=required_kinds):
+                issues.append({"path": str(path), "section": "Visual Evidence", **issue})
+            for index, row in enumerate(rendered_rows, start=1):
+                references = audit_evidence.evidence_references(row.get("implementation screenshot/tool evidence", ""))
+                screenshots = [
+                    evidence_records[item]
+                    for item in references
+                    if item in evidence_records and evidence_records[item].get("kind") in {"screenshot", "native-snapshot"}
+                ]
+                if not screenshots:
+                    issues.append(
+                        {
+                            "path": str(path),
+                            "section": "Visual Evidence",
+                            "row": index,
+                            "reason": "each rendered comparison row must bind a real screenshot/native snapshot with evidence:<id>",
+                        }
+                    )
+                    continue
+                route = row.get("route/screen", "").strip().lower()
+                viewport = row.get("viewport", "").strip().lower()
+                if not any(str(item.get("route", "")).strip().lower() == route for item in screenshots):
+                    issues.append({"path": str(path), "section": "Visual Evidence", "row": index, "reason": "screenshot route metadata does not match the comparison row"})
+                if not any(
+                    viewport in str(item.get("viewport", {}).get("label", "")).strip().lower()
+                    or str(item.get("viewport", {}).get("label", "")).strip().lower() in viewport
+                    for item in screenshots
+                ):
+                    issues.append({"path": str(path), "section": "Visual Evidence", "row": index, "reason": "screenshot viewport metadata does not match the comparison row"})
     return issues
 
 

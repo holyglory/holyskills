@@ -14,6 +14,12 @@
   clean valuable local changes as a shortcut. Pause architecture-changing work
   when remote truth cannot be established unless the user explicitly authorizes
   an offline baseline.
+- When an installed skill has a declared canonical source repository, treat that
+  repository as the only writable source. Never hand-edit the installed skill
+  directory. Installations must resolve to the canonical skill directory via
+  the repository's verified link/install mechanism; before relying on or
+  updating the skill, verify the link/realpath and repair drift through the
+  canonical repository with rollback evidence.
 - Generalize user bug or wrong behavior reports. See if such potential wrong behavior may happen elsewhere. 
 - Use ImageGen2 to design interfaces when fixing interfaces on user prompts. Confirm mockups with the user.
 - Total ban across all projects: never ship or present fake user-facing
@@ -178,6 +184,12 @@
   off-canvas controls, broken media, invisible text, document overflow, or area
   violations. Include the verifier's visible scrollbar inventory in the
   evidence when the verifier can run.
+- When checking or implementing web UI backed by Next.js server actions, route
+  handlers, API routes, background work, or other server-side request paths,
+  load and apply `$vercel:vercel-functions` before judging the implementation.
+  UI actions that may process many records must be bounded, truthful about
+  queued/running/completed work, and designed around function/runtime limits
+  instead of hiding long-running work inside an unbounded browser request.
 - Do not put implementation invariants, data-pipeline rules, backend guarantees,
   or technical caveats into primary UI copy when the behavior already follows
   from the interface. Copy should help the user decide or act; move technical
@@ -196,8 +208,13 @@
 - Never expose JSON, serialized blobs, raw database payloads, or schema-shaped
   internals as editable UI. If users can edit a concept, provide typed fields,
   validated rows, or a purpose-built editor backed by real columns/tables.
-- Automated UI tests that create database records must clean up those records or
-  assert they are isolated from normal product and worker flows before finishing.
+- Automated tests that create database records must clean up those records in
+  foreign-key dependency order (or assert they are isolated from normal product
+  and worker flows), scoped to fixtures that test run created. Rows produced by
+  find-or-create/dedupe mechanisms (canonical keys, upserts) can be shared with
+  concurrently running tests: delete them only when no references remain, never
+  unconditionally, and when hardening one test file's cleanup against such a
+  flake, sweep sibling test files for the same pattern in the same change.
 - During UI audits, flag overexposed secondary controls on single-primary-input
   journeys as primary journey defects, not as copy polish.
 
@@ -218,6 +235,18 @@
 - Entity names must match contents. A table or API resource named for a
   physical/domain concept must not silently own numerical, scheduling, output,
   debug, or presentation settings.
+
+## macOS App Build And Test Workflow
+
+- For Swift/macOS app work, load and follow the Build macOS Apps plugin before
+  building, testing, packaging, launching, debugging, or running native UI
+  automation.
+- Do not take over the user's desktop, drive the app through ad-hoc mouse or
+  keyboard control, invoke `open`, or substitute direct `swift`, `swiftc`,
+  `xcodebuild`, or XCUI commands for the plugin workflow.
+- If the plugin is not installed or unavailable in the current session, stop
+  the Swift/macOS validation path and report it as pending. Continue only work
+  that does not build, launch, or control the app until the plugin is available.
 
 ## Local Services, Docker, And Databases
 

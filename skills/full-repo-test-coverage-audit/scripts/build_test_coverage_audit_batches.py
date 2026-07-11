@@ -28,6 +28,7 @@ for root in reversed([item for item in path_roots if item.is_dir()]):
         sys.path.insert(0, root_text)
 
 import full_repo_harness.queue as queue
+from full_repo_harness import test_targets
 
 
 ARTIFACT_OWNER = "full-repo-test-coverage-audit"
@@ -54,6 +55,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--exclude-glob", action="append", default=[])
     parser.add_argument("--include-file", action="append", default=[])
     parser.add_argument("--include-glob", action="append", default=[])
+    parser.add_argument(
+        "--coverage-report",
+        action="append",
+        default=[],
+        help="Optional LCOV, Cobertura XML, coverage.py JSON, or Istanbul JSON evidence; repeat as needed.",
+    )
     return parser.parse_args()
 
 
@@ -86,7 +93,18 @@ def unit_lines(entries: list[queue.AuditUnit]) -> str:
     return "\n".join(lines)
 
 
-def render_batch_prompt(repo: Path, run_id: str, batch_id: int, total_batches: int, entries: list[queue.AuditUnit]) -> str:
+def render_batch_prompt(
+    repo: Path,
+    run_id: str,
+    batch_id: int,
+    total_batches: int,
+    entries: list[queue.AuditUnit],
+    target_records: list[dict],
+) -> str:
+    target_rows = "\n".join(
+        f"| {item['target_id']} | {item['unit_id']} | {item['rel_path']} | {item['symbol']} | {item['kind']} | {item['line']} | {item['structural_basis']} |"
+        for item in target_records
+    )
     return f"""# Full Repo Test Coverage Audit Batch {batch_id:03d}/{total_batches:03d}
 
 Run ID: `{run_id}`
@@ -100,6 +118,14 @@ You are a low-effort worker auditing test coverage. Do not edit files. Inspect e
 {unit_lines(entries)}
 
 For ranged units, inspect the assigned range manually plus nearby imports/types/callers only as needed. In `File Coverage`, use the exact unit id.
+
+## Structurally Discovered Targets You Must Map Exactly
+
+| Target ID | Unit | File | Symbol/Behavior | Kind | Line | Discovery Basis |
+| --- | --- | --- | --- | --- | ---: | --- |
+{target_rows}
+
+Every target id above needs exactly one inventory row. The structural scanner is a floor, not proof of completeness: add manually discovered targets with stable ids prefixed `manual-`, and explain them. Do not call structural source/test matching empirical coverage.
 
 ## Review Rules
 
@@ -127,15 +153,16 @@ Briefly summarize what these files do.
 | exact unit id | CHECKED | exact sha256 | one-line purpose |
 
 ## Test Target Inventory
-| Unit | File | Target | Kind | Existing Test Evidence | Scenario Assessment | Recommendation |
-| --- | --- | --- | --- | --- | --- | --- |
-| exact unit id | repo-relative file | symbol or behavior, or excluded non-target | unit/component/integration/e2e/visual/non-target | tests found or None found | covered and missing cases | test direction or exclusion rationale |
+| Target ID | Unit | File | Target | Kind | Disposition | Evidence Level | Existing Test Evidence | Scenario Assessment | Recommendation |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| exact target id | exact unit id | repo-relative file | exact symbol/behavior | function/component/control/unit-review | TESTED/UNTESTED/NOT_REASONABLE | EMPIRICAL/STRUCTURAL/MANUAL/NONE | real `test/path#test name`, `manual: evidence`, `None found`, or exclusion rationale | covered and missing cases | test direction or exclusion rationale |
 
 ## Coverage Findings
 Use `No findings.` or one block per gap:
 
 - Priority: P0/P1/P2/P3
 - Files: repo-relative files owned by this batch
+- Target ID: exact target id from the inventory
 - Target: function, method, component, journey, API, job, or behavior
 - Existing test evidence: concrete tests found or `None found`
 - Missing scenarios/boundaries: concrete missing cases
@@ -357,6 +384,7 @@ def write_outputs(
     units: list[queue.AuditUnit],
     batches: list[list[queue.AuditUnit]],
     run_id: str,
+    empirical_coverage: list[dict],
 ) -> None:
     queue.ARTIFACT_OWNER = ARTIFACT_OWNER
     queue.ARTIFACT_MARKER = ARTIFACT_MARKER
@@ -381,12 +409,21 @@ def write_outputs(
         archived_reports_dir = str(archive)
     reports_dir.mkdir(exist_ok=True)
 
+    target_inventory = test_targets.discover_targets(repo, units)
+    targets_by_unit: dict[str, list[dict]] = {}
+    for target in target_inventory:
+        targets_by_unit.setdefault(target["unit_id"], []).append(target)
+
     batch_records: list[dict] = []
     all_paths: list[str] = []
     all_units: list[str] = []
     for index, batch in enumerate(batches, start=1):
         prompt = f"batch_{index:03d}.md"
-        (out_dir / prompt).write_text(render_batch_prompt(repo, run_id, index, len(batches), batch), encoding="utf-8")
+        batch_targets = [target for item in batch for target in targets_by_unit.get(item.unit_id, [])]
+        (out_dir / prompt).write_text(
+            render_batch_prompt(repo, run_id, index, len(batches), batch, batch_targets),
+            encoding="utf-8",
+        )
         paths = sorted({item.rel_path for item in batch})
         unit_ids = [item.unit_id for item in batch]
         all_paths.extend(paths)
@@ -468,6 +505,14 @@ def write_outputs(
             "ui_report": "reports/ui_test_coverage_audit.md" if ui_required else None,
             "visual_prompt": "visual_e2e_coverage_audit.md" if ui_required else None,
             "visual_report": "reports/visual_e2e_coverage_audit.md" if ui_required else None,
+            "target_count": len(target_inventory),
+            "target_inventory": target_inventory,
+            "empirical_coverage": empirical_coverage,
+            "coverage_claim_scope": (
+                "empirical line evidence supplied and structurally bound to target lines"
+                if empirical_coverage
+                else "structural/manual audit only; no runtime coverage evidence supplied"
+            ),
         },
         "coverage_invariants": {
             "unique_batched_file_count": len(set(all_paths)),
@@ -534,9 +579,14 @@ def main() -> int:
         output_rel_dirs,
     )
     units = queue.audit_units_for(repo, entries, args.max_batch_bytes)
+    try:
+        empirical_coverage = test_targets.ingest_coverage_reports(repo, args.coverage_report)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        print(f"Could not ingest coverage report: {error}", file=sys.stderr)
+        return 2
     batches = queue.batch_files(units, args.batch_size, args.max_batch_bytes)
     try:
-        write_outputs(repo, out_dir, entries, excluded, units, batches, run_id)
+        write_outputs(repo, out_dir, entries, excluded, units, batches, run_id, empirical_coverage)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

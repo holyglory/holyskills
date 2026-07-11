@@ -1,6 +1,6 @@
 ---
 name: ui-implementation-audit
-description: Audit a repository's implemented user interface against mockup images, visual assets, and user journey requirements. Use when an agent (Codex, Claude Code) needs to compare rendered desktop/mobile UI screenshots and UI source code against design assets, ImageGen mockups, Figma exports, screenshots, product journeys, or UX requirements, then produce a prioritized plan for closing visual, responsive, interaction, journey, implementation, and test gaps. Only interface-defining source files are queued in deterministic source batches.
+description: Audit implemented UI against mockups and journey requirements using deterministic interface-source batches, real hashed screenshot/native evidence, bound formal-verifier JSON, and source-backed action traces through handlers, backend/API, permissions, persistence, and tests. Use to plan visual, responsive, interaction, journey, implementation, accessibility, and test corrections.
 ---
 
 # UI Implementation Audit
@@ -17,6 +17,8 @@ screenshots against the design target.
 This skill exists because UI implementations often drift from generated mockups:
 spacing, density, hierarchy, responsive fit, visible states, and asset use must
 be checked with actual screenshots, not only source reading.
+
+Actual means an artifact recorded in `<audit-output>/visual_evidence.json`, not a filename mentioned in prose. Each screenshot/native snapshot is verified by path confinement, SHA-256, MIME, dimensions, route, state, viewport, and capture tool. Web audits bind formal-verifier JSON with checked pages and visible scrollbar inventory. Reports cite these records as `evidence:<id>`.
 
 Hard reporting gate: every final audit must include an interaction checklist in
 `## Accessibility And Interaction Findings` with the exact labels
@@ -218,6 +220,7 @@ For every owned interface source unit:
   banners, empty/loading/error states, and critical layout containers.
 - Trace the implementation path: handler, state, navigation, API/persistence,
   permission, validation, loading/error/empty state, and responsive rules.
+- In `UI Source Inventory`, trace every visible action through exact `path#symbol` evidence for handler, backend/API, permission, persistence, and tests. Use `missing` to create a finding. Use `not-applicable: concrete rationale` only when that layer genuinely does not apply. The verifier opens files and confirms cited symbol/text exists.
 - Compare source implementation against mockup/journey evidence from the prompt
   and manifest.
 - Confirm every required UI element has real implementation and verification
@@ -275,9 +278,7 @@ Each batch report must contain exactly these top-level headings in order:
 `File Coverage` must include one row per owned unit with columns `Unit`,
 `Status`, `SHA-256`, and `Purpose`; every status must be `CHECKED`.
 
-`UI Source Inventory` must include columns `Unit`, `File`, `Surface`, `Visible
-Element`, `Source Evidence`, `Expected Behavior`, `Actual Implementation`, and
-`Responsive/State Notes`.
+`UI Source Inventory` must include columns `Unit`, `File`, `Surface`, `Visible Element`, `Source Evidence`, `Expected Behavior`, `Actual Implementation`, `Handler Evidence`, `Backend/API Evidence`, `Permission Evidence`, `Persistence Evidence`, `Test Evidence`, and `Responsive/State Notes`.
 
 `Journey Decision Model` must include columns `Surface`, `Primary user goal`,
 `Primary decision`, `Required facts`, `Warning/flag conditions`, `Frequent
@@ -310,8 +311,8 @@ Findings must use either `No findings.` or field blocks with:
 The visual comparison report is not complete if it only says the UI "looks
 good" or "matches the mockup." It must include `Journey Decision Model`,
 `Rendered Journey Usability`, and `Visual Comparison Checks` tables with
-desktop and mobile/narrow rows when a web UI can be rendered. Evidence should
-name the command/tool and screenshot/trace/video/artifact path when available.
+desktop and mobile/narrow rows when a web UI can be rendered. Evidence must
+name the command/tool and bind `evidence:<id>` records from `visual_evidence.json`.
 If screenshots cannot be produced, the row result must be `BLOCKED` and the
 findings must explain the missing safe render path.
 When the web UI can be rendered, evidence should also name the
@@ -398,6 +399,7 @@ Use this priority scale:
   attempted, formal Web UI verifier result when applicable, visible scrollbar
   inventory when applicable, screenshot/artifact evidence, unchecked
   files/units, scope warnings, ledger status, and verifier result.
+- For every visual artifact, state evidence id, confined path, SHA-256, route, state, viewport, dimensions, and capture tool. State the bound formal-verifier evidence id and scrollbar inventory for rendered web UI.
 - If no mockups/assets are found, label visual target coverage as
   `mockup target missing` and include a plan item to add or provide target
   imagery.
