@@ -1,78 +1,68 @@
 # Holy Skills
 
-Holy Skills is a local curation and development repository for agent skills.
-The skills were originally built for Codex and remain Codex-compatible; they
-are also installable into Claude Code. This repo holds reusable skills while
-they are being designed, tested, reviewed, and prepared for installation into
-a Codex or Claude Code skills directory.
+Holy Skills is the canonical public source for six portable Codex and Claude
+Code skills. It contains audit, verification, documentation, and incident
+workflows; it does not own or deploy local-service coordination products.
+
+The coordinator, PostgreSQL protection skill, native DevOps Board, and web
+DevOps Console are independently versioned in
+[holyglory/DevCoordinator](https://github.com/holyglory/DevCoordinator).
+Holy Skills does not import, clone, pin, build, or test that repository.
+
+## Canonical skills
+
+- `formal-web-ui-verification`: a deterministic Playwright/Chromium heuristic
+  for rendered geometry, visibility, clipping, overlap, media health, target
+  coverage, declared areas, and visible scrollbars. It can optionally consume
+  URLs from a separately installed coordinator script supplied by the caller.
+- `full-repo-audit`: a manifest-verified repository review framework with
+  deterministic batches, evidence binding, lead review, and merged findings.
+- `full-repo-test-coverage-audit`: a structural test-assurance audit with exact
+  target decisions, validated test references, and optional empirical coverage
+  ingestion.
+- `trace-fix-root-causes`: a prevention-first incident investigation workflow
+  with a deterministic structured-report gate.
+- `ui-implementation-audit`: a source- and evidence-bound UI implementation
+  audit covering rendered behavior, journeys, handlers, backend paths,
+  permissions, persistence, and tests.
+- `user-journey-docs-audit`: a lexical and structural documentation audit for
+  product intent, users, journeys, feature/UI inventories, edge cases,
+  implementation expectations, tests, and usability acceptance criteria.
+
+`full_repo_harness/` is the canonical shared Python harness used by the three
+repository/UI audit skills. Each of those skills carries a synchronized
+vendored copy so its directory remains independently installable and testable.
 
 ## Layout
 
-- `skills/`: source-controlled skill directories.
-- `SKILL_AUDIT.md`: honest capability, improvement, and residual-boundary
-  review for every canonical skill plus the pre-repair installation topology.
-- `skills/codex-dev-coordinator/`: a local single-machine coordinator for
-  leasing ports, managing attributed development processes and Docker
-  resources, checking health, and exposing a protected local CLI/API boundary.
-- `skills/formal-web-ui-verification/`: a deterministic browser-side heuristic
-  verifier that injects JavaScript through Playwright to catch
-  clipped text, hidden controls, overlap, off-canvas elements, broken media,
-  invisible text, horizontal overflow, and visible scrollbars across desktop
-  and mobile web routes.
-- `skills/full-repo-audit/`: a manifest/batch/evidence framework for manual
-  repository-wide source, architecture, journey, interface, and test review.
-- `skills/full-repo-test-coverage-audit/`: a source-to-test traceability audit
-  that distinguishes empirical coverage evidence from structural/manual review.
-- `skills/postgres-docker-backup/`: a local Docker PostgreSQL logical backup,
-  manifest, verification, and safety-gated restore tool; it is not encrypted,
-  off-site, continuous, or point-in-time backup.
-- `skills/trace-fix-root-causes/`: a prevention-first incident workflow and
-  structured report verifier for implementation, factual, reasoning, tool,
-  artifact, service, regression, and audit misses.
-- `skills/ui-implementation-audit/`: a UI implementation audit skill that
-  batches only interface source files while comparing rendered desktop/mobile
-  UI against mockups, visual assets, complete UI element requirements, and user
-  journey requirements.
-- `skills/user-journey-docs-audit/`: a lexical/structural product-documentation
-  inventory and report gate that actively interviews the user and checks whether docs describe the
-  app idea, users, journeys, feature set, UI element set, implementation
-  expectations, tests, edge cases, and usability acceptance criteria well enough
-  to build excellent apps.
-- `full_repo_harness/`: shared Python harness code for repository discovery,
-  batching, manifests, queue markers, and verifier helpers used by audit
-  skills.
-- `apps/DevOpsBoard/`: a native macOS SwiftUI utility (formerly Codex Ops
-  Console) for viewing and managing coordinator inventory, dev-server URLs,
-  Docker containers, database backups, leases, retained action outcomes, and
-  recent service events, with provenance-bound native evidence tooling.
-- `apps/DevOpsConsole/`: a zero-dependency Node 20 web control center for the
-  `vr.ae` VPS that terminates TLS for `*.vr.ae` (80→443 redirect), reverse-
-  proxies `<slug>.vr.ae` to local dev-server ports (WebSocket/HMR included)
-  behind Google sign-in with a per-route public/login toggle, and drives the
-  coordinator HTTP API on loopback as its control engine.
-- `scripts/validate.py`: repo-level validation for all skills, the shared
-  harness, vendored fallback copies, standalone skill-copy execution, artifact
-  and provenance checks, and, in full mode, DevOps Board native validation.
+- `skills/`: the six canonical skill packages.
+- `full_repo_harness/`: shared audit discovery, evidence, batching, queue, and
+  verification code.
+- `scripts/validate.py`: the complete six-skill and standalone-copy gate.
+- `scripts/manage_skill_links.py`: transactional direct-link installation and
+  rollback for explicit runtime roots.
+- `scripts/check_repository_freshness.py`: fetched remote-ancestry preflight for
+  broad repository work.
+- `scripts/check_repository_boundaries.py`: exact ownership/dependency guard
+  that prevents moved components or checkout/build/CI pins from returning.
+- `scripts/public_artifact_guard.py`: public-text, symlink, and PNG provenance
+  guard.
+- `SKILL_AUDIT.md`: honest capabilities, improvements, and residual limits for
+  all six skills.
+- `DecisionHistory.md`: dated architecture and ownership decisions.
 
-Each skill directory should keep its own `SKILL.md`, README, scripts, agents,
-fixtures, and tests together so the skill can be reviewed or installed as a
-self-contained unit.
+## Install as direct links
 
-## Deployment Notes
-
-This repository is the only writable source for its eight skills. Install them
-as direct links into every runtime home; never hand-edit an installed path.
-First discover every runtime's actual config/skills directory, convert it to an
-absolute path, and inspect all intended roots. Do not derive host and desktop
-roots from the executing shell's `$HOME`: sandboxed desktop runtimes can report
-a different home. `CLAUDE_CONFIG_DIR`, when configured, identifies Claude's
-config root, but pass its resolved `skills` path explicitly to the manager.
+This repository is the only writable source for its six skills. Never edit an
+installed copy. Discover every runtime's actual skills root and pass each one
+explicitly; do not infer desktop or sandbox homes from the shell's `$HOME`.
 
 ```bash
 REPO_ROOT="/absolute/path/to/holyskills"
-CODEX_SKILLS_ROOT="/absolute/path/to/host-codex-home/skills"
+CODEX_SKILLS_ROOT="/absolute/path/to/codex-home/skills"
 CLAUDE_SKILLS_ROOT="/absolute/path/to/claude-config/skills"
 PARALL_SKILLS_ROOT="/absolute/path/to/desktop-codex-home/skills"
+
 python3 scripts/manage_skill_links.py plan \
   --repo-root "$REPO_ROOT" \
   --target-root "$CODEX_SKILLS_ROOT" \
@@ -80,15 +70,10 @@ python3 scripts/manage_skill_links.py plan \
   --target-root "$PARALL_SKILLS_ROOT"
 ```
 
-After reviewing divergent paths and preserving any unique changes in the repo,
-apply with a new absolute transaction directory. `--allow-noncanonical` is
-required when replacing divergent copies, broken/chained links, or unexpected
-filesystem objects; a byte-for-byte copied match does not require it. Mutating
-invocations serialize all named roots in deterministic order and replan only
-after those locks are held. The transaction directory and every named target
-root must be on the same filesystem so preserved objects can move atomically;
-use one retained transaction per filesystem when runtime roots live on separate
-volumes:
+Review copied, divergent, broken, chained, or noncanonical paths before
+replacement. Preserve intentional unique changes in their canonical owner
+first. Apply into a new mode-private transaction directory on the same
+filesystem as every named root:
 
 ```bash
 install -d -m 700 "$HOME/.local/state/holyskills/backups"
@@ -101,17 +86,7 @@ python3 scripts/manage_skill_links.py apply \
   --allow-noncanonical
 ```
 
-Codex sessions load skill metadata at startup. After installing or updating a
-skill, fully restart the Codex app/session that should see it. For Parallels,
-Parall, VMs, or multiple OS users, verify the target app's `$HOME` and
-`$CODEX_HOME`; installing into the host account's `~/.codex/skills` does
-not make the skill available inside a separate guest, sandbox, or account unless
-that environment points to the same Codex home.
-
-Run `manage_skill_links.py verify` with the same roots after migration and
-restart Codex, Claude, and Parall because skill metadata is loaded at session
-startup. Retain the transaction directory until fresh-session discovery and
-the complete repository validation pass.
+Then verify with the same roots:
 
 ```bash
 python3 scripts/manage_skill_links.py verify \
@@ -121,81 +96,48 @@ python3 scripts/manage_skill_links.py verify \
   --target-root "$PARALL_SKILLS_ROOT"
 ```
 
-Transaction journals and preserved pre-migration objects contain absolute
-local paths and possibly divergent private source. Keep them mode-private and
-outside the repository; they are rollback evidence, not publishable artifacts.
-The installed links are absolute by design, so moving the canonical repository
-requires a new reviewed link transaction.
+Verification requires each managed destination to be a direct absolute symlink
+whose `readlink` names the canonical directory and whose `realpath` resolves to
+the same directory. Unrelated third-party skills are preserved. Keep the
+transaction directory until fresh Codex, Claude, and desktop sessions discover
+the links; skill metadata is loaded at session startup.
 
-Global (all-project) agent policy is maintained per runtime:
-`~/.codex/AGENTS.md` for Codex (mirrored read-only at
-`reference/codex-app-wide/AGENTS.md`) and `~/.claude/CLAUDE.md` for Claude
-Code. When a generalized rule changes, port the applicable rule into both
-runtimes and the curated public reference; runtime-specific instructions may
-remain different.
+## Development and validation
 
-The coordinator default is relative to the current process's resolved home, so
-it is shared only when the runtimes execute as the same OS user with the same
-home. Sandboxed desktop runtimes can have a separate coordinator home. Compare
-the `coordinator_home` field returned by `inventory` in each runtime before
-assuming shared state. To deliberately share state between runtimes of one OS
-user, set the same absolute `CODEX_AGENT_COORDINATOR_HOME` in every runtime.
-DevOps Board can also aggregate explicitly configured separate homes and
-routes mutations through the resource's owning source.
-
-## Local Service Policy
-
-Agents must use `codex-dev-coordinator` before starting, stopping, restarting,
-or replacing local dev/test servers, Docker services, Docker containers, or
-database stacks. The first command should be:
+Before a repository-wide audit, broad refactor, migration, history rewrite, or
+split, run the freshness preflight and inspect its fetched ancestry result:
 
 ```bash
-PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-python3 skills/codex-dev-coordinator/scripts/dev_coordinator.py \
-  inventory --project "$PROJECT_ROOT"
+python3 scripts/check_repository_freshness.py --repo "$PWD" --json
 ```
 
-Do not start on default ports and then hunt for another port after a collision.
-Lease ports or manage servers through the coordinator. Before destructive
-PostgreSQL-in-Docker work, use `postgres-docker-backup` to create and verify a
-backup.
+`current` and `ahead` are safe ancestry states. Reconcile `behind`, `diverged`,
+or `dirty-on-stale-base` from an isolated remote-fresh checkout without
+discarding dirty work. `remote-unavailable` is unknown, not current.
 
-## Development Notes
+The complete repository gate is:
+
+```bash
+python3 scripts/validate.py
+```
+
+It proves the exact six-skill layout, freshness and dependency-boundary detector
+recall, vendored-harness synchronization, link-manager rollback behavior,
+public-artifact policy, interaction-label parity, all six in-repository
+self-tests, Python compilation, and all six self-tests from standalone copied
+skill directories. CI installs a locked Playwright runtime solely because the
+remaining formal web verifier requires a real Chromium run.
 
 When changing a skill:
 
-1. Reproduce the issue or behavior you are changing before editing it.
-2. Keep the skill contract in `SKILL.md` authoritative.
-3. Test the changed path the same way it was reproduced.
-4. Keep generated audit outputs, temporary runs, and local caches out of git.
+1. Reproduce the behavior or policy gap before editing.
+2. Keep `SKILL.md` authoritative.
+3. Add realistic must-catch and intentional-pattern controls for detector
+   changes.
+4. Run the changed path and the complete repository gate.
+5. Keep generated audits, temporary runs, caches, secrets, and private rollback
+   transactions out of Git.
 
-Agents can run the complete non-macOS portion of the repository gate without
-invoking native tooling:
-
-```bash
-python3 scripts/validate.py --skip-macos-app
-```
-
-This mode runs the snapshot verifier's recall tests and structural pixel and
-geometry checks, but explicitly skips canonical renderer-source freshness
-because it cannot regenerate the native images. A passing non-macOS gate must
-not be described as proof that the committed PNGs depict the current SwiftUI
-source.
-
-The full gate also builds and tests DevOps Board, compiles its native
-geometry/menu snapshot targets, requires canonical provenance to bind the exact
-current renderer inputs, verifies the artifacts, and exercises packaging.
-Agents must run that native portion through the Build macOS Apps plugin; they
-must not substitute direct Swift/Xcode commands or desktop control. If the
-plugin is unavailable, report native validation and current-source snapshot
-regeneration as pending rather than implying that the non-macOS gate covered
-them.
-
-The root `full_repo_harness/` package is the canonical shared source. Each
-skill also carries a vendored fallback copy under `scripts/_vendor/` so a single
-skill directory can still be copied and self-tested on its own; the validation
-script fails if those copies drift.
-
-This repository is public, so avoid committing private workspace paths,
-secrets, customer data, or generated artifacts that include sensitive source
-content.
+This repository is public. Use portable fixture identities and paths, bind
+publishable artifacts to isolated fixture provenance, and never commit private
+workspace paths, credentials, customer data, or live runtime captures.

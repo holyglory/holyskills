@@ -37,3 +37,7 @@ Exit codes:
 Explicit target failures are fail-closed. Coordinator-discovered failures can
 be tolerated only with the explicit `--allow-discovered-target-failures` flag,
 and remain visible in the report.
+
+`--from-coordinator` is optional and requires the caller to pass
+`--coordinator-script` pointing at a separately installed coordinator. This
+skill does not import, clone, pin, build, or test that external source.

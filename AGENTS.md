@@ -82,7 +82,10 @@ toward durable prevention when the same class of mistake could recur.
 
 ## Skill Installation Source Of Truth
 
-- This repository is the only writable canonical source for its eight skills.
+- This repository is the only writable canonical source for its six skills:
+  `formal-web-ui-verification`, `full-repo-audit`,
+  `full-repo-test-coverage-audit`, `trace-fix-root-causes`,
+  `ui-implementation-audit`, and `user-journey-docs-audit`.
   Do not hand-edit copies under Codex, Claude, Parall, or another runtime home.
 - Install each repo-owned skill through `scripts/manage_skill_links.py` as a
   direct symlink to `skills/<skill>`. Preserve unrelated runtime/system skills.
@@ -91,36 +94,19 @@ toward durable prevention when the same class of mistake could recur.
   or content drift as installation failures and repair them from this repo with
   a hash-verified rollback record.
 
-## macOS App Build And Test Workflow
+## Repository Ownership Boundary
 
-- For this repository's Swift/macOS app, load and follow the Build macOS Apps
-  plugin before building, testing, packaging, launching, debugging, or running
-  native UI automation.
-- Do not take over the user's desktop, drive the app through ad-hoc mouse or
-  keyboard control, invoke `open`, or substitute direct `swift`, `swiftc`,
-  `xcodebuild`, or XCUI commands for the plugin workflow.
-- If the plugin is not installed or unavailable in the current session, stop
-  the Swift/macOS validation path and report it as pending. Continue only work
-  that does not build, launch, or control the app until the plugin is available.
-
-## Local Services, Docker, And Databases
-
-- Before starting, stopping, restarting, or replacing any dev/test server,
-  Docker Compose service, Docker container, or local database stack, use
-  `$codex-dev-coordinator`, set
-  `PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"`, and run
-  its `inventory --project "$PROJECT_ROOT"` command.
-- Every mutating coordinator call must include both `--agent "$USER"` and
-  `--project "$PROJECT_ROOT"` so the coordinator can attribute servers,
-  Docker containers, databases, and leases to the repo that requested them.
-- Do not start services on default ports directly. Do not follow the pattern
-  "try the default port, then try another one if busy." Lease ports or manage
-  servers through the coordinator.
-- If a dev server or Docker container is already running outside coordinator
-  state, register it through `$codex-dev-coordinator` (`server register` or
-  `docker register`) instead of launching a duplicate.
-- Reuse a healthy coordinator-managed URL when it matches the task instead of
-  launching a duplicate server.
-- Before destructive PostgreSQL-in-Docker operations such as migrations, resets,
-  imports, seed rewrites, `DROP`, or `TRUNCATE`, use `$postgres-docker-backup`
-  to create and verify a backup.
+- Holy Skills owns only the six skill directories listed above and the shared
+  audit harness. The coordinator, PostgreSQL protection skill, DevOps Board,
+  and DevOps Console are owned by the independent DevCoordinator repository.
+- Do not add source imports, relative checkout paths, submodules, build inputs,
+  CI checkouts, commit pins, runtime declarations, deployment units, packaging,
+  or application artifacts from DevCoordinator to this repository.
+- `formal-web-ui-verification` may accept a caller-supplied path to a separately
+  installed coordinator script to discover already-running URLs. That optional
+  runtime adapter must remain path-agnostic and must not become a source,
+  checkout, build, CI, or version dependency.
+- Run `python3 scripts/check_repository_boundaries.py --repo "$PWD"` as part of
+  every validation and ownership-affecting change. Keep historical migration
+  prose in `DecisionHistory.md` or `MERGE_IMPROVEMENT_LEDGER.md`; do not weaken
+  the current-tree detector to hide a real dependency.

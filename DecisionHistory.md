@@ -1,5 +1,37 @@
 # Decision History
 
+## 2026-07-11 - Holy Skills became an independent six-skill repository
+
+Decision: Use the verified unified pre-split commit `8c416e2` as the ownership
+boundary, then move `codex-dev-coordinator`, `postgres-docker-backup`,
+`apps/DevOpsBoard`, `apps/DevOpsConsole`, their runtime declaration, systemd
+deployment, packaging, native snapshot, canonical Console artifact, and
+component-specific test surfaces to the independent public DevCoordinator
+repository. Holy Skills now owns exactly `formal-web-ui-verification`,
+`full-repo-audit`, `full-repo-test-coverage-audit`,
+`trace-fix-root-causes`, `ui-implementation-audit`, and
+`user-journey-docs-audit`, plus the synchronized shared audit harness.
+
+Why: The coordinator, PostgreSQL protection workflow, native Board, and web
+Console share runtime, packaging, authentication, deployment, and release
+provenance. Keeping those products split across a general skill-audit repository
+created checkout-path assumptions and made independent release and server
+cutover harder. The remaining six skills form a coherent, portable audit and
+verification repository and do not require that runtime product source.
+
+Result: Current README, policy, audit, CI, link management, and validation are
+six-skill scoped. `scripts/check_repository_boundaries.py` rejects a returned
+moved path, a seventh canonical skill, an in-repo moved-source reference,
+relative DevCoordinator build/runtime paths, CI checkouts or pins,
+extensionless executable bootstrap dependencies, and runtime environment
+templates that point back to a DevCoordinator checkout. Its realistic self-test
+also proves that dated migration prose and the formal web verifier's optional
+caller-supplied installed-coordinator adapter are not false positives.
+`ci/playwright` remains because the retained formal verifier itself needs a
+locked real Chromium runtime; it is not imported from or shared with
+DevCoordinator. Historical decisions below remain intact and are superseded
+only where this entry changes current ownership.
+
 ## 2026-07-11 - Stale-base work was recovered by a remote-first semantic merge
 
 Decision: Preserve the stale checkout at `55e64d2`, establish remote `main`

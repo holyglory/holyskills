@@ -71,13 +71,18 @@ failure. Explicit targets fail closed on navigation, HTTP, or non-HTML errors.
 Verify healthy coordinator-managed web URLs without starting duplicate servers:
 
 ```bash
-PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+COORDINATOR_SKILL_DIR="${COORDINATOR_SKILL_DIR:-$HOME/.codex/skills/codex-dev-coordinator}"
+[ -d "$COORDINATOR_SKILL_DIR" ] || COORDINATOR_SKILL_DIR="$HOME/.claude/skills/codex-dev-coordinator"
 node "$FORMAL_WEB_UI_SKILL_DIR/scripts/formal_web_ui_verify.mjs" \
   --from-coordinator \
-  --coordinator-script "$PROJECT_ROOT/skills/codex-dev-coordinator/scripts/dev_coordinator.py" \
+  --coordinator-script "$COORDINATOR_SKILL_DIR/scripts/dev_coordinator.py" \
   --only-current \
   --fail-on critical
 ```
+
+Coordinator discovery is an optional adapter to a separately installed skill.
+The verifier has no source, checkout, build, CI, or version dependency on that
+skill; callers can always provide explicit `--url` targets instead.
 
 ## Workflow
 
