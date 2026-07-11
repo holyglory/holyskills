@@ -250,6 +250,11 @@
 
 ## Local Services, Docker, And Databases
 
+- In system-level systemd units, never use `%h` for a non-root `User=`
+  account's home. The system manager resolves `%h` from its own root context,
+  not from `User=`. Pin or deliberately provision the service-account path,
+  add a realistic detector check, and inspect loaded `systemctl show` paths
+  before the first production start.
 - Before starting, stopping, restarting, or replacing any dev/test server,
   Docker Compose service, Docker container, or local database stack, use
   `$codex-dev-coordinator` and run its `inventory --project "$PWD"` command.
@@ -265,3 +270,17 @@
 ## Decision there history
 - For every project keep a DecisionHistory.md file where you track all the architectural decisions, why were they made and how did they work. Track user decisions as well. 
 - If later you find a code which contradict previous decision, find our how this may affect general behavior, what can possibly go wrong and report to the user
+
+## Shell Working-Directory Discipline
+
+- Shell working directories persist across tool calls within a session. Never
+  rely on an inherited CWD for commands whose target matters: start each
+  compound shell command with an explicit `cd` to the repo root (or use
+  absolute paths for every file argument, including script heredocs and ssh
+  identity files).
+- After any command chain that includes `cd`, treat the CWD as unknown for
+  the next call.
+- Verify that multi-step chains actually performed their mutating steps:
+  a failed `git add <path>` after a CWD drift produces a commit whose message
+  claims changes it does not contain. When a patch script and a commit run in
+  one chain, check the patch applied (grep the change) before pushing.
