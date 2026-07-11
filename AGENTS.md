@@ -77,6 +77,11 @@ toward durable prevention when the same class of mistake could recur.
   realistic failing fixture.
 - When a test or verifier missed a user-visible mistake, audit neighboring
   testing gaps and add comprehensive post-fix coverage before delivery.
+- Canonicalize a test-owned temporary root before deriving fixture paths when
+  production correctly rejects symlinked path components. Keep a separate
+  must-catch fixture proving that an operator-supplied repository or target
+  path containing a symlink is still rejected; never weaken production for a
+  host-managed alias such as macOS `/var -> /private/var`.
 - Never deliver static mocks, fake plumbing, no-op UI, synthetic data flows, or
   "wired later" implementations as completed work.
 

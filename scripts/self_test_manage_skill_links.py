@@ -30,6 +30,11 @@ def load_manager() -> ModuleType:
 manager = load_manager()
 
 
+def canonical_test_root(path: Path) -> Path:
+    """Canonicalize only infrastructure created and owned by this self-test."""
+    return path.resolve(strict=True)
+
+
 def concurrent_apply_worker(
     repository: Path,
     targets: list[Path],
@@ -546,6 +551,14 @@ def test_input_guards(base: Path) -> None:
     expect_error(manager.build_plan, repository, [], contains="target-root")
     expect_error(manager.build_plan, repository, [Path("relative")], contains="absolute")
     expect_error(manager.build_plan, repository, [repository / "skills"], contains="outside")
+    repository_parent_alias = base / "repository parent alias"
+    os.symlink(str(base), repository_parent_alias)
+    expect_error(
+        manager.build_plan,
+        repository_parent_alias / repository.name,
+        [target],
+        contains="symlinked path components",
+    )
     root_link = base / "root link"
     os.symlink(str(target), root_link)
     expect_error(manager.build_plan, repository, [root_link], contains="real directory")
@@ -589,8 +602,19 @@ def test_input_guards(base: Path) -> None:
 
 
 def main() -> int:
-    base = Path(tempfile.mkdtemp(prefix="holy skills link self test "))
+    raw_base = Path(tempfile.mkdtemp(prefix="holy skills link self test "))
+    base = canonical_test_root(raw_base)
     try:
+        owned_real = base / "owned temporary alias target"
+        owned_alias = base / "owned temporary alias"
+        owned_real.mkdir()
+        os.symlink(str(owned_real), owned_alias)
+        check(
+            canonical_test_root(owned_alias) == owned_real,
+            "test-owned temporary-root aliases were not canonicalized",
+        )
+        owned_alias.unlink()
+        owned_real.rmdir()
         test_plan_apply_verify_rollback_and_unrelated(base)
         test_divergence_requires_explicit_acceptance(base)
         test_v2_transaction_remains_rollback_compatible(base)

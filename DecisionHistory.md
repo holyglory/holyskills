@@ -1,5 +1,24 @@
 # Decision History
 
+## 2026-07-11 - Link tests separate owned temp aliases from operator paths
+
+Decision: The skill-link self-test canonicalizes only the temporary root it
+creates before deriving repositories, targets, and transaction paths. A
+separate realistic fixture keeps proving that an operator-supplied repository
+path with a symlinked component is rejected.
+
+Why: The clean macOS GitHub runner creates temporary paths lexically below
+`/var`, whose host-managed alias resolves through `/private/var`. The first
+six-skill CI run failed before exercising link behavior because the fixture
+passed that lexical alias to the production no-symlink guard. Local validation
+used a different temporary root and did not reproduce it until run with
+`TMPDIR=/var/tmp`.
+
+Result: The production source-of-truth boundary remains strict, while the test
+no longer mistakes its own platform alias for operator input. The exact CI
+failure reproduces before the change with `TMPDIR=/var/tmp`; the self-test and
+full matrix pass afterward under both the normal and aliased temp roots.
+
 ## 2026-07-11 - Global service guidance rejects system-manager home drift
 
 Decision: The curated app-wide agent guidance now forbids `%h` for non-root
