@@ -93,6 +93,12 @@ toward durable prevention when the same class of mistake could recur.
   canonical `realpath`. Treat copied directories, chained links, broken links,
   or content drift as installation failures and repair them from this repo with
   a hash-verified rollback record.
+- A reviewed link plan authorizes only the exact canonical source identity and
+  bytes it captured. Apply must revalidate repository/skills/skill identities
+  and tree digest at every mutation boundary; never follow a source symlink or
+  accept a checkout/skill swap between plan and link creation. Rollback must
+  compare exact link text so source drift cannot prevent restoring the saved
+  installation.
 
 ## Repository Ownership Boundary
 

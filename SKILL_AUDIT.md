@@ -184,7 +184,7 @@ separate extraction before inventory.
 | --- | --- | --- |
 | Canonical ownership | exactly six skills | No moved component path; no seventh canonical skill |
 | Repository boundary | passed | Realistic moved-path, source-path, build path, CI checkout/pin, and unexpected-skill fixtures; history and installed-skill false-positive controls |
-| Link manager | passed | Plan/apply/verify/rollback, divergence refusal, direct-link identity, concurrency, interrupted transaction, and unrelated-skill preservation |
+| Link manager | passed | Plan/apply/verify/rollback, divergence refusal, source device/inode/tree snapshot revalidation, source-swap rollback recall, direct-link identity, v2 rollback compatibility, concurrency, interrupted transaction, nested-source-link refusal, and unrelated-symlink/skill preservation |
 | Freshness detector | passed | Current, ahead, behind, diverged, dirty stale base, and unavailable remote scenarios using real Git repositories |
 | Shared harness | synchronized | Root harness hashes match all three vendored fallback copies |
 | Public artifacts | passed | Private text, credential, symlink, PNG metadata/provenance must-catch fixtures and portable controls |

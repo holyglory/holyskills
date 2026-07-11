@@ -98,7 +98,13 @@ python3 scripts/manage_skill_links.py verify \
 
 Verification requires each managed destination to be a direct absolute symlink
 whose `readlink` names the canonical directory and whose `realpath` resolves to
-the same directory. Unrelated third-party skills are preserved. Keep the
+the same directory. The plan binds repository, `skills`, and per-skill
+device/inode identities plus a canonical tree digest. Apply revalidates those
+snapshots after transaction creation, immediately before and after each link,
+and during final verification; a swapped checkout or skill source fails and
+rolls back without following the replacement. The canonical `skills` tree must
+therefore contain no symlinks. Unrelated repository and third-party runtime
+entries are preserved. Version-2 journals remain rollback-compatible. Keep the
 transaction directory until fresh Codex, Claude, and desktop sessions discover
 the links; skill metadata is loaded at session startup.
 

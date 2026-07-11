@@ -32,6 +32,22 @@ locked real Chromium runtime; it is not imported from or shared with
 DevCoordinator. Historical decisions below remain intact and are superseded
 only where this entry changes current ownership.
 
+The first published six-skill split retained link-manager journal version 2
+after the independently extracted DevCoordinator manager had already gained a
+source-snapshot guard. A server preflight reproduced the consequence: after a
+valid plan, replacing `skills/<skill>` with a symlink to an external checkout
+caused apply to report success and install a link whose realpath was the
+external tree. Existing tests covered target-root and destination races but not
+canonical-source replacement, so the green gate did not prove the repository's
+source-of-truth promise. Holy Skills now independently uses journal version 3:
+plans record repository/skills/skill device and inode plus tree digest; apply
+revalidates after transaction creation, before and after every link, and at
+final verification; rollback compares exact link text without following a
+drifted source. Realistic tests prove external skills-directory and nested
+source links are refused, a plan-to-apply source swap rolls back without
+changing the installed copy, unrelated repository/runtime changes remain valid,
+and retained version-2 journals still roll back.
+
 ## 2026-07-11 - Stale-base work was recovered by a remote-first semantic merge
 
 Decision: Preserve the stale checkout at `55e64d2`, establish remote `main`
