@@ -20,8 +20,8 @@ Holy Skills does not import, clone, pin, build, or test that repository.
 - `full-repo-test-coverage-audit`: a structural test-assurance audit with exact
   target decisions, validated test references, and optional empirical coverage
   ingestion.
-- `trace-fix-root-causes`: a prevention-first incident investigation workflow
-  with a deterministic structured-report gate.
+- `trace-fix-root-causes`: a proportional reproduce-and-repair workflow with a
+  concise formal-report gate for serious or explicitly requested incidents.
 - `ui-implementation-audit`: a source- and evidence-bound UI implementation
   audit covering rendered behavior, journeys, handlers, backend paths,
   permissions, persistence, and tests.
@@ -107,6 +107,15 @@ therefore contain no symlinks. Unrelated repository and third-party runtime
 entries are preserved. Version-2 journals remain rollback-compatible. Keep the
 transaction directory until fresh Codex, Claude, and desktop sessions discover
 the links; skill metadata is loaded at session startup.
+
+## Global Codex policy source
+
+`reference/codex-app-wide/AGENTS.md` is the canonical app-wide Codex policy.
+Root `AGENTS.md` is Holy Skills repository policy and must not be installed
+globally. For runtimes intentionally managed from this checkout, preserve and
+compare any existing global policy, then make every discovered global
+`AGENTS.md` a direct absolute symlink to the canonical reference. Verify both
+the exact `readlink` target and `realpath`; copied mirrors will drift.
 
 ## Development and validation
 

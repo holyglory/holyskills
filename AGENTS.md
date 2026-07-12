@@ -22,45 +22,34 @@ doing the work.
 
 ## Agent Implementation Mistake Protocol
 
-When the user reports an implementation mistake likely made by the agent,
-handle it as a prevention-first incident unless the evidence shows the user
-changed their mind or the requested behavior changed after implementation.
+Treat a concrete report of broken in-scope behavior as authorization for a
+safe, bounded repair unless the user explicitly requests diagnosis, review, or
+no changes. Do not require a second “fix it” message.
 
-1. Reproduce the reported error through the same surface the user saw whenever
-   it is possible and reasonable. If it cannot be reproduced, record why and
-   gather the closest concrete evidence available.
-2. Check whether the failure is actually a changed requirement. Compare the
-   original request, later clarifications, accepted plans, project docs, and
-   delivered behavior before treating it as an agent mistake.
-3. If the request was not changed, trace why the mistake happened before
-   changing product code. Inspect the user intent, how the agent perceived the
-   request, requirements, journey docs, design handoff, implementation, tests,
-   verifier rules, audit outputs, tool choices, policies, skills, context, and
-   handoff assumptions.
-4. Identify the nearest durable guardrail that allowed the mistake: local
-   `AGENTS.md`, project documentation, acceptance criteria, tests, verifier,
-   skill instructions, checklist, policy, or context source.
-5. Before editing `AGENTS.md` or another policy file, check guardrail scope and
-   proportionality. A repo `AGENTS.md` is repo policy, not global policy.
-   Policy text must be a generalized reusable rule, not an explanation of a
-   specific incident. Put incident narratives, timelines, and one-off root
-   causes in the root-cause report, `DecisionHistory.md`, or a targeted test.
-6. Fix that system guardrail first when practical. If a skill or audit missed
-   the issue, update the skill or deterministic check and rerun it against the
-   same evidence so it now catches the gap.
-7. Audit the testing procedure that failed to catch the mistake. Look for other
-   likely missed failures in adjacent journeys, edge cases, failure paths,
-   integrations, generated artifacts, and user-visible acceptance criteria.
-   Add or update tests for those risks, not only the one reported symptom.
-8. Close the implementation gap only after the prevention layer is patched, or
-   explicitly explain why the product fix had to be done first.
-9. After the detected gap is closed, run comprehensive tests that prove the
-   user gets the expected result. Include the original reproduction path, the
-   new or updated guardrail/check, and the broader tests from the testing
-   procedure audit before reporting done.
+For an ordinary isolated bug, use this direct proportional path without loading
+a formal incident workflow:
 
-Keep one-off local mistakes separate from broad process changes, but bias
-toward durable prevention when the same class of mistake could recur.
+1. Reproduce through the same surface the user saw, or preserve the closest
+   concrete evidence when exact reproduction is unavailable.
+2. Establish the immediate cause and the check that missed it. Investigate
+   changed requirements, broader documentation, policies, or other subsystems
+   only when evidence makes them plausible contributors.
+3. Fix the complete user-facing gap and add a focused regression check when
+   practical. Do not delay the safe fix for speculative policy or process work.
+4. Update a skill, verifier, documentation, or policy only when it is the
+   evidence-backed owner of a repeatable creation or detection gap. Keep
+   one-off narratives out of policy files.
+5. Retest the original surface and run risk-proportionate adjacent checks.
+   Expand to a repository-wide audit or broad matrix only when explicitly
+   requested or concrete blast-radius evidence justifies it.
+6. Report routine fixes with a concise outcome, cause, change, and verification.
+   Use the formal four-section incident report only for an explicit postmortem
+   or a serious, recurring, systemic, destructive, or disputed incident.
+
+Load `trace-fix-root-causes` before the first product-code edit when the user
+requests root-cause analysis/postmortem, the failure meets that formal-incident
+threshold, or a skill, audit, verifier, detector, or prior claimed verification
+missed it.
 
 ## Skill Development
 
@@ -75,8 +64,9 @@ toward durable prevention when the same class of mistake could recur.
   measures, plus false-positive guards for common intentional patterns. A
   detector change is not validated while an advertised detection class has no
   realistic failing fixture.
-- When a test or verifier missed a user-visible mistake, audit neighboring
-  testing gaps and add comprehensive post-fix coverage before delivery.
+- When a test or verifier missed a user-visible mistake, add realistic coverage
+  for the identified cause and adjacent failure paths that plausibly share it;
+  do not infer repository-wide scope from one symptom.
 - Canonicalize a test-owned temporary root before deriving fixture paths when
   production correctly rejects symlinked path components. Keep a separate
   must-catch fixture proving that an operator-supplied repository or target
@@ -104,6 +94,17 @@ toward durable prevention when the same class of mistake could recur.
   accept a checkout/skill swap between plan and link creation. Rollback must
   compare exact link text so source drift cannot prevent restoring the saved
   installation.
+
+## Global Policy Source Of Truth
+
+- `reference/codex-app-wide/AGENTS.md` is the repository-owned canonical source
+  for app-wide Codex policy. Root `AGENTS.md` is repository policy and must not
+  be installed globally.
+- On a runtime intentionally managed from this checkout, make each discovered
+  Codex global `AGENTS.md` a direct absolute symlink to that canonical reference
+  rather than maintaining copied mirrors. Preserve and compare an existing file
+  before replacement, and verify both exact `readlink` text and canonical
+  `realpath` afterward.
 
 ## Repository Ownership Boundary
 

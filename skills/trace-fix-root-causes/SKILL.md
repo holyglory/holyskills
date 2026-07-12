@@ -1,260 +1,164 @@
 ---
 name: trace-fix-root-causes
-description: Investigate user-reported Codex or Claude Code implementation mistakes, factual or reasoning errors, incorrect tool use, broken artifacts, local-service incidents, audit misses, regressions, and incomplete verification. Reproduce the original surface, distinguish changed requirements and external changes from agent-created gaps, trace creation and missed detection with structured evidence, update the nearest durable guardrail first when authorized, close the implementation gap only when authorized, and run comprehensive post-fix verification.
+description: Investigate and fix Codex or Claude Code mistakes when the user requests a root-cause analysis or postmortem, the failure is serious, repeated, systemic, or disputed, or a skill, audit, verifier, detector, or prior claimed verification missed it. Treat a clear report of broken in-scope behavior as authorization for a safe bounded repair unless the user explicitly requests diagnosis only, and scale evidence, prevention, testing, and reporting to risk. Do not invoke for an ordinary isolated product bug with a clear local fix; handle that directly with reproduce, fix, focused regression coverage, and original-surface retesting.
 ---
 
-# Trace Fix Root Causes
+# Trace and Fix Root Causes
 
 ## Purpose
 
-Use this skill when a user reports or asks to explain an error likely caused or
-missed by Codex or Claude Code. This includes implementation defects, UI flaws,
-missed requirements, factual mistakes, reasoning mistakes, unsafe assumptions,
-incorrect citations, inappropriate or incorrect tool use, broken generated
-artifacts, incomplete verification, audit misses, regressions, and quality
-problems.
+Use this skill for requested or materially significant agent-error incidents.
+For an ordinary isolated product bug with a clear bounded fix, follow the same
+short reproduce, fix, focused-regression, and original-surface-retest pattern
+directly without loading this skill.
 
-Also use it for a user-visible local service failure after an agent touched,
-started, restarted, inspected, or verified that service. Treat `unhealthy`,
-`pid_alive=false`, connection refused, crashes, timeouts, "not responding",
-stale coordinator metadata, and browser-visible local failures as
-agent-handled incidents until evidence proves otherwise.
+When the skill applies, restore the behavior the user expected and prevent
+credible recurrence without turning the work into a larger postmortem than the
+evidence warrants. Reproduce the original surface, establish the immediate
+cause, fix it when authorized, and verify the result with effort proportional
+to impact and uncertainty.
 
-The goal is not blame or a speculative postmortem. The goal is to reproduce or
-otherwise confirm the symptom, distinguish an agent-created gap from changed
-requirements or external state, trace how it was created and missed, repair the
-nearest durable prevention layer when authorized, close the user-facing gap
-when authorized, and prove the expected result through the original path and
-broader tests.
+Use the same workflow for implementation and UI defects, factual mistakes,
+reasoning mistakes, incorrect tool use, broken artifacts, audit or verifier
+misses, regressions, and user-visible local-service failures after an agent
+touched the service.
 
-## Authorization And Action Mode
+## Authorization
 
-Choose and state one mode before any mutation:
+Select an action mode internally before mutation:
 
-- `diagnose-only`: use when the user asks to explain, investigate, audit,
-  review, or report. Read-only reproduction and diagnostics are allowed. Do
-  not edit product code, policy, skills, tests, external state, or services.
-  Record proposed prevention and implementation work, and state that closure
-  was not authorized.
-- `authorized-fix`: use only when the user explicitly asks to fix, change,
-  implement, repair, or apply prevention. Make only in-scope changes. A bug
-  report by itself is not authorization for mutations.
+- `authorized-fix` is the default for a concrete report that an in-scope
+  product, service, configuration, or artifact is broken. A direct statement
+  such as “the hamburger menu doesn't open” normally asks for repair. It
+  authorizes safe, bounded product/configuration edits, focused regression
+  coverage, and any ordinary local verification or coordinator-managed local
+  restart needed to prove the fix. A clear in-scope bug report is authorization
+  for that safe bounded work; do not require the user to repeat “fix it.”
+- `diagnose-only` applies when the user explicitly asks only to explain,
+  investigate, audit, review, or avoid changes. It also applies when the
+  supplied text merely quotes or documents somebody else's bug report rather
+  than reporting a problem in the active scope.
 
-If a service must be restored urgently, capture crash evidence before restart.
-Urgency does not broaden authorization or permit unrelated changes.
+Ask before an action that is destructive or difficult to reverse, changes
+production or an external system, contacts other people, requires a credential
+or security choice, expands into another repository or unrelated subsystem, or
+depends on a materially ambiguous target or expected behavior. Continue safe
+read-only diagnosis while waiting when useful. A local bug report never
+silently authorizes production deployment, data deletion, history rewriting,
+or unrelated global-policy changes.
 
-Also select one exact incident class: `implementation`, `ui`, `factual`,
-`reasoning`, `tool-use`, `artifact`, `service`, `audit`, `verification`, or
-`other`. Use the primary reported failure, not words that merely occur in a
-boundary or ruled-out explanation. This prevents phrases such as "not a
-service crash" from activating an unrelated evidence contract.
+Do not expose the selected mode as ceremony. Mention it only when a read-only
+boundary, blocker, or requested formal report makes it useful to the user.
 
-## Evidence Contract
+## Choose Proportionate Depth
 
-Do not use an unstructured paragraph as the evidence ledger. In `Evidence
-Used`, record one or more entries using this exact field structure:
+Use the routine path by default. Escalate to a formal incident only when at
+least one of these is true:
 
-```markdown
-- E1 | kind: log | source: coordinator events.jsonl | observation: process exited with code 1 | status: confirmed
-```
+- the user requests a root-cause report, postmortem, or evidence ledger;
+- the incident involves security, privacy, data loss, production impact,
+  destructive actions, or a crash-class service failure;
+- the same failure is recurring or evidence indicates a systemic cross-project
+  workflow problem;
+- a detector, verifier, audit, monitor, or this skill itself failed to catch a
+  failure it claimed to cover; or
+- the cause or scope is materially disputed and a durable evidence record is
+  needed.
 
-Allowed evidence statuses are `confirmed`, `source-inferred`, and
-`unconfirmed`. Status describes what that evidence proves; it does not promote
-an inferred cause to a confirmed cause. Give every entry a stable unique ID.
-Valid kinds include `user-report`, `screenshot`, `log`, `test`, `verifier`,
-`diff`, `commit`, `file`, `source`, `source-citation`, `tool-trace`, `command`,
-`artifact`, and `audit`.
+Do not escalate merely because a similar failure is imaginable. An isolated,
+well-understood bug does not require a repository-wide audit, global policy
+edit, Decision History entry, fresh-agent evaluation, or broad test matrix.
 
-In `Causal Chain`, use evidence-linked entries:
+## Routine Fix Workflow
 
-```markdown
-- C1 | link: origin | evidence: E1 | status: confirmed | finding: the requested behavior was explicit
-- C2 | link: immediate-defect | evidence: E2 | status: confirmed | finding: the implementation omitted the persisted field
-- C3 | link: missed-detection | evidence: E3 | status: source-inferred | finding: the test asserted success but not persisted state
-```
+1. **Preserve and reproduce**
+   - Preserve valuable dirty work and volatile evidence that a command or
+     restart could overwrite.
+   - Reproduce through the same route, screen, command, artifact, tool path, or
+     integration surface the user saw whenever reasonable.
+   - If exact reproduction is unavailable, use the closest concrete evidence
+     and say so without inventing a cause.
 
-Every report must include `origin`, `immediate-defect`, and
-`missed-detection`. Evidence references must resolve to the evidence ledger.
-Use `evidence: none` only with `status: unconfirmed`. Never invent a causal
-link to fill the structure.
+2. **Trace the immediate cause**
+   - Check the implementation, configuration, logs, and the test or verifier
+     that should have caught the symptom.
+   - Check changed requirements or external state only when they are plausible.
+   - Separate the defect from why existing verification missed it, but keep the
+     analysis as short as the evidence permits.
 
-## Workflow
+3. **Fix the user-facing gap**
+   - Make the smallest complete in-scope correction.
+   - Add a focused regression check when practical.
+   - Add or repair a broader guardrail only when evidence shows a repeatable
+     creation or detection gap. Do it before or alongside the product fix when
+     cheap and safe; do not delay restoration for speculative policy work.
 
-1. **Select mode and preserve the original state**
-   - State `diagnose-only` or `authorized-fix`.
-   - Preserve logs, artifacts, current diffs, service state, and other volatile
-     evidence before commands or changes can overwrite it.
-   - Respect existing user changes and unrelated dirty-worktree state.
+4. **Verify proportionally**
+   - Retest the original path exactly as the user experienced it.
+   - Run focused tests for the affected behavior and adjacent failure paths
+     that the identified cause can realistically affect.
+   - Expand to package, repository, or cross-project checks only when change
+     scope or concrete recurrence evidence justifies them.
 
-2. **Reproduce the reported failure**
-   - Record what failed, who noticed it, and the same surface the user saw:
-     browser route, app screen, CLI command, test, prompt/answer, citation,
-     tool call, generated artifact, audit output, or integration path.
-   - Replicate with the same input, environment, tool path, and observable
-     result whenever possible and reasonable.
-   - If reproduction is impossible or unsafe, state why and capture the
-     closest concrete substitute: user report, screenshot, log, source
-     citation, tool trace, diff, test output, or before/after artifact.
-   - If evidence is missing, mark affected evidence and causal links
-     `unconfirmed`; do not invent root causes.
+5. **Hand off concisely**
+   - Concise output is the default for routine fixes.
+   - Lead with fixed, not fixed, or blocked.
+   - State the cause, the change, and the verification in a few readable
+     sentences or compact bullets.
+   - Do not print internal action modes, incident classes, evidence IDs, causal
+     IDs, or a testing-procedure audit in an ordinary bug-fix response.
 
-3. **Check user intent, requirement history, and external state**
-   - Compare the original request, later clarification, accepted plan, project
-     and journey documentation, delivered behavior, and relevant external
-     changes.
-   - If the user changed the requirement after delivery, classify it as a
-     scope change rather than an agent mistake.
-   - If facts changed after the answer or an external dependency changed,
-     distinguish that from a factual or implementation error at delivery time.
-   - Otherwise identify what the agent misread, over-assumed, omitted, or
-     incorrectly prioritized.
+## Formal Incident Workflow
 
-4. **Collect incident-specific evidence**
-   - Factual or citation mistakes: preserve the exact claim, answer timestamp,
-     cited source, relevant source passage or primary-source result, and any
-     freshness requirement. Separate unsupported claims from facts that
-     changed later.
-   - Reasoning mistakes: preserve the input facts, intermediate assumption or
-     decision, constraint that was missed, and a counterexample or executable
-     check when one exists. Do not claim access to hidden reasoning; trace only
-     the observable rationale, assumptions, source, and outputs.
-   - Tool-use mistakes: preserve the requested operation, selected tool,
-     arguments with secrets redacted, tool result or error, resulting external
-     state, and the safer or required tool path. Do not expose tokens or other
-     credentials in the report.
-   - Broken artifacts: preserve the input, generator/render command, output
-     file hash, render or parser output, and a screenshot or structural check
-     appropriate to the artifact.
-   - Local-service failures: before restarting or replacing anything, capture
-     coordinator status and inventory, coordinator `log_path`, app stdout and
-     stderr, recent process-exit events, PID and health fields, requested URL,
-     wrapper command, toolchain output, generated cache/build state, and
-     dependency state. Distinguish crash, slow response, wrong URL/port,
-     dependency failure, stale metadata, and cache/toolchain failure.
+For an escalated incident, perform the routine workflow plus the evidence work
+that the incident actually needs:
 
-5. **Trace creation and missed detection**
-   - Inspect the nearest sources that could have created or missed the problem:
-     requirements, user-intent interpretation, journey docs, mockups, source
-     material, citations, audit reports, skill instructions, verifiers,
-     implementation, tests, review notes, policies, context, tool choice,
-     toolchains, coordinator/server wrappers, generated cache/build output,
-     missed skill triggers, and handoff assumptions.
-   - Treat the immediate defect and the missed detection as separate links.
-   - Mark each causal link `confirmed`, `source-inferred`, or `unconfirmed` and
-     reference its evidence IDs.
+- distinguish the user's original intent from a later requirement or external
+  change;
+- record confidence as `confirmed`, `source-inferred`, or `unconfirmed`;
+- connect the request, immediate cause, and missed detection to concrete
+  evidence without claiming hidden reasoning;
+- classify one primary Incident Class: `implementation`, `ui`, `factual`,
+  `reasoning`, `tool-use`, `artifact`, `service`, `audit`, `verification`, or
+  `other`;
+- for factual or reasoning incidents, preserve the disputed claim, timestamp,
+  and supporting primary source;
+- for incorrect tool use, preserve redacted arguments, result/error, and
+  resulting state;
+- for broken artifacts, preserve the input, output hash, render/parser result,
+  and visual evidence when layout matters;
+- for crash-class services (`unhealthy`, `pid_alive=false`, connection refused,
+  crash, or timeout), capture coordinator status, `log_path`, recent exit
+  events, PID/health state, requested URL, wrapper/toolchain output, generated
+  cache/build state, and dependencies before restart; then prove sustained
+  recovery through the same surface; and
+- when a detector or audit missed the problem, prove recall with a realistic
+  must-catch fixture for the advertised detection class plus false-positive
+  guards for common intentional behavior.
 
-6. **Classify recurrence risk**
-   - `generalizable`: likely across tasks, repositories, runtimes, or products.
-   - `local-repeatable`: specific to this repository or workflow but likely to
-     recur there.
-   - `one-off`: local and unlikely to recur after a targeted correction.
-   - `unconfirmed`: evidence is insufficient to choose.
+Use the concise four-section format in
+[`references/formal-report.md`](references/formal-report.md). Create that formal
+artifact only for the escalation cases above. Validate it with
+`python3 scripts/verify_root_cause_report.py REPORT.md`.
 
-7. **Fix the system guardrail first when authorized**
-   - In `diagnose-only`, recommend the smallest suitable guardrail but do not
-     mutate it.
-   - In `authorized-fix`, update the nearest durable guardrail before the
-     product correction when practical: tests, realistic fixtures, verifier,
-     skill, requirements, acceptance criteria, docs, checklist, persistent
-     context, or policy.
-   - If a detector, test, verifier, or audit missed the issue, prove recall:
-     add a realistic must-catch case shaped like the reported failure and
-     false-positive guards for common intentional behavior. Rerun it against
-     the original evidence.
-   - Use policy only for generalized reusable rules. Put incident narratives
-     and timelines in the report, `DecisionHistory.md`, or targeted fixtures.
+## Guardrail Scope
 
-8. **Resolve policy scope portably**
-   - Repo `AGENTS.md` or `CLAUDE.md` is repository policy, never global policy.
-   - For generalizable agent behavior, use the global policy path supplied by
-     the active runtime or execution context. For Codex this is normally
-     `CODEX_HOME/AGENTS.md`; for Claude Code it is normally
-     `CLAUDE_CONFIG_DIR/CLAUDE.md`. Mirror a cross-runtime rule when it truly
-     governs both runtimes.
-   - Do not embed a username-specific absolute path and do not infer a host
-     installation from `$HOME`; desktop runtimes can override it. If the
-     runtime's global policy path is unavailable or ambiguous, report the
-     needed scope and ask before mutating.
-   - For `one-off` or `unconfirmed` causes, prefer a targeted test, fixture, or
-     report/Decision History note instead of policy.
+Use the narrowest durable owner: a focused test or verifier for a code path,
+project documentation or repository policy for a local repeatable rule, and
+global policy only for behavior that genuinely applies across tasks or
+repositories. Keep incident narratives out of policy files.
 
-9. **Audit the testing procedure**
-   - Identify exactly which checks ran before the user caught the mistake and
-     what each actually asserted.
-   - Find adjacent missed failure modes in journeys, edge cases, failure paths,
-     source freshness, citations, tool output, permissions, persistence,
-     generated artifacts, services, and user-visible acceptance criteria.
-   - Add or propose broader coverage; do not stop at a single symptom fixture
-     when the testing weakness is wider.
-
-10. **Close the implementation gap when authorized**
-    - In `authorized-fix`, correct the user-facing issue after the prevention
-      layer, or state why the product correction had to come first.
-    - In `diagnose-only`, make no implementation change and explicitly record
-      that closure awaits authorization.
-    - Do not broaden the fix beyond what the causal evidence supports.
-
-11. **Retest the original path and guardrail**
-    - Rerun the same route, command, screen, prompt, citation check, tool path,
-      artifact render, audit, or integration surface.
-    - Rerun the new or updated guardrail and its realistic recall fixture.
-    - For crash-class service fixes, verify sustained health through
-      coordinator state and the same URL/tool/browser surface that failed.
-
-12. **Run comprehensive post-fix tests**
-    - In `authorized-fix`, run the broader test matrix found during the testing
-      audit after the gap is closed. Prove the expected user result, not merely
-      internal implementation details.
-    - If comprehensive testing is blocked, name the blocker, substitute
-      evidence, and residual risk; do not claim complete verification.
-    - In `diagnose-only`, list the tests required for closure and clearly mark
-      them not run because mutation was not authorized.
-
-## Output
-
-Return these headings exactly:
-
-```markdown
-## Fixed Symptom
-## Reproduction
-## User Intent And Scope Check
-## Authorization And Action Mode
-## Incident Class
-## Evidence Used
-## Causal Chain
-## Root Cause Classification
-## System Fix First
-## Testing Procedure Audit
-## Implementation Gap Closure
-## Retest Results
-## Comprehensive Retest Results
-## Boundaries And Non-Generalizable Notes
-```
-
-Use the structured evidence and causal-chain formats above. Under
-`Authorization And Action Mode`, include exactly one mode. Under `Incident
-Class`, include exactly one allowed class. Under `System Fix First`, state
-whether proposed or applied and name the owning system or file.
-Under `Testing Procedure Audit`, distinguish checks that ran from coverage that
-was absent. Under both retest sections, distinguish completed tests from tests
-required but not run in `diagnose-only` mode.
+Resolve global policy through the active runtime. Codex normally supplies
+`CODEX_HOME/AGENTS.md`; Claude Code normally supplies
+`CLAUDE_CONFIG_DIR/CLAUDE.md`. Do not hardcode a private username path or infer
+the active desktop installation from `$HOME`.
 
 ## Completion Rules
 
-- Do not skip reproduction when it is possible and reasonable.
-- Do not mutate in `diagnose-only` mode or infer authorization from a report.
-- Do not invent root causes or promote inference to confirmed evidence.
-- Do not treat changed requirements or later external changes as original
-  agent defects.
-- Do not restart a crash-class service before preserving root-cause evidence.
-- Do not claim a factual correction without source-backed evidence, a tool fix
-  without tool-result evidence, or an artifact fix without inspecting the
-  generated artifact.
-- Do not stop at the symptom when a repeatable creation or detection gap exists.
-- Do not update policy with incident-specific narratives or use repo policy as
-  a substitute for a runtime-global policy.
-- Do not hardcode private runtime policy paths or infer them from `$HOME`.
-- Do not claim a detector is repaired without realistic recall and
-  false-positive tests for its advertised detection classes.
-- Do not claim implementation closure or comprehensive post-fix verification
-  in `diagnose-only` mode.
+- Do not skip a reasonable original-surface reproduction.
+- Do not mutate when the user explicitly requested `diagnose-only`.
+- Do not invent evidence or promote inference to confirmed fact.
+- Do not restart a crash-class service before preserving available failure
+  evidence.
+- Do not claim completion without retesting the original symptom.
+- Do not make a full incident report the default output for a routine fix.

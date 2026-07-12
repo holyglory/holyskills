@@ -1,5 +1,35 @@
 # Decision History
 
+## 2026-07-11 - Routine bug fixing became direct and proportionate
+
+Decision: Treat a clear report of broken in-scope behavior as authorization for
+a safe bounded fix. Ordinary isolated bugs now use a direct reproduce, fix,
+focused-regression, and original-surface-retest path without loading the
+root-cause skill. `trace-fix-root-causes` is reserved for requested postmortems,
+serious/repeated/systemic/disputed failures, and failures missed by a skill,
+detector, audit, verifier, or prior claimed verification. Formal incident
+reports use four readable sections—Outcome, Cause, Changes, and Verification—
+instead of the previous 14-section evidence/causal ledger.
+
+Why: The previous authorization rule interpreted a concrete bug report as
+diagnose-only, forcing the user to send a second “fix it” message. Global,
+repository, and skill rules then duplicated a prevention-first workflow,
+required speculative broad audits and comprehensive testing, and exposed
+internal action modes and evidence IDs in a long user-facing report. That was
+disproportionate for a localized interaction bug and obscured the useful result.
+
+Result: A fail-before contract check reproduced the implicit-authorization,
+mandatory-report, and broad-audit gaps. The new skill self-test rejects the old
+14-section sample, accepts the four-section format, and retains realistic
+must-catch and false-positive fixtures for every advertised serious incident
+class. A context-isolated forward test responds to the same kind of menu report
+with the concrete fix path and a three-sentence handoff, without requesting
+authorization again. Global UI rules now reserve ImageGen/mockup confirmation
+for actual redesigns and reserve full desktop/mobile geometry verification for
+material layout risk. Both discovered Codex global policy entries are direct
+links to `reference/codex-app-wide/AGENTS.md`; the previous file/link topology
+is retained in a private rollback directory outside the repository.
+
 ## 2026-07-11 - Link tests separate owned temp aliases from operator paths
 
 Decision: The skill-link self-test canonicalizes only the temporary root it

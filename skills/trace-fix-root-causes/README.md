@@ -1,31 +1,28 @@
 # Trace Fix Root Causes
 
-`trace-fix-root-causes` investigates mistakes caused or missed by Codex or
-Claude Code: implementation and UI defects, factual and reasoning errors,
-incorrect tool use, broken artifacts, local-service crashes, audit misses,
-regressions, and incomplete verification.
+`trace-fix-root-causes` handles requested postmortems and serious, repeated,
+systemic, disputed, or previously missed Codex/Claude Code failures. Ordinary
+isolated bugs with a clear bounded fix should use the direct reproduce, fix,
+focused-regression, and original-surface-retest path without loading the skill.
 
-The skill is evidence-driven rather than a generic postmortem. It requires:
+When the skill applies, a clear report of a broken in-scope product, service,
+configuration, or artifact normally authorizes a safe bounded fix; the user
+does not need to repeat “fix it.” Explicit requests for explanation, review,
+audit, or no changes remain read-only.
 
-- reproduction through the original user-visible surface when reasonable;
-- an explicit `diagnose-only` or `authorized-fix` mode before mutation;
-- one explicit incident class, so ruled-out phrases cannot trigger the wrong contract;
-- a structured evidence ledger and evidence-linked causal chain;
-- separate origin, immediate-defect, and missed-detection findings;
-- changed-requirement and external-change checks;
-- incident-specific evidence for facts, tools, artifacts, and services;
-- prevention-first fixes and realistic detector recall tests when authorized;
-- original-path and comprehensive post-fix verification.
+The default path is intentionally small:
 
-A report alone does not authorize changes. In `diagnose-only`, the skill uses
-read-only evidence and records proposed work. In `authorized-fix`, it updates
-the smallest durable guardrail, closes the implementation gap, and proves the
-result.
+1. reproduce through the user's surface;
+2. establish the immediate cause and missed check;
+3. fix the complete in-scope behavior and add focused regression coverage;
+4. retest the original path; and
+5. return a concise cause/change/verification summary.
 
-Policy paths are runtime-portable. Repository policies remain repository
-scoped; global rules use the active runtime's supplied policy path, normally
-`CODEX_HOME/AGENTS.md` or `CLAUDE_CONFIG_DIR/CLAUDE.md`. The skill never embeds
-a username-specific path or assumes `$HOME` identifies the host installation.
+Formal evidence work is reserved for requested postmortems and serious,
+recurring, systemic, destructive, or disputed incidents. Those reports use the
+four readable sections in `references/formal-report.md`: `Outcome`, `Cause`,
+`Changes`, and `Verification`. The deterministic verifier checks that formal
+artifact without forcing it into ordinary bug-fix replies.
 
 Validate the skill and its realistic incident fixtures with:
 
@@ -33,7 +30,7 @@ Validate the skill and its realistic incident fixtures with:
 python3 skills/trace-fix-root-causes/scripts/self_test.py
 ```
 
-Validate a report with:
+Validate a formal report with:
 
 ```bash
 python3 skills/trace-fix-root-causes/scripts/verify_root_cause_report.py REPORT.md

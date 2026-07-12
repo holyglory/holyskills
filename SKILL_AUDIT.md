@@ -110,27 +110,31 @@ scenario review, and mutation-quality review remain separate needs.
 
 ### `trace-fix-root-causes`
 
-Honest description: an evidence-structured, prevention-first workflow and
-report verifier for implementation, UI, factual, reasoning, tool-use, artifact,
-service, audit, regression, and verification incidents. It guides and gates the
-investigation record; it cannot independently prove that a causal explanation
-is true.
+Honest description: a proportional reproduce-and-repair workflow for
+implementation, UI, factual, reasoning, tool-use, artifact, service, audit,
+regression, and verification incidents. Ordinary isolated bugs stay on the
+direct focused-fix path without loading the skill; serious or explicitly
+requested postmortems use its concise formal-report verifier. The verifier
+checks the investigation record, not whether a causal explanation is
+independently true.
 
 Improvements present:
 
 - installed runtime variants were reconciled into one canonical source;
-- `diagnose-only` and `authorized-fix` modes prevent a report from implying
-  mutation authority;
-- incident class, structured evidence, evidence-linked origin/immediate-
-  defect/missed-detection chain, confidence, and scope are required;
+- a concrete report of broken in-scope behavior authorizes a safe bounded fix,
+  while explicit explanation/review/no-change requests remain read-only;
+- routine work is limited to original-surface reproduction, immediate cause,
+  complete correction, focused regression coverage, and concise handoff;
+- formal reports use four readable sections—outcome, cause, changes, and
+  verification—with incident class and confidence kept inside the cause;
 - incident-specific contracts include crash evidence and sustained same-surface
   service recovery;
 - realistic fixtures cover every incident class plus false-trigger cases.
 
 What can improve: evidence quality remains bounded by what was preserved. The
-verifier proves structure and references, not hidden reasoning or causal truth.
-External changes and unavailable logs must remain explicitly unconfirmed rather
-than being filled with a plausible narrative.
+formal verifier proves required fields and evidence signals, not hidden
+reasoning or causal truth. External changes and unavailable logs must remain
+explicitly unconfirmed rather than being filled with a plausible narrative.
 
 ### `ui-implementation-audit`
 

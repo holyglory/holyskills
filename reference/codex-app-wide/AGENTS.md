@@ -20,8 +20,13 @@
   the repository's verified link/install mechanism; before relying on or
   updating the skill, verify the link/realpath and repair drift through the
   canonical repository with rollback evidence.
-- Generalize user bug or wrong behavior reports. See if such potential wrong behavior may happen elsewhere. 
-- Use ImageGen2 to design interfaces when fixing interfaces on user prompts. Confirm mockups with the user.
+- Treat a concrete report that expected behavior is broken as a request to fix
+  it with safe, bounded, in-scope changes. Inspect sibling/shared paths only
+  when evidence makes the same cause plausible; possibility alone does not
+  justify a broad audit.
+- Use ImageGen to explore a new visual direction or material redesign. Do not
+  require a mockup or user confirmation before restoring an intended
+  interaction or making a behavior-only UI fix that preserves the design.
 - Total ban across all projects: never ship or present fake user-facing
   numbers, fake records, fake geometry, fake charts, fake rankings, fake
   status, fake media, fake actions, fake buttons, fake controls, fake plumbing,
@@ -41,31 +46,31 @@
   implementation, never as delivered product behavior. Test fixtures/mocks are
   allowed only inside isolated tests or story/design artifacts clearly excluded
   from runtime product surfaces.
-- When the user reports a problem likely made by an AI agent, first load and
-  follow `trace-fix-root-causes` SKILL before
-  the first product-code edit or fix attempt. This applies even when the report
-  arrives as a browser comment, a visual/UI complaint, or a small-looking CSS
-  issue. Loading the skill only after patching does not satisfy this gate. Then
-  follow this order:
-  1. Reproduce the problem through the same surface the user saw, when reproduction makes sense.
-  2. Trace why the problem happened before changing the product code. Check the requirements, user intention, journey docs, design handoff, implementation, tests, verifier rules, audit outputs, tool choices, and handoff assumptions.
-  3. If the cause is wrong context, missed user intent, weak documentation, weak verifier coverage, or a reusable workflow gap, update the nearest durable guardrail first: docs, AGENTS instructions, tests, verifier, skill, checklist, or policy.
-     - If the prevention rule is general enough to apply across Codex tasks,
-       repos, or app-wide agent behavior, update this global Codex app-wide
-       `AGENTS.md` with a generalized reusable instruction. Do not satisfy an
-       app-wide policy need by editing only a repo `AGENTS.md`.
-     - Use repo `AGENTS.md` for repo-specific repeatable rules. Use tests,
-       verifiers, skills, or docs when they are the narrowest guardrail that
-       will actually prevent the recurrence.
-     - Keep one-off incident explanations, timelines, and exact bug narratives
-       out of global and repo policy files; put those in the root-cause report,
-       `DecisionHistory.md`, targeted tests, or fixtures.
-  4. If a skill or audit was run and failed to catch the issue, improve that skill or its deterministic checks before declaring the incident handled. Re-run it on the same code or evidence and verify it now catches the issue.
-  5. When practical, validate the new guardrail from a fresh-agent perspective: a new agent with only the updated instructions and source should avoid the same mistake.
-  6. Then fix the product issue itself.
-  7. Re-test through the original reproduction path and any new guardrail/check before reporting done.
-  8. If the wrong or weak guardrails could result in other similar errors or wrong behavior, audit the entire codebase and present user with possible gaps, plans for testing and fixing
-- Keep one-off local mistakes separate from general process fixes, but bias toward durable prevention when the mistake could recur.
+- For an ordinary isolated bug with a clear bounded fix, do not load a formal
+  incident workflow. A clear in-scope bug report normally authorizes the safe
+  fix; do not ask the user to repeat “fix it.” Reproduce through the user's
+  surface, establish the immediate cause, fix the complete behavior, add
+  focused regression coverage when useful, and retest the original surface.
+- Load and follow `trace-fix-root-causes` before the first product-code edit
+  only when the user requests root-cause analysis/postmortem, the failure is
+  serious, repeated, systemic, destructive, disputed, or a skill, detector,
+  verifier, audit, or prior claimed verification missed it.
+- Keep prevention proportional. A focused regression test can be the durable
+  guardrail for a routine defect. Change a skill, verifier, documentation, or
+  policy only when evidence identifies that owner as a repeatable cause or
+  missed-detection gap. Do not delay a safe product fix for speculative process
+  work, and do not require fresh-agent validation or a repository-wide audit
+  unless a changed agent contract or concrete blast radius justifies it.
+- Report routine fixes concisely: outcome, cause, change, and verification.
+  Reserve a formal incident report for an explicit postmortem request or a
+  serious, recurring, systemic, destructive, security, data-loss, or
+  crash-class incident.
+- Put generalized cross-task rules in the global policy, repository-specific
+  repeatable rules in repo policy, and narrow behavior checks in tests or
+  verifiers. Keep one-off narratives and timelines out of policy files.
+- If a skill, detector, verifier, or audit missed a failure it claimed to
+  catch, improve its contract or deterministic checks and rerun the same
+  evidence before declaring that detection gap handled.
 - Treat a user-visible local service failure after Codex touched, started,
   restarted, inspected, or verified that service as a Codex-handled incident
   until evidence proves otherwise. This includes `unhealthy`, `pid_alive=false`,
@@ -84,7 +89,10 @@
 
 ## UI Complexity Guardrail
 
-- Before placing or sizing any UI element, answer the element-ranking sequence:
+- Apply this section to new UI and material visual/layout changes. A
+  behavior-only fix that restores the intended design does not require a new
+  design exercise or mockup. Before placing or sizing a materially changed UI
+  element, answer the element-ranking sequence:
   1. Is this information or control required for the user's current primary
      decision or action?
   2. How often does the user need to see it during the normal journey?
@@ -177,13 +185,16 @@
   controls, filters, selectors, or status panels push the primary list, map,
   media, chart, or decision artifact materially downward, treat that as a
   primary-journey defect even when all controls technically work.
-- After implementing or materially changing web UI, run
+- After implementing or materially changing web layout, shared DOM/CSS,
+  responsive behavior, or visibility geometry, run
   `$formal-web-ui-verification` on the relevant desktop and mobile routes when
-  a safe render path exists. Do not report the UI as done while critical formal
-  findings remain for clipped text, hidden controls, unintended overlap,
-  off-canvas controls, broken media, invisible text, document overflow, or area
-  violations. Include the verifier's visible scrollbar inventory in the
-  evidence when the verifier can run.
+  a safe render path exists. For an interaction/configuration-only fix that
+  preserves geometry, exercise the affected journey and viewport instead of
+  automatically running the full geometry matrix. Do not report a material UI
+  change as done while critical formal findings remain for clipped text, hidden
+  controls, unintended overlap, off-canvas controls, broken media, invisible
+  text, document overflow, or area violations. Include the verifier's visible
+  scrollbar inventory when the verifier runs.
 - When checking or implementing web UI backed by Next.js server actions, route
   handlers, API routes, background work, or other server-side request paths,
   load and apply `$vercel:vercel-functions` before judging the implementation.

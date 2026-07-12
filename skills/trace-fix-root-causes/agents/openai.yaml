@@ -1,4 +1,4 @@
 interface:
   display_name: "Trace Fix Root Causes"
-  short_description: "Trace agent errors with structured evidence"
-  default_prompt: "Use $trace-fix-root-causes for a user-reported Codex or Claude Code implementation, factual, reasoning, tool-use, artifact, service, audit, or verification mistake. State diagnose-only or authorized-fix before mutation; reproduce the original surface; distinguish changed requirements and external changes; record structured evidence and evidence-linked origin, immediate-defect, and missed-detection findings; audit adjacent testing gaps; update the nearest durable guardrail and close the product gap only when authorized; then rerun the original path and comprehensive tests. Resolve global policy through the active runtime, such as CODEX_HOME/AGENTS.md or CLAUDE_CONFIG_DIR/CLAUDE.md, never a username-specific path or inferred HOME."
+  short_description: "Fix agent mistakes with proportional evidence"
+  default_prompt: "Use $trace-fix-root-causes to repair a serious, repeated, systemic, disputed, or previously missed agent failure with evidence, testing, and reporting proportional to risk."
