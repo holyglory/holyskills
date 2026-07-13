@@ -22,34 +22,26 @@ doing the work.
 
 ## Agent Implementation Mistake Protocol
 
-Treat a concrete report of broken in-scope behavior as authorization for a
-safe, bounded repair unless the user explicitly requests diagnosis, review, or
-no changes. Do not require a second “fix it” message.
-
-For an ordinary isolated bug, use this direct proportional path without loading
-a formal incident workflow:
+When the user reports an agent-made mistake, apply the prevention-first loop in
+the universal policy proportionally:
 
 1. Reproduce through the same surface the user saw, or preserve the closest
    concrete evidence when exact reproduction is unavailable.
-2. Establish the immediate cause and the check that missed it. Investigate
-   changed requirements, broader documentation, policies, or other subsystems
-   only when evidence makes them plausible contributors.
-3. Fix the complete user-facing gap and add a focused regression check when
-   practical. Do not delay the safe fix for speculative policy or process work.
-4. Update a skill, verifier, documentation, or policy only when it is the
-   evidence-backed owner of a repeatable creation or detection gap. Keep
-   one-off narratives out of policy files.
-5. Retest the original surface and run risk-proportionate adjacent checks.
-   Expand to a repository-wide audit or broad matrix only when explicitly
-   requested or concrete blast-radius evidence justifies it.
-6. Report routine fixes with a concise outcome, cause, change, and verification.
-   Use the formal four-section incident report only for an explicit postmortem
-   or a serious, recurring, systemic, destructive, or disputed incident.
+2. Compare the original request, later clarifications, accepted plans, project
+   records, and delivered behavior to distinguish an agent mistake from changed
+   intent or external state.
+3. Identify the immediate gap and the check or guardrail that allowed it.
+   Strengthen the narrowest effective prevention layer and prove it detects the
+   reported gap before fixing the product when practical.
+4. Inspect adjacent paths only where the same cause is plausible, then fix the
+   complete user-facing behavior.
+5. Retest the original surface, prevention check, affected paths, and completion
+   ledger before reporting the mistake handled.
 
-Load `trace-fix-root-causes` before the first product-code edit when the user
-requests root-cause analysis/postmortem, the failure meets that formal-incident
-threshold, or a skill, audit, verifier, detector, or prior claimed verification
-missed it.
+Keep the response and investigation proportionate. A focused regression test
+and short explanation are enough for a straightforward mistake; serious or
+explicitly requested postmortems can use a concise evidence-backed report
+without requiring a repository-owned workflow skill.
 
 ## Skill Development
 
@@ -77,10 +69,10 @@ missed it.
 
 ## Skill Installation Source Of Truth
 
-- This repository is the only writable canonical source for its six skills:
+- This repository is the only writable canonical source for its five skills:
   `formal-web-ui-verification`, `full-repo-audit`,
-  `full-repo-test-coverage-audit`, `trace-fix-root-causes`,
-  `ui-implementation-audit`, and `user-journey-docs-audit`.
+  `full-repo-test-coverage-audit`, `ui-implementation-audit`, and
+  `user-journey-docs-audit`.
   Do not hand-edit copies under Codex, Claude, Parall, or another runtime home.
 - Install each repo-owned skill through `scripts/manage_skill_links.py` as a
   direct symlink to `skills/<skill>`. Preserve unrelated runtime/system skills.
@@ -88,6 +80,11 @@ missed it.
   canonical `realpath`. Treat copied directories, chained links, broken links,
   or content drift as installation failures and repair them from this repo with
   a hash-verified rollback record.
+- Removing a canonical skill does not automatically remove installed entries.
+  During retirement deployment, inventory every explicit runtime root, preserve
+  the old link text, and remove only a direct link whose exact target is the
+  retired canonical directory. Never prune copied, divergent, or unrelated
+  runtime entries by inference.
 - A reviewed link plan authorizes only the exact canonical source identity and
   bytes it captured. Apply must revalidate repository/skills/skill identities
   and tree digest at every mutation boundary; never follow a source symlink or
@@ -108,7 +105,7 @@ missed it.
 
 ## Repository Ownership Boundary
 
-- Holy Skills owns only the six skill directories listed above and the shared
+- Holy Skills owns only the five skill directories listed above and the shared
   audit harness. The coordinator, PostgreSQL protection skill, DevOps Board,
   and DevOps Console are owned by the independent DevCoordinator repository.
 - Do not add source imports, relative checkout paths, submodules, build inputs,

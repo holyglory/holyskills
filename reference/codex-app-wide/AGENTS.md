@@ -1,346 +1,215 @@
-# Global Agent Instructions
+# Universal Agent Instructions
 
-## Informed owner decisions
+## Use authoritative context and informed decisions
 
-An architecture, datastore, or technology decision counts as an owner
-decision ONLY if it was presented to the owner in plain language a
-non-specialist can weigh: what each option is (no unexplained jargon or
-product names), what it costs, what it risks, what it makes easy or hard
-later, and a clear recommendation. A choice recorded after a presentation
-the owner could not evaluate is an agent decision and must be re-surfaced.
-Decision records must note what context the owner was given.
+- Read applicable requirements, plans, decisions, acceptance criteria, and
+  project instructions before consequential work. Use recorded rationale
+  rather than reconstructing it from memory or speculation.
+- Before asking the user to choose between approaches or make any decision that
+  affects the requested result, investigate the realistic options that are
+  materially distinct and explain them in plain language. Do not ask the user
+  to choose among unexplained labels, implementation patterns, or third-party
+  names, or make the user perform technical discovery the agent can perform.
+- For each option, explain what it is, how it works, which needs it satisfies,
+  its important capabilities and limitations, costs, risks, maintenance and
+  operational consequences, compatibility, future constraints, and
+  reversibility. State which plausible alternatives were excluded and why.
+- For a third-party service, repository, library, framework, or project, give
+  its exact name and role and verify material claims from current authoritative
+  sources. Explain relevant specifications, maturity, maintenance status,
+  licensing or price, security and privacy implications, lock-in, integration
+  effort, and known limitations. Distinguish verified facts, inferences, and
+  unknowns; never assume the user knows the product or its ecosystem.
+- Give a clear recommendation after explaining the options and why its
+  tradeoffs best match the user's goals. A choice is an informed user decision
+  only after this context was provided; resurface any earlier choice that was
+  recorded without enough information for the user to evaluate it.
+- Use production-grade, industry-standard foundations capable of the full
+  required lifecycle. Under-engineering is the more serious failure: when
+  sizing is uncertain, prefer the more capable sound option. Over-provisioned
+  capacity is acceptable; present scale alone does not justify an inadequate
+  foundation. Reject capability only for concrete correctness, security,
+  maintainability, operability, or honesty reasons.
+- Do not replace a necessary foundation with ad-hoc plumbing for speed. A
+  temporary bridge must be identified in the completion ledger and replaced
+  before readiness.
+- Record consequential user, product, architecture, data, and operational
+  decisions in project-root `DecisionHistory.md`. Include the options and
+  context presented, the decision, its reasoning, and any revisit triggers.
+  When current evidence meets a trigger, surface it instead of applying
+  repeated tactical fixes.
+- Keep rules at the narrowest effective scope: universal policy for reusable
+  principles and project guidance, tests, verifiers, or procedures for
+  domain-specific enforcement.
 
-## High-end industry standard only — no shortcut plumbing
+## Deliver the complete requested scope
 
-Every component choice must be the high-end industry-standard solution for
-its job, even when that costs multi-month development: proper databases for
-serving queries, proper orchestration for pipelines, proper caching layers,
-proper search engines. Embedding an analytical engine over loose files as a
-serving store, hand-rolled schedulers, ad-hoc caches, and similar plumbing
-shortcuts are forbidden as foundations. A shortcut may exist only as an
-explicitly-labeled temporary bridge with a written replacement plan and an
-owner-approved expiry.
+- The full requested scope is mandatory. Never silently narrow it, substitute
+  an MVP or prototype, omit difficult behavior, or report completion while any
+  requested functionality remains incomplete.
+- Complexity, duration, implementation order, or tool limitations do not reduce
+  scope. Only an explicit user decision may change or remove a requirement.
+- Incremental implementation is allowed. Whenever work is incomplete, create
+  and maintain one authoritative project-root `CompletionLedger.md` rather than
+  relying on scattered code comments or memory.
+- Record every partial implementation, temporary bridge, missing integration,
+  known limitation, affected-path TODO, and credible improvement or
+  generalization discovered while delivering the requested result. State what
+  remains, why it matters, and how it will be verified.
+- `CompletionLedger.md` coordinates completion; it is not a backlog or deferral
+  mechanism. Every entry created by or materially affecting the request must be
+  implemented and verified before readiness. Remove an entry without
+  implementation only when evidence shows it is invalid, duplicate, or outside
+  the request, and record why.
+- If an external dependency prevents completion, report the work as blocked or
+  incomplete with the unresolved ledger items and unblock condition. Never
+  describe a partial result as ready.
+- Before reporting readiness, reconcile the requirements, implementation,
+  acceptance criteria, tests, and `CompletionLedger.md`. Readiness requires
+  working end-to-end behavior and no unresolved request-related entries.
 
-When sizing or capability choices are in doubt, the asymmetry is explicit:
-under-engineering is far more severe than over-engineering. Over-provisioned
-capability is acceptable cost; an under-provisioned foundation is a defect.
-Never reject the more capable industry-standard option merely because the
-current scale does not yet demand it — reject it only for genuine
-correctness, honesty, or maintainability reasons, stated plainly.
+## Keep behavior truthful
 
-## Decision-record first
+- Never present invented facts, data, measurements, media, status, actions,
+  controls, integrations, or data flows as real behavior. Factual objects must
+  come from a real source, user input, measured or imported data, or an
+  explicitly requested deterministic definition.
+- A control must perform its stated action. A data-dependent feature is complete
+  only when its real data, persistence, processing, failure states, and
+  user-visible result work end to end. Show missing data or unavailable
+  behavior honestly.
+- Mockups, fixtures, and synthetic examples belong only in isolated design or
+  test contexts. They must not leak into production behavior or be presented as
+  completed functionality.
 
-Before answering why a project was designed a certain way, or before
-proposing or making an architecture/datastore/schema change, read the
-project's planning and decision artifacts (e.g. `Plan/`,
-`DecisionHistory.md`, ADRs, `docs/architecture*`) and cite the relevant
-recorded decision, including its alternatives-considered and triggers.
-Never reconstruct design rationale from memory or speculation — a wrong
-guessed rationale is worse than "let me check the decision record."
+## Learn from agent-made mistakes
 
-## Planned-trigger escalation
+- When the user reports a mistake, determine from evidence whether the
+  requirement changed, user input or an external condition caused the result,
+  or the agent made a mistake.
+- Agent-made mistakes include misunderstanding the user's actual intent,
+  implementing the agreed behavior incorrectly, failing to test a relevant
+  path, or reporting incomplete or broken work as ready. Do not relabel an
+  agent-made mistake as changed user intent without evidence from the request,
+  later clarification, accepted plan, or project record.
+- For an agent-made mistake, use this prevention-first sequence:
+  1. Reproduce it through the same surface the user encountered when feasible.
+  2. Identify the misunderstanding, implementation gap, or verification
+     assumption and the nearest durable prevention layer.
+  3. Before fixing the product, strengthen the narrowest effective guardrail:
+     requirements, acceptance criteria, project guidance, policy, a regression
+     test, verifier, harness, or operational check.
+  4. Prove the guardrail detects the reported gap. If an existing detector or
+     audit claimed to catch it, improve its contract and realistic checks, then
+     rerun the same evidence.
+  5. Inspect adjacent paths where the same cause is plausible and add
+     proportionate coverage.
+  6. Fix the implementation.
+  7. Retest the original path, prevention guardrail, relevant adjacent cases,
+     and completion ledger before reporting the mistake handled.
+- Keep the loop proportionate. A straightforward mistake may need only a short
+  diagnosis and focused regression test, not a formal postmortem, broad audit,
+  or lengthy report.
+- Put generalized repeatable lessons in policy and narrow guarantees in tests
+  or verifiers. Keep one-off narratives and timelines out of policy.
+- If immediate mitigation is required to prevent security, safety, or data
+  loss, preserve evidence and mitigate first, then complete the prevention loop
+  before declaring the incident handled.
 
-When a measurement, incident, or new requirement satisfies a condition
-that a plan document names as a deferred-decision trigger (wording like
-"deferred until a measured need", "added when X earns it", "only when a
-second consumer exists"), surface the pre-planned decision to the owner
-immediately — citing the plan text — alongside or before any tactical
-fix. Do not absorb a fired trigger into rounds of local patching; the
-owner wrote the trigger to be told when it fires.
+## Verify real behavior
 
-- Never propose V1/MVP limited functionality implementation. User always expects the entire requested functionality to work, no matter how large it is. Engage sub-agents to help planning and implementing larger features when necessary.
-- Before fixing errors, replicate them. Test before delivery the same way you replicated them before.
-- When delivering or fixing a detector — a test suite, verifier, audit, linter, monitor, or alert — prove recall, not only precision: exercise it against realistic examples of the failures it claims to catch, shaped like real-world breakage rather than like the detector's own implementation, and keep at least one such must-catch example per advertised detection class in its automated checks, plus false-positive guards for common intentional patterns. A detector that only passes fixtures mirroring its implementation is not validated.
-- Before repository-wide audits, broad refactors, migrations, history rewrites,
-  or repository splits, fetch the remote default branch and compare local HEAD,
-  the remote head, and their merge base. Use the repository's freshness
-  detector when it provides one, and distinguish `current`, `ahead`, `behind`,
-  `diverged`, `dirty-on-stale-base`, and `remote-unavailable`; lack of remote
-  access is unknown, not proof that the checkout is current.
-- Never discard or rewrite dirty work to satisfy a freshness preflight. Preserve
-  it, create an isolated checkout from the remote baseline, and reconcile with
-  an evidence-backed three-way merge. Do not pull, rebase, reset, stash, or
-  clean valuable local changes as a shortcut. Pause architecture-changing work
-  when remote truth cannot be established unless the user explicitly authorizes
-  an offline baseline.
-- When an installed skill has a declared canonical source repository, treat that
-  repository as the only writable source. Never hand-edit the installed skill
-  directory. Installations must resolve to the canonical skill directory via
-  the repository's verified link/install mechanism; before relying on or
-  updating the skill, verify the link/realpath and repair drift through the
-  canonical repository with rollback evidence.
-- Treat a concrete report that expected behavior is broken as a request to fix
-  it with safe, bounded, in-scope changes. Inspect sibling/shared paths only
-  when evidence makes the same cause plausible; possibility alone does not
-  justify a broad audit.
-- Use ImageGen to explore a new visual direction or material redesign. Do not
-  require a mockup or user confirmation before restoring an intended
-  interaction or making a behavior-only UI fix that preserves the design.
-- Total ban across all projects: never ship or present fake user-facing
-  numbers, fake records, fake geometry, fake charts, fake rankings, fake
-  status, fake media, fake actions, fake buttons, fake controls, fake plumbing,
-  no-op UI, synthetic data flows, or "wired later" implementations as product
-  behavior.
-- If a feature requires real data, persistence, actions, charts, filtering,
-  agents, solver output, or external integrations, completion means those paths
-  are implemented and verified end to end. Missing real data must be shown as
-  missing, queued, unavailable, or unimplemented; it must not be replaced by
-  invented values, invented shapes, or pretend controls.
-- Geometry, locations, people, product records, scientific measurements, solver
-  data, finances, counts, statuses, and other factual domain objects must come
-  from a real source, user input, measured/imported data, or an explicit
-  user-requested deterministic definition. Generated placeholder objects must
-  never be mixed into product data or displayed as real.
-- Static mockups are allowed only as explicit design artifacts before
-  implementation, never as delivered product behavior. Test fixtures/mocks are
-  allowed only inside isolated tests or story/design artifacts clearly excluded
-  from runtime product surfaces.
-- For an ordinary isolated bug with a clear bounded fix, do not load a formal
-  incident workflow. A clear in-scope bug report normally authorizes the safe
-  fix; do not ask the user to repeat “fix it.” Reproduce through the user's
-  surface, establish the immediate cause, fix the complete behavior, add
-  focused regression coverage when useful, and retest the original surface.
-- Load and follow `trace-fix-root-causes` before the first product-code edit
-  only when the user requests root-cause analysis/postmortem, the failure is
-  serious, repeated, systemic, destructive, disputed, or a skill, detector,
-  verifier, audit, or prior claimed verification missed it.
-- Keep prevention proportional. A focused regression test can be the durable
-  guardrail for a routine defect. Change a skill, verifier, documentation, or
-  policy only when evidence identifies that owner as a repeatable cause or
-  missed-detection gap. Do not delay a safe product fix for speculative process
-  work, and do not require fresh-agent validation or a repository-wide audit
-  unless a changed agent contract or concrete blast radius justifies it.
-- Report routine fixes concisely: outcome, cause, change, and verification.
-  Reserve a formal incident report for an explicit postmortem request or a
-  serious, recurring, systemic, destructive, security, data-loss, or
-  crash-class incident.
-- Put generalized cross-task rules in the global policy, repository-specific
-  repeatable rules in repo policy, and narrow behavior checks in tests or
-  verifiers. Keep one-off narratives and timelines out of policy files.
-- If a skill, detector, verifier, or audit missed a failure it claimed to
-  catch, improve its contract or deterministic checks and rerun the same
-  evidence before declaring that detection gap handled.
-- Treat a user-visible local service failure after Codex touched, started,
-  restarted, inspected, or verified that service as a Codex-handled incident
-  until evidence proves otherwise. This includes `unhealthy`, `pid_alive=false`,
-  connection refused, crash, timeout, "not responding", stale coordinator
-  metadata, and browser-visible local server failures.
-- For crash-class local service incidents, do not restart or declare recovery
-  before inspecting root-cause evidence: coordinator `log_path`, app logs,
-  recent process exit events, PID/health state, requested URL, toolchain output,
-  generated cache/build state, and any relevant wrapper scripts or skills. If
-  the service must be restored quickly, still capture the evidence first and
-  report the root-cause confidence afterward.
-- After a crash-class local service fix, report more than "server is running":
-  include root-cause confidence, the prevention or guardrail updated or still
-  missing, and sustained health verification through the same URL/tool surface
-  that failed.
+- Reproduce defects when feasible and retest through the same user-visible or
+  operational surface. Derive tests from acceptance criteria and realistic
+  success, edge, failure, integration, and recovery paths.
+- Do not stop at an internal unit when the requested behavior is end to end. A
+  validation gap discovered during the work is incomplete work and belongs in
+  the completion ledger until resolved.
+- A detector, verifier, test suite, audit, monitor, or alert must prove recall
+  and precision with realistic must-catch failures for every advertised class
+  and false-positive guards for common intentional patterns.
+- Tests that create persistent state must isolate or safely clean up their own
+  state, respect dependencies and concurrent runs, and never delete shared
+  records unconditionally.
 
-## UI Complexity Guardrail
+## Put requested interface content first
 
-- Apply this section to new UI and material visual/layout changes. A
-  behavior-only fix that restores the intended design does not require a new
-  design exercise or mockup. Before placing or sizing a materially changed UI
-  element, answer the element-ranking sequence:
-  1. Is this information or control required for the user's current primary
-     decision or action?
-  2. How often does the user need to see it during the normal journey?
-  3. How often does the user interact with it after the initial setup or choice?
-  4. How much screen space does that frequency and importance justify,
-     especially in the first mobile viewport?
-  5. Where do users normally expect this class of element to live: header,
-     toolbar, list row, card, map overlay, inspector, settings page, modal,
-     sheet, popover, or details disclosure?
-  6. What is the industry-standard visual language for this element class:
-     status chip, icon button, segmented control, filter pill, form field,
-     toast, modal, map pin, badge, or table column?
-  7. Should it be constantly visible, visible only while unresolved, or hidden
-     behind an expander/modal/dialog because it is rare, administrative,
-     corrective, or contextual?
-  8. Which user-facing object owns it? Do not group controls only because they
-     share component state, API parameters, or implementation plumbing. Global
-     context selectors belong with the global shell/header; list filters belong
-     with the list or table toolbar; map controls belong with the map; item
-     actions belong on the item/card/row; admin recovery controls belong behind
-     admin-only affordances.
-  Do not implement the element until this sequence has a coherent answer. When
-  the answers disagree, prefer the placement that preserves the primary journey
-  and defers lower-frequency controls.
-- Prefer the direct primary journey. If a user needs to choose an object to view
-  or edit, the normal list/browse/search result itself should open that object;
-  do not hide the primary action behind a secondary preview-only surface unless
-  the user explicitly requested preview-first navigation.
-- Prefer fewer controls and fewer clicks. If an operation can be done safely from
-  the object in context, do it there instead of adding an intermediate button,
-  picker, or explanatory panel.
-- Keep object activation, preview, focus, edit-loading, and destructive
-  selection as separate interaction states. A row/card/item click that opens,
-  previews, focuses, or loads data into an editor must not implicitly become the
-  target for a shared destructive action. Destructive single-item actions belong
-  on the affected item itself; destructive bulk/shared actions require an
-  explicit selection mechanism such as checkboxes or radios, visible selected
-  state, a selected count when useful, and clear action copy.
-- Preserve the primary visual or decision artifact as the first substantial
-  content in inspectors, previews, dialogs, and evidence viewers. For image,
-  video, chart, document, map, simulation, or media inspection, the stored
-  artifact itself must appear before advanced controls, provenance panels,
-  backend setup cards, raw metadata, or customization forms.
-- Advanced controls must be progressive disclosures near the artifact they
-  affect. Show compact current-value links/chips first; reveal sliders,
-  steppers, pickers, range controls, aspect-ratio locks, and custom render
-  parameters only after the user asks to adjust that property.
-- Do not let a full custom-configuration form consume the initial viewport of a
-  viewer. If customization is secondary, collapse it behind an explicit action
-  such as "custom render" or a property link, and keep the default stored media
-  visible while the user adjusts it.
-- Technical context such as solver setup, boundary conditions, data provenance,
-  request payloads, or evidence manifests belongs below the artifact or behind a
-  details disclosure unless that context is the user's primary task.
-- Current context state such as detected location, active region, sync status,
-  selected account, filter count, or permission state is usually metadata, not
-  the primary content. Show it as a compact chip/dropdown/link in the relevant
-  global shell area, usually the header or occasionally footer. Do not use
-  floating badges for ordinary global context when a header/footer placement is
-  available. Open a dialog, sheet, popover, or details surface only when the
-  user needs to change or repair it.
-- Header context chips must stay closed by default unless the user explicitly
-  opens them. Permission denial, fallback state, stale data, or incomplete
-  setup may change the chip's compact status affordance, but must not auto-open
-  a popover or modal unless the page is otherwise blocked and the user cannot
-  continue. Header popovers must close on outside click, Escape, navigation, and
-  successful selection.
-- Do not expose precise private values such as GPS coordinates, raw account ids,
-  tokens, internal identifiers, or detailed diagnostics in persistent header
-  chips or ordinary header popovers. Show a human-readable summary there and put
-  precise values only in explicit edit/admin/details surfaces when genuinely
-  needed.
-- Header chips must reserve clear space from navigation and hamburger controls
-  at every responsive breakpoint. When space is tight, shorten the chip text,
-  hide secondary labels, or collapse to an icon before allowing overlap or
-  ambiguous tap targets.
-- Keep context selection and result filtering separate. Location/account/region
-  selection answers "what context am I in?" and belongs in the shell. Filters
-  such as open/closed, sort, availability, category, date, and price answer
-  "which results in this list/table/map?" and belong in that result surface's
-  toolbar, tabs, chips, or column controls.
-- Do not let successful automatic detection create a persistent configuration
-  panel. If a value was inferred or detected and needs no immediate action, keep
-  it compact; reserve full selectors, maps, troubleshooting text, and retry
-  controls for unresolved states or explicit user expansion.
-- Admin-only or rare recovery controls must not consume the default public
-  viewport. Expose them only after authorization and behind an explicit compact
-  affordance, and keep the ordinary user's main decision content visible first.
-- For mobile/narrow UI verification, measure the first viewport. If secondary
-  controls, filters, selectors, or status panels push the primary list, map,
-  media, chart, or decision artifact materially downward, treat that as a
-  primary-journey defect even when all controls technically work.
-- After implementing or materially changing web layout, shared DOM/CSS,
-  responsive behavior, or visibility geometry, run
-  `$formal-web-ui-verification` on the relevant desktop and mobile routes when
-  a safe render path exists. For an interaction/configuration-only fix that
-  preserves geometry, exercise the affected journey and viewport instead of
-  automatically running the full geometry matrix. Do not report a material UI
-  change as done while critical formal findings remain for clipped text, hidden
-  controls, unintended overlap, off-canvas controls, broken media, invisible
-  text, document overflow, or area violations. Include the verifier's visible
-  scrollbar inventory when the verifier runs.
-- When checking or implementing web UI backed by Next.js server actions, route
-  handlers, API routes, background work, or other server-side request paths,
-  load and apply `$vercel:vercel-functions` before judging the implementation.
-  UI actions that may process many records must be bounded, truthful about
-  queued/running/completed work, and designed around function/runtime limits
-  instead of hiding long-running work inside an unbounded browser request.
-- Do not put implementation invariants, data-pipeline rules, backend guarantees,
-  or technical caveats into primary UI copy when the behavior already follows
-  from the interface. Copy should help the user decide or act; move technical
-  details to contextual tooltips, evidence/detail views, admin/debug surfaces,
-  or docs.
-- For search, import, lookup, connect, add-by-url, invite-by-email, join-by-code,
-  create-from-link, upload, or similar journeys where the normal first action is
-  entering one string or choosing one file, default to a Google-search-style
-  surface: the required input, one primary action, and essential validation only.
-- Do not expose type pickers, policy selectors, monitoring toggles, optional
-  metadata fields, synthetic hints, explanatory panels, debug ids, or rare
-  settings before the first submit unless the user's first decision truly
-  depends on them.
-- Put defaults and inferred fields in the backend or post-submit editor. Put rare
-  choices behind manual/advanced disclosure or the relevant settings page.
-- Never expose JSON, serialized blobs, raw database payloads, or schema-shaped
-  internals as editable UI. If users can edit a concept, provide typed fields,
-  validated rows, or a purpose-built editor backed by real columns/tables.
-- Automated tests that create database records must clean up those records in
-  foreign-key dependency order (or assert they are isolated from normal product
-  and worker flows), scoped to fixtures that test run created. Rows produced by
-  find-or-create/dedupe mechanisms (canonical keys, upserts) can be shared with
-  concurrently running tests: delete them only when no references remain, never
-  unconditionally, and when hardening one test file's cleanup against such a
-  flake, sweep sibling test files for the same pattern in the same change.
-- During UI audits, flag overexposed secondary controls on single-primary-input
-  journeys as primary journey defects, not as copy polish.
+- A destination's name or label is a content promise. When the user opens a
+  destination named for an object, collection, artifact, or task, that named
+  content must be the first substantial content, immediately recognizable, and
+  visible in the first viewport, especially on narrow screens.
+- For a page whose purpose is viewing, browsing, managing, or editing a list or
+  collection, show its real items—or its honest loading, error, or empty state—
+  as the primary content. Do not let creation or setup forms, synthetic
+  examples, or secondary panels precede or displace it. A compact title,
+  breadcrumb, count, search, filter, sort control, or critical blocking alert
+  may accompany or precede the collection only when it directly supports the
+  journey and does not push the promised content out of the first viewport.
+- A collection destination must not lead with an add or edit form. A form may
+  lead only when the destination's explicit primary task is creating one item
+  or editing a specific item already selected—not merely managing or editing a
+  collection. Otherwise show the collection first, then let the user select an
+  item or invoke a secondary add or create action.
+- Place add or create actions with the collection heading or toolbar. Invoking
+  one must immediately reveal a focused creation surface in the current
+  viewport, using a dialog, narrow-screen sheet, dedicated page, or deliberately
+  placed inline editor. Never append the form below a long list, render it
+  off-screen, or make the user search or scroll to discover whether the action
+  worked. After successful creation, return to the collection context and
+  reveal the new item. Cancellation must restore the prior context and focus.
+- Rank remaining information and controls by relevance to the current goal,
+  frequency, expected location, and justified space. Keep primary content
+  prominent and progressively disclose secondary, administrative, corrective,
+  or advanced controls.
+- Prefer direct journeys and controls located with the object or context they
+  affect. Keep activation, preview, editing, selection, and destructive actions
+  distinct; destructive actions require an explicit target and selected state.
+- When the normal first action is one simple input or choice, show it and
+  essential validation first. Defer inferred fields, rare settings, and
+  advanced configuration until needed.
+- Do not expose private values, internal identifiers, serialized payloads, or
+  implementation invariants as ordinary interface content. Provide validated,
+  purpose-built controls for concepts users may edit.
+- Verify every primary destination at representative wide and narrow
+  constraints. Confirm its promised content appears first; exercise loading,
+  empty, error, populated, and long-content states; and trigger creation after
+  a long list to prove the form is immediately visible and focused, then save
+  and confirm the new item is revealed in context. Treat hidden, overlapping,
+  clipped, inaccessible, misleading, or displaced primary content as a
+  functional defect.
+- Use visual exploration for a new direction or material redesign, not as a
+  requirement for a behavior-only repair that preserves an accepted design.
 
-## Schema Boundary Guardrail
+## Respect data and system boundaries
 
-- Before implementing a new registry/table or adding fields to an existing one,
-  classify every field by domain meaning: material property, physical state,
-  boundary/inlet condition, mesh profile, solver/numerical profile,
-  execution/scheduling policy, output/media policy, or immutable result
-  evidence.
-- Do not mix unrelated concepts into one record because they appear in one UI
-  form, one "advanced" expander, one API payload, one solver request, or one
-  convenience DTO. UI grouping and transport shape do not determine data
-  ownership.
-- If fields have different lifecycles, owners, reuse patterns, validation
-  rules, or audit/evidence meaning, model them as separate records and compose
-  them at request/job time.
-- Entity names must match contents. A table or API resource named for a
-  physical/domain concept must not silently own numerical, scheduling, output,
-  debug, or presentation settings.
+- Model data by domain meaning, ownership, lifecycle, reuse, validation, and
+  evidence needs. Shared presentation or transport does not imply shared
+  ownership. Separate concepts that change for different reasons, and ensure
+  names truthfully describe contents.
 
-## macOS App Build And Test Workflow
+## Protect sources, repositories, and running systems
 
-- For Swift/macOS app work, load and follow the Build macOS Apps plugin before
-  building, testing, packaging, launching, debugging, or running native UI
-  automation.
-- Do not take over the user's desktop, drive the app through ad-hoc mouse or
-  keyboard control, invoke `open`, or substitute direct `swift`, `swiftc`,
-  `xcodebuild`, or XCUI commands for the plugin workflow.
-- If the plugin is not installed or unavailable in the current session, stop
-  the Swift/macOS validation path and report it as pending. Continue only work
-  that does not build, launch, or control the app until the plugin is available.
+- Treat canonical sources as the only writable source of truth. Update
+  installed, generated, mirrored, or derived copies through their verified
+  source workflow rather than editing them directly.
+- Before broad audits, refactors, migrations, history changes, or repository
+  splits, establish the relationship between the local checkout and current
+  remote baseline. Unavailable remote evidence is unknown, not proof of
+  freshness.
+- Never discard, hide, or rewrite valuable dirty work to obtain a clean base.
+  Preserve it, use an isolated checkout from the verified baseline, and
+  reconcile concurrent work with an evidence-backed merge.
+- Before mutating a running service, shared resource, or persistent datastore,
+  inspect its state and use available coordination, locking, backup, and
+  recovery mechanisms. Preserve failure evidence before restarting, and verify
+  recovery through the same surface that failed.
+- Before destructive data operations, verify a recoverable backup or prove the
+  target is disposable and isolated.
+- Use explicit working directories or unambiguous targets for commands whose
+  destination matters. Verify intended mutations before reporting success.
 
-## Local Services, Docker, And Databases
+## Report status honestly
 
-- In system-level systemd units, never use `%h` for a non-root `User=`
-  account's home. The system manager resolves `%h` from its own root context,
-  not from `User=`. Pin or deliberately provision the service-account path,
-  add a realistic detector check, and inspect loaded `systemctl show` paths
-  before the first production start.
-- Before starting, stopping, restarting, or replacing any dev/test server,
-  Docker Compose service, Docker container, or local database stack, use
-  `$codex-dev-coordinator` and run its `inventory --project "$PWD"` command.
-- Do not start services on default ports directly. Do not follow the pattern
-  "try the default port, then try another one if busy." Lease ports or manage
-  servers through the coordinator.
-- Reuse a healthy coordinator-managed URL when it matches the task instead of
-  launching a duplicate server.
-- Before destructive PostgreSQL-in-Docker operations such as migrations, resets,
-  imports, seed rewrites, `DROP`, or `TRUNCATE`, use `$postgres-docker-backup`
-  to create and verify a backup.
-
-## Decision there history
-- For every project keep a DecisionHistory.md file where you track all the architectural decisions, why were they made and how did they work. Track user decisions as well. 
-- If later you find a code which contradict previous decision, find our how this may affect general behavior, what can possibly go wrong and report to the user
-
-## Shell Working-Directory Discipline
-
-- Shell working directories persist across tool calls within a session. Never
-  rely on an inherited CWD for commands whose target matters: start each
-  compound shell command with an explicit `cd` to the repo root (or use
-  absolute paths for every file argument, including script heredocs and ssh
-  identity files).
-- After any command chain that includes `cd`, treat the CWD as unknown for
-  the next call.
-- Verify that multi-step chains actually performed their mutating steps:
-  a failed `git add <path>` after a CWD drift produces a commit whose message
-  claims changes it does not contain. When a patch script and a commit run in
-  one chain, check the patch applied (grep the change) before pushing.
+- Lead with outcomes and supporting evidence. Distinguish facts, inferences,
+  assumptions, risks, and blockers. Report incremental progress as progress,
+  never as ready, complete, fixed, or done while requested behavior,
+  verification, or completion-ledger work remains open.

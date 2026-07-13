@@ -1,8 +1,8 @@
 # Holy Skills
 
-Holy Skills is the canonical public source for six portable Codex and Claude
-Code skills. It contains audit, verification, documentation, and incident
-workflows; it does not own or deploy local-service coordination products.
+Holy Skills is the canonical public source for five portable Codex and Claude
+Code skills. It contains audit, verification, and documentation workflows; it
+does not own or deploy local-service coordination products.
 
 The coordinator, PostgreSQL protection skill, native DevOps Board, and web
 DevOps Console are independently versioned in
@@ -20,8 +20,6 @@ Holy Skills does not import, clone, pin, build, or test that repository.
 - `full-repo-test-coverage-audit`: a structural test-assurance audit with exact
   target decisions, validated test references, and optional empirical coverage
   ingestion.
-- `trace-fix-root-causes`: a proportional reproduce-and-repair workflow with a
-  concise formal-report gate for serious or explicitly requested incidents.
 - `ui-implementation-audit`: a source- and evidence-bound UI implementation
   audit covering rendered behavior, journeys, handlers, backend paths,
   permissions, persistence, and tests.
@@ -35,10 +33,10 @@ vendored copy so its directory remains independently installable and testable.
 
 ## Layout
 
-- `skills/`: the six canonical skill packages.
+- `skills/`: the five canonical skill packages.
 - `full_repo_harness/`: shared audit discovery, evidence, batching, queue, and
   verification code.
-- `scripts/validate.py`: the complete six-skill and standalone-copy gate.
+- `scripts/validate.py`: the complete five-skill and standalone-copy gate.
 - `scripts/manage_skill_links.py`: transactional direct-link installation and
   rollback for explicit runtime roots.
 - `scripts/check_repository_freshness.py`: fetched remote-ancestry preflight for
@@ -48,12 +46,12 @@ vendored copy so its directory remains independently installable and testable.
 - `scripts/public_artifact_guard.py`: public-text, symlink, and PNG provenance
   guard.
 - `SKILL_AUDIT.md`: honest capabilities, improvements, and residual limits for
-  all six skills.
+  all five skills.
 - `DecisionHistory.md`: dated architecture and ownership decisions.
 
 ## Install as direct links
 
-This repository is the only writable source for its six skills. Never edit an
+This repository is the only writable source for its five skills. Never edit an
 installed copy. Discover every runtime's actual skills root and pass each one
 explicitly; do not infer desktop or sandbox homes from the shell's `$HOME`.
 
@@ -108,6 +106,12 @@ entries are preserved. Version-2 journals remain rollback-compatible. Keep the
 transaction directory until fresh Codex, Claude, and desktop sessions discover
 the links; skill metadata is loaded at session startup.
 
+The link manager does not prune an installed entry when its canonical skill is
+retired. During retirement deployment, inventory each explicit runtime root,
+preserve the old link text, and remove only a direct link whose exact target is
+the retired canonical directory. Do not infer that copied, divergent, or
+unrelated runtime entries may be deleted.
+
 ## Global Codex policy source
 
 `reference/codex-app-wide/AGENTS.md` is the canonical app-wide Codex policy.
@@ -136,10 +140,10 @@ The complete repository gate is:
 python3 scripts/validate.py
 ```
 
-It proves the exact six-skill layout, freshness and dependency-boundary detector
+It proves the exact five-skill layout, freshness and dependency-boundary detector
 recall, vendored-harness synchronization, link-manager rollback behavior,
-public-artifact policy, interaction-label parity, all six in-repository
-self-tests, Python compilation, and all six self-tests from standalone copied
+public-artifact policy, interaction-label parity, all five in-repository
+self-tests, Python compilation, and all five self-tests from standalone copied
 skill directories. CI installs a locked Playwright runtime solely because the
 remaining formal web verifier requires a real Chromium run.
 
