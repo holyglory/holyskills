@@ -1,4 +1,53 @@
 # Global Agent Instructions
+
+## Informed owner decisions
+
+An architecture, datastore, or technology decision counts as an owner
+decision ONLY if it was presented to the owner in plain language a
+non-specialist can weigh: what each option is (no unexplained jargon or
+product names), what it costs, what it risks, what it makes easy or hard
+later, and a clear recommendation. A choice recorded after a presentation
+the owner could not evaluate is an agent decision and must be re-surfaced.
+Decision records must note what context the owner was given.
+
+## High-end industry standard only — no shortcut plumbing
+
+Every component choice must be the high-end industry-standard solution for
+its job, even when that costs multi-month development: proper databases for
+serving queries, proper orchestration for pipelines, proper caching layers,
+proper search engines. Embedding an analytical engine over loose files as a
+serving store, hand-rolled schedulers, ad-hoc caches, and similar plumbing
+shortcuts are forbidden as foundations. A shortcut may exist only as an
+explicitly-labeled temporary bridge with a written replacement plan and an
+owner-approved expiry.
+
+When sizing or capability choices are in doubt, the asymmetry is explicit:
+under-engineering is far more severe than over-engineering. Over-provisioned
+capability is acceptable cost; an under-provisioned foundation is a defect.
+Never reject the more capable industry-standard option merely because the
+current scale does not yet demand it — reject it only for genuine
+correctness, honesty, or maintainability reasons, stated plainly.
+
+## Decision-record first
+
+Before answering why a project was designed a certain way, or before
+proposing or making an architecture/datastore/schema change, read the
+project's planning and decision artifacts (e.g. `Plan/`,
+`DecisionHistory.md`, ADRs, `docs/architecture*`) and cite the relevant
+recorded decision, including its alternatives-considered and triggers.
+Never reconstruct design rationale from memory or speculation — a wrong
+guessed rationale is worse than "let me check the decision record."
+
+## Planned-trigger escalation
+
+When a measurement, incident, or new requirement satisfies a condition
+that a plan document names as a deferred-decision trigger (wording like
+"deferred until a measured need", "added when X earns it", "only when a
+second consumer exists"), surface the pre-planned decision to the owner
+immediately — citing the plan text — alongside or before any tactical
+fix. Do not absorb a fired trigger into rounds of local patching; the
+owner wrote the trigger to be told when it fires.
+
 - Never propose V1/MVP limited functionality implementation. User always expects the entire requested functionality to work, no matter how large it is. Engage sub-agents to help planning and implementing larger features when necessary.
 - Before fixing errors, replicate them. Test before delivery the same way you replicated them before.
 - When delivering or fixing a detector — a test suite, verifier, audit, linter, monitor, or alert — prove recall, not only precision: exercise it against realistic examples of the failures it claims to catch, shaped like real-world breakage rather than like the detector's own implementation, and keep at least one such must-catch example per advertised detection class in its automated checks, plus false-positive guards for common intentional patterns. A detector that only passes fixtures mirroring its implementation is not validated.
