@@ -30,6 +30,24 @@ material layout risk. Both discovered Codex global policy entries are direct
 links to `reference/codex-app-wide/AGENTS.md`; the previous file/link topology
 is retained in a private rollback directory outside the repository.
 
+## 2026-07-12 - Codex reads the canonical app-wide policy through a direct link
+
+Decision: `/home/holyglory/.codex/AGENTS.md` is a direct absolute symlink to
+`/home/holyskills/reference/codex-app-wide/AGENTS.md`. The four owner-policy
+sections that existed only in Codex's standalone file were first preserved in
+the canonical source. The repository root `AGENTS.md` remains repo-specific and
+is not used as Codex's global policy.
+
+Why: After the repository split, keeping an independent Codex copy allowed the
+active global policy and the curated `/home` source to drift. A direct link
+makes the installed Codex policy's source and ownership explicit without
+discarding stricter active instructions.
+
+Result: Direct `readlink` and canonical `realpath` both resolve to the app-wide
+source under `/home/holyskills`; the linked file contains the preserved owner
+rules and the broader cross-project policy. Claude Code remains unchanged by
+this Codex-specific link decision.
+
 ## 2026-07-11 - Link tests separate owned temp aliases from operator paths
 
 Decision: The skill-link self-test canonicalizes only the temporary root it
