@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Complete repository validation for the six HolySkills packages."""
+"""Complete repository validation for the five HolySkills packages."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ SKILL_NAMES = (
     "formal-web-ui-verification",
     "full-repo-audit",
     "full-repo-test-coverage-audit",
-    "trace-fix-root-causes",
     "ui-implementation-audit",
     "user-journey-docs-audit",
 )
@@ -172,6 +171,8 @@ def check_interaction_label_parity() -> None:
 
 def main() -> int:
     check_repository_layout()
+    run([sys.executable, "scripts/check_app_wide_policy_self_test.py"])
+    run([sys.executable, "scripts/check_app_wide_policy.py"])
     run([sys.executable, "scripts/check_repository_freshness_self_test.py"])
     run([sys.executable, "scripts/check_repository_boundaries_self_test.py"])
     run([sys.executable, "scripts/check_repository_boundaries.py", "--repo", str(ROOT)])
@@ -201,7 +202,7 @@ def main() -> int:
     for skill in SKILLS:
         check_standalone_skill(skill)
 
-    print("validation ok (6 canonical skills; standalone matrix passed)")
+    print("validation ok (5 canonical skills; standalone matrix passed)")
     return 0
 
 

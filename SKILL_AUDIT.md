@@ -1,8 +1,8 @@
 # Holy Skills Audit
 
-Date: 2026-07-11
+Date: 2026-07-13
 
-This audit covers the six canonical skills currently owned by Holy Skills.
+This audit covers the five canonical skills currently owned by Holy Skills.
 Descriptions state what source and deterministic tests establish, not what a
 name might imply. A passing self-test proves the advertised fixture classes and
 safety invariants; it does not prove that every future repository, interface,
@@ -23,7 +23,7 @@ in `DecisionHistory.md`. The supported installation path is now
 `scripts/manage_skill_links.py`: it plans and verifies explicit runtime roots,
 refuses unreviewed divergent/copy/broken/chained objects, installs direct
 absolute links, preserves replaced objects in a private transaction, and can
-roll back the entire transaction. It manages only the six directories present
+roll back the entire transaction. It manages only the five directories present
 under `skills/` and leaves unrelated third-party or independently owned skills
 untouched.
 
@@ -108,34 +108,6 @@ reflective, macro-created, metaprogrammed, or framework-discovered behavior.
 Line execution does not prove assertions are meaningful. Manual targets,
 scenario review, and mutation-quality review remain separate needs.
 
-### `trace-fix-root-causes`
-
-Honest description: a proportional reproduce-and-repair workflow for
-implementation, UI, factual, reasoning, tool-use, artifact, service, audit,
-regression, and verification incidents. Ordinary isolated bugs stay on the
-direct focused-fix path without loading the skill; serious or explicitly
-requested postmortems use its concise formal-report verifier. The verifier
-checks the investigation record, not whether a causal explanation is
-independently true.
-
-Improvements present:
-
-- installed runtime variants were reconciled into one canonical source;
-- a concrete report of broken in-scope behavior authorizes a safe bounded fix,
-  while explicit explanation/review/no-change requests remain read-only;
-- routine work is limited to original-surface reproduction, immediate cause,
-  complete correction, focused regression coverage, and concise handoff;
-- formal reports use four readable sections—outcome, cause, changes, and
-  verification—with incident class and confidence kept inside the cause;
-- incident-specific contracts include crash evidence and sustained same-surface
-  service recovery;
-- realistic fixtures cover every incident class plus false-trigger cases.
-
-What can improve: evidence quality remains bounded by what was preserved. The
-formal verifier proves required fields and evidence signals, not hidden
-reasoning or causal truth. External changes and unavailable logs must remain
-explicitly unconfirmed rather than being filled with a plausible narrative.
-
 ### `ui-implementation-audit`
 
 Honest description: an interface-source and rendered-evidence audit against
@@ -186,16 +158,16 @@ separate extraction before inventory.
 
 | Gate | Required result | Evidence or boundary |
 | --- | --- | --- |
-| Canonical ownership | exactly six skills | No moved component path; no seventh canonical skill |
+| Canonical ownership | exactly five skills | No moved component path; no sixth canonical skill |
 | Repository boundary | passed | Realistic moved-path, source-path, build path, CI checkout/pin, and unexpected-skill fixtures; history and installed-skill false-positive controls |
 | Link manager | passed | Plan/apply/verify/rollback, divergence refusal, source device/inode/tree snapshot revalidation, source-swap rollback recall, direct-link identity, v2 rollback compatibility, concurrency, interrupted transaction, nested-source-link refusal, and unrelated-symlink/skill preservation |
 | Freshness detector | passed | Current, ahead, behind, diverged, dirty stale base, and unavailable remote scenarios using real Git repositories |
 | Shared harness | synchronized | Root harness hashes match all three vendored fallback copies |
 | Public artifacts | passed | Private text, credential, symlink, PNG metadata/provenance must-catch fixtures and portable controls |
-| Six repository self-tests | passed | Every canonical skill's deterministic suite runs from the repository |
-| Six standalone-copy self-tests | passed | Every skill runs after copying only its directory; audit skills reject a stale parent harness by using their vendored copy |
+| Five repository self-tests | passed | Every canonical skill's deterministic suite runs from the repository |
+| Five standalone-copy self-tests | passed | Every skill runs after copying only its directory; audit skills reject a stale parent harness by using their vendored copy |
 | Formal web runtime | passed | A locked Playwright/Chromium runtime exercises real fixture pages for repository and standalone runs |
-| Python source | passed | Root scripts, harness, and all six skill script trees compile |
+| Python source | passed | Root scripts, harness, and all five skill script trees compile |
 
 `python3 scripts/validate.py` is the complete repository gate. There is no
 native-app skip mode because Holy Skills no longer owns a native application.

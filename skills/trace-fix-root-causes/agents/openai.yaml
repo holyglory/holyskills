@@ -1,4 +1,0 @@
-interface:
-  display_name: "Trace Fix Root Causes"
-  short_description: "Fix agent mistakes with proportional evidence"
-  default_prompt: "Use $trace-fix-root-causes to repair a serious, repeated, systemic, disputed, or previously missed agent failure with evidence, testing, and reporting proportional to risk."

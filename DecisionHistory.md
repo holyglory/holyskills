@@ -1,5 +1,108 @@
 # Decision History
 
+## 2026-07-13 - Universal policy replaced the root-cause skill
+
+Decision: Remove `trace-fix-root-causes` as a canonical skill and make Holy
+Skills a five-skill repository. The universal agent policy and repository
+policy now own the proportionate prevention-first response to agent-made
+mistakes. Explicit or serious postmortems may still use a concise
+evidence-backed report, but no repository-owned workflow or report-shape
+verifier is required.
+
+Why: The rewritten universal policy already requires intent classification,
+same-surface reproduction, the narrowest durable prevention layer, realistic
+detector recall, plausible adjacent coverage, the complete product correction,
+and original-path retesting. The skill duplicated those rules and created a
+second contract that could drift. Its remaining unique feature was a lexical
+formal-report verifier; that verifier checked headings and evidence vocabulary,
+not whether the causal explanation was true, and no checked-in formal reports
+outside its own documentation and fixtures used it.
+
+Result: The skill source, metadata, report template, verifier, and self-tests
+are removed. Current policy, documentation, audit, CI, canonical-set detection,
+and standalone validation describe and enforce exactly five skills. Historical
+entries below remain unchanged. Runtime installations are not mutated from this
+isolated worktree; later deployment must inspect and remove any exact installed
+link to the retired canonical directory without touching unrelated skills.
+
+## 2026-07-13 - Universal policy restored informed choices and content-first UI
+
+Decision: The universal policy now requires the agent to map and explain the
+realistic solution landscape before asking the user to choose. Every option
+must be understandable without prior implementation or ecosystem knowledge;
+third-party choices require exact identity, current authoritative evidence,
+relevant specifications, capabilities, limitations, maturity, maintenance,
+commercial terms, security, privacy, lock-in, and integration consequences,
+with facts separated from inferences and unknowns. Decisions and incomplete
+work have fixed project-root records: `DecisionHistory.md` and
+`CompletionLedger.md`.
+
+The interface contract now treats a destination label as a content promise. A
+collection destination must show its real list or truthful state as the first
+substantial content in the first viewport, including on narrow screens. Forms,
+setup, examples, and secondary information may not bury it, while compact
+navigation, search, filtering, counts, and critical alerts remain allowed when
+they do not displace it. Add/create actions must reveal a visible focused
+dialog, sheet, dedicated page, or deliberately placed inline editor instead of
+appending a form below a long list or off-screen; successful creation must
+return to the collection and reveal the new item.
+
+Why: The first universal rewrite over-generalized the original informed-owner
+rule and removed the record filenames while trying to eliminate paths and
+product-specific language. Its compact interface guidance said to keep primary
+content prominent but did not make collection-first ordering or visible
+creation behavior testable. Validation checked only for forbidden names and
+paths, so it could not detect these semantic losses.
+
+Result: A new app-wide policy contract checker fails on realistic fixtures for
+an unexplained technical choice, unnamed or negatively assigned decision and
+completion records, a vague rule that permits a buried collection, and a
+creation form placed outside the viewport. False-positive fixtures preserve
+generic third-party language, compact collection controls, explicit
+single-record form destinations, and the two required filenames. The checker
+runs in repository validation and retains the universal policy's size and
+neutrality limits.
+
+## 2026-07-13 - App-wide policy became universal and completion-gated
+
+Decision: Replace the accumulated app-wide policy with a shorter universal
+contract organized around authoritative context, informed durable decisions,
+complete delivery, truthful behavior, agent-mistake prevention, realistic
+verification, primary user journeys, data boundaries, operational safety, and
+honest reporting. Named assistants, tools, skills, platforms, frameworks,
+commands, paths, and application-specific procedures no longer belong in the
+universal contract; their enforceable details belong in the narrowest relevant
+project policy, test, verifier, harness, or operational procedure.
+
+Full requested scope is now an explicit readiness gate. Incremental
+implementation remains allowed, but every partial implementation, temporary
+bridge, known limitation, affected-path TODO, and credible improvement or
+generalization discovered during the work must be kept in one completion
+ledger and resolved before reporting readiness. External blockers make the
+result incomplete rather than silently reducing scope.
+
+When evidence shows that the agent misunderstood intent, implemented the wrong
+behavior, missed the failure in testing, or claimed completion incorrectly, the
+agent-mistake loop is prevention-first: reproduce, strengthen the narrowest
+durable guardrail and prove it catches the gap, inspect plausible adjacent
+cases, then fix and retest. This supersedes the prior decision to make routine
+fixes product-first, while preserving proportionality: a focused regression
+test and short diagnosis can satisfy the prevention step without a formal
+postmortem or broad audit.
+
+Why: The previous policy had grown into a mixture of universal principles,
+tool invocation rules, stack-specific procedures, detailed interface patterns,
+and incident-derived exceptions. That made it longer, less portable, and more
+likely to hide critical obligations. It also allowed staged or partial work to
+be mistaken for completion and weakened the intended self-improvement loop for
+agent-made mistakes.
+
+Result: The universal policy is substantially shorter, contains no named
+assistant or application workflow, makes open completion-ledger work block
+readiness, and retains the reusable safety and quality principles in
+technology-neutral language. Specialized enforcement remains the
+responsibility of scoped policy and deterministic checks.
+
 ## 2026-07-11 - Routine bug fixing became direct and proportionate
 
 Decision: Treat a clear report of broken in-scope behavior as authorization for

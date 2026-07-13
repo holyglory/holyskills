@@ -17,8 +17,8 @@ env:
   PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
-  six-skill-validation:
-    name: Six skills and standalone matrix (${{ matrix.os }})
+  five-skill-validation:
+    name: Five skills and standalone matrix (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
