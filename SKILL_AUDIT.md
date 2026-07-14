@@ -1,6 +1,6 @@
 # Holy Skills Audit
 
-Date: 2026-07-13
+Date: 2026-07-14
 
 This audit covers the five canonical skills currently owned by Holy Skills.
 Descriptions state what source and deterministic tests establish, not what a
@@ -159,6 +159,8 @@ separate extraction before inventory.
 | Gate | Required result | Evidence or boundary |
 | --- | --- | --- |
 | Canonical ownership | exactly five skills | No moved component path; no sixth canonical skill |
+| Decision history | dense direction/decision index with one linked detail per ID | Verbose-field, weak-options, unexplained-prior-attempt, context-loss-revisit, missing/orphan/traversal/symlink-detail, and unlabeled-inference must-catch fixtures; extensive detail-file false-positive control |
+| Completion ledger | canonical active-only table or absent | Terminal-row, mixed-state, contradictory-status, unknown-status, non-schema-content, duplicate-ID, and empty-ledger must-catch fixtures; active-row verification-text false-positive control |
 | Repository boundary | passed | Realistic moved-path, source-path, build path, CI checkout/pin, and unexpected-skill fixtures; history and installed-skill false-positive controls |
 | Link manager | passed | Plan/apply/verify/rollback, divergence refusal, source device/inode/tree snapshot revalidation, source-swap rollback recall, direct-link identity, v2 rollback compatibility, concurrency, interrupted transaction, nested-source-link refusal, and unrelated-symlink/skill preservation |
 | Freshness detector | passed | Current, ahead, behind, diverged, dirty stale base, and unavailable remote scenarios using real Git repositories |

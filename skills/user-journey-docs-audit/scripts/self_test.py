@@ -414,6 +414,14 @@ critical-always user journey evidence.
 """,
         )
         write(policy_repo / "CLAUDE.md", "# Claude Policy\n\nAgents must check product and user journeys.\n")
+        write(
+            policy_repo / "DecisionHistory.md",
+            "# Decision History\n\nA compact governance index for product direction.\n",
+        )
+        write(
+            policy_repo / "DecisionDetails" / "D-20260714-01.md",
+            "# Historical product decision\n\nUser journey workflow route screen goal acceptance criteria.\n",
+        )
         policy_only = run_inventory(policy_repo)
         check(policy_only["journey_doc_count"] == 0, "agent policy must not count as product journey truth")
         check(policy_only["product_doc_count"] == 0, "agent policy must not count as product documentation")

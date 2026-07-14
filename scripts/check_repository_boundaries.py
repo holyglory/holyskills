@@ -33,6 +33,10 @@ HISTORICAL_DOCUMENTS = {
     "MERGE_IMPROVEMENT_LEDGER.md",
 }
 
+DECISION_DETAIL_LINK = re.compile(
+    r"\(DecisionDetails/(?P<filename>D-\d{8}-\d{2}\.md)\)"
+)
+
 SELF_FILES = {
     "scripts/check_repository_boundaries.py",
     "scripts/check_repository_boundaries_self_test.py",
@@ -149,6 +153,25 @@ def _without_installed_skill_paths(line: str) -> str:
     )
 
 
+def _historical_documents(repository: Path) -> set[str]:
+    """Return root history plus exact regular detail files linked by its compact index."""
+
+    result = set(HISTORICAL_DOCUMENTS)
+    index = repository / "DecisionHistory.md"
+    if not index.is_file() or index.is_symlink():
+        return result
+    try:
+        text = index.read_text(encoding="utf-8")
+    except OSError:
+        return result
+    for match in DECISION_DETAIL_LINK.finditer(text):
+        relative = Path("DecisionDetails") / match.group("filename")
+        path = repository / relative
+        if path.is_file() and not path.is_symlink():
+            result.add(relative.as_posix())
+    return result
+
+
 def _is_dependency_surface(repository: Path, relative: Path) -> bool:
     """Classify executable, runtime-config, source, build, hook, and CI text."""
 
@@ -176,6 +199,7 @@ def _is_dependency_surface(repository: Path, relative: Path) -> bool:
 def audit_repository(repository: Path) -> dict[str, object]:
     repository = repository.resolve()
     findings: list[Finding] = []
+    historical_documents = _historical_documents(repository)
 
     for relative in MOVED_PATHS:
         if (repository / relative).exists() or (repository / relative).is_symlink():
@@ -199,7 +223,7 @@ def audit_repository(repository: Path) -> dict[str, object]:
             )
 
     for relative in _text_files(repository):
-        if relative.as_posix() in HISTORICAL_DOCUMENTS:
+        if relative.as_posix() in historical_documents:
             continue
         path = repository / relative
         is_source = _is_dependency_surface(repository, relative)

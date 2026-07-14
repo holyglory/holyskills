@@ -535,8 +535,14 @@ def is_operational_skill_doc(rel_path: str) -> bool:
 
 
 def is_policy_or_governance_doc(rel_path: str) -> bool:
-    name = PurePosixPath(rel_path).name.lower()
-    return name in {"agents.md", "claude.md", "decisionhistory.md"}
+    path = PurePosixPath(rel_path)
+    name = path.name.lower()
+    decision_detail = (
+        len(path.parts) == 2
+        and path.parts[0].lower() == "decisiondetails"
+        and re.fullmatch(r"d-\d{8}-\d{2}\.md", name) is not None
+    )
+    return name in {"agents.md", "claude.md", "decisionhistory.md"} or decision_detail
 
 
 def is_operational_docs_repo_text(text: str) -> bool:

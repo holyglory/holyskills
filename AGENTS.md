@@ -117,5 +117,6 @@ without requiring a repository-owned workflow skill.
   checkout, build, CI, or version dependency.
 - Run `python3 scripts/check_repository_boundaries.py --repo "$PWD"` as part of
   every validation and ownership-affecting change. Keep historical migration
-  prose in `DecisionHistory.md` or `MERGE_IMPROVEMENT_LEDGER.md`; do not weaken
-  the current-tree detector to hide a real dependency.
+  prose in `DecisionHistory.md`, its exactly linked `DecisionDetails/<ID>.md`
+  files, or `MERGE_IMPROVEMENT_LEDGER.md`; do not weaken the current-tree
+  detector to hide a real dependency.

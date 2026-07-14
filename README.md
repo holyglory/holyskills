@@ -43,11 +43,62 @@ vendored copy so its directory remains independently installable and testable.
   broad repository work.
 - `scripts/check_repository_boundaries.py`: exact ownership/dependency guard
   that prevents moved components or checkout/build/CI pins from returning.
+- `scripts/check_app_wide_policy.py`: semantic contract guard for the universal
+  policy.
+- `scripts/check_decision_history.py`: compact decision-index, selective detail,
+  stable-ID, and anti-loop guard.
+- `scripts/check_completion_ledger.py`: open-only active-work ledger guard;
+  absence is the valid state when no work remains.
 - `scripts/public_artifact_guard.py`: public-text, symlink, and PNG provenance
   guard.
 - `SKILL_AUDIT.md`: honest capabilities, improvements, and residual limits for
   all five skills.
-- `DecisionHistory.md`: dated architecture and ownership decisions.
+- `DecisionHistory.md`: compact major-decision and project-direction index.
+- `DecisionDetails/`: one cold supporting record per indexed decision.
+
+`DecisionHistory.md` is routine context; `DecisionDetails/` is not. The index
+contains one evidence-linked `Direction:` paragraph, then entries with this
+exact shape:
+
+```markdown
+## [D-YYYYMMDD-NN — Short title](DecisionDetails/D-YYYYMMDD-NN.md)
+
+Decision: The selected direction.
+
+Why: Concise rationale. Options: selected A over rejected B because A fits the goal. Prior attempts: B failed in the observed way. Intent: durable user or project preference this reveals. Revisit only if: new evidence or a changed requirement invalidates the reason.
+```
+
+Use `Options: no material alternative` and `Prior attempts: none known` when
+true; never invent either. `Why` captures the underlying project direction,
+quality bar, workflow expectation, and UI taste that future work should follow.
+The top synthesis labels `Confirmed:` user intent separately from `Inferred:`
+patterns and cites the supporting decision IDs. A detail file starts with the
+matching ID/title and an index backlink, and holds all evidence, implementation,
+verification, chronology, and sources. Open only the detail relevant to a
+decision being applied, challenged, superseded, or explicitly audited.
+
+`CompletionLedger.md` exists only while requested work remains incomplete. Its
+resolved rows are removed in the completing change, and the file is deleted
+when no active items remain. Git is the default completion history; a separate
+`CompletionHistory.md` is created only for an explicit audit-retention need and
+is not routine working context.
+
+When present in this repository, the ledger contains only its title and one
+table with this exact schema:
+
+```markdown
+# Completion Ledger
+
+| ID | Remaining work | Why it matters | Status | Verification |
+| --- | --- | --- | --- | --- |
+| Q-1 | Replace the temporary bridge. | The production path is incomplete. | Open | Exercise the real path end to end. |
+```
+
+Every field is required and IDs are unique. Status begins with `Active`,
+`Blocked`, `In progress`, `Incomplete`, `Open`, `Partial`, `Pending`, `To do`,
+`TODO`, `Unresolved`, or `Waiting`. Do not add prose, checklists, extra tables,
+or terminal rows outside the schema; history belongs in the sources named
+above.
 
 ## Install as direct links
 
@@ -140,12 +191,14 @@ The complete repository gate is:
 python3 scripts/validate.py
 ```
 
-It proves the exact five-skill layout, freshness and dependency-boundary detector
-recall, vendored-harness synchronization, link-manager rollback behavior,
-public-artifact policy, interaction-label parity, all five in-repository
-self-tests, Python compilation, and all five self-tests from standalone copied
-skill directories. CI installs a locked Playwright runtime solely because the
-remaining formal web verifier requires a real Chromium run.
+It proves the exact five-skill layout, universal-policy semantics, compact
+decision-history integrity, open-only completion-ledger state, freshness and
+dependency-boundary detector recall, vendored-harness synchronization,
+link-manager rollback behavior, public-artifact policy, interaction-label
+parity, all five in-repository self-tests, Python compilation, and all five
+self-tests from standalone copied skill directories. CI installs a locked
+Playwright runtime solely because the remaining formal web verifier requires a
+real Chromium run.
 
 When changing a skill:
 

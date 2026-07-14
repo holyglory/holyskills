@@ -41,6 +41,11 @@ def make_clean_repository(root: Path) -> None:
     )
     write(
         root / "DecisionHistory.md",
+        "# Decision History\n\n"
+        "## [D-20260701-01 — Historical split](DecisionDetails/D-20260701-01.md)\n",
+    )
+    write(
+        root / "DecisionDetails" / "D-20260701-01.md",
         "Historical migration moved skills/codex-dev-coordinator and apps/DevOpsConsole to DevCoordinator.\n",
     )
     write(
@@ -72,6 +77,15 @@ def main() -> int:
         make_clean_repository(temporary)
         clean = checker.audit_repository(temporary)
         check(clean["ok"] is True, f"history and optional installed-skill support must pass: {clean['findings']}")
+
+        unlinked_history = temporary / "DecisionDetails" / "D-20260701-02.md"
+        write(unlinked_history, "Historical source path apps/DevOpsBoard was never linked.\n")
+        report = checker.audit_repository(temporary)
+        check(
+            "moved-source-reference" in rules(report),
+            "an unlinked decision-detail file must not become a history exemption",
+        )
+        unlinked_history.unlink()
 
         moved = temporary / "apps" / "DevOpsConsole"
         write(moved / "package.json", "{}\n")

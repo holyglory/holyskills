@@ -11,7 +11,8 @@ Audit whether a repo's docs are sufficient to drive excellent product and UI wor
 
 The inventory is a lexical/structural detector, not semantic proof. It
 classifies policy, decision-history, operational-skill, product, and journey
-documents separately. `AGENTS.md`, `CLAUDE.md`, and source code can surface
+documents separately. `AGENTS.md`, `CLAUDE.md`, `DecisionHistory.md`, linked
+`DecisionDetails/D-YYYYMMDD-NN.md` records, and source code can surface
 missing-context hints but cannot confirm product intent. Native source hints
 include SwiftUI, XAML/Avalonia/WPF, AppKit/UIKit, Compose/Kotlin, Flutter,
 Qt/QML, and web UI files.

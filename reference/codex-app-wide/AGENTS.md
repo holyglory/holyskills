@@ -33,11 +33,29 @@
 - Do not replace a necessary foundation with ad-hoc plumbing for speed. A
   temporary bridge must be identified in the completion ledger and replaced
   before readiness.
-- Record consequential user, product, architecture, data, and operational
-  decisions in project-root `DecisionHistory.md`. Include the options and
-  context presented, the decision, its reasoning, and any revisit triggers.
-  When current evidence meets a trigger, surface it instead of applying
-  repeated tactical fixes.
+- Keep project-root `DecisionHistory.md` as a dense, concise index of major
+  consequential user, product, architecture, data, and operational decisions,
+  not a report, timeline, or implementation log. Each entry's content is only
+  `Decision` and `Why`; its stable ID and detail link are metadata.
+- In `Why`, name materially distinct options considered and why the selected
+  option better serves the goals. If an option was previously tried, state why
+  it did not work. Capture the durable user intent behind the choice—project
+  direction, quality bar, workflow expectations, and UI preferences or taste—
+  not only the local technical reason.
+- Keep supporting evidence, sources, experiments, implementation, verification,
+  timelines, and operational detail in exactly one project-root
+  `DecisionDetails/<decision-id>.md` file per decision. Do not load detail files
+  into routine context; read only the relevant file when applying or revisiting
+  its decision or performing explicit historical or audit work.
+- Maintain one concise, evidence-linked `Direction` synthesis at the top of
+  `DecisionHistory.md`. Distinguish confirmed user intent from inferred
+  patterns and cite supporting decision IDs. Apply supported direction to
+  analogous work unless the user overrides it or new evidence conflicts; never
+  infer a durable preference from one ambiguous choice.
+- Before proposing an approach, search the compact index. Do not retry a
+  rejected or failed option unless new evidence changes the earlier reason,
+  and record what changed. When superseding a decision, state its replacement
+  and why so context loss cannot revive the earlier path.
 - Keep rules at the narrowest effective scope: universal policy for reusable
   principles and project guidance, tests, verifiers, or procedures for
   domain-specific enforcement.
@@ -49,24 +67,27 @@
   requested functionality remains incomplete.
 - Complexity, duration, implementation order, or tool limitations do not reduce
   scope. Only an explicit user decision may change or remove a requirement.
-- Incremental implementation is allowed. Whenever work is incomplete, create
-  and maintain one authoritative project-root `CompletionLedger.md` rather than
-  relying on scattered code comments or memory.
-- Record every partial implementation, temporary bridge, missing integration,
-  known limitation, affected-path TODO, and credible improvement or
-  generalization discovered while delivering the requested result. State what
-  remains, why it matters, and how it will be verified.
-- `CompletionLedger.md` coordinates completion; it is not a backlog or deferral
-  mechanism. Every entry created by or materially affecting the request must be
-  implemented and verified before readiness. Remove an entry without
-  implementation only when evidence shows it is invalid, duplicate, or outside
-  the request, and record why.
-- If an external dependency prevents completion, report the work as blocked or
-  incomplete with the unresolved ledger items and unblock condition. Never
-  describe a partial result as ready.
-- Before reporting readiness, reconcile the requirements, implementation,
-  acceptance criteria, tests, and `CompletionLedger.md`. Readiness requires
-  working end-to-end behavior and no unresolved request-related entries.
+- Incremental implementation is allowed. During incomplete work, maintain one
+  authoritative project-root
+  `CompletionLedger.md` containing only active unresolved partial
+  implementations, temporary bridges, missing integrations, limitations,
+  affected-path TODOs, improvements, and generalizations. State what remains,
+  why it matters, and how it will be verified.
+- The ledger is an active queue, not history or deferral. Remove an
+  item in the same change once implemented and verified; never retain resolved,
+  completed, or closed entries or evidence. Delete `CompletionLedger.md` when
+  no active items remain.
+- Version control is the default completion history. Record consequential
+  decisions in project-root `DecisionHistory.md`. Create project-root
+  `CompletionHistory.md` only for explicit audit retention. Keep it out of
+  routine agent context; read it only for explicit historical or audit work.
+- Remove an unimplemented item only with evidence it is invalid, duplicate, or
+  out of scope; record why.
+- Keep externally blocked items unresolved; report incomplete and state the
+  unblock condition.
+- Before readiness, reconcile requirements, implementation, acceptance
+  criteria, tests, and the ledger. Readiness requires end-to-end behavior and
+  no request-related entries.
 
 ## Keep behavior truthful
 
