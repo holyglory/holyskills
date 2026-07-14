@@ -1,5 +1,22 @@
 # Decision History
 
+## 2026-07-13 - Visual approval remains visible across output boundaries
+
+Decision: When generated visual work pauses for user approval, the approval
+state and exact requested response must remain persistently visible. If the
+producing tool cannot emit a follow-up message, both must be embedded in the
+artifact itself. Visual exploration remains limited to new directions or
+redesigns rather than behavior-only repairs.
+
+Why: The live canonical checkout contained this valuable owner rule outside the
+validated topic branch. Omitting it during main integration would silently lose
+concurrent work and could leave the user with an unexplained artifact and no
+durable confirmation request.
+
+Result: The rule is expressed in tool-neutral language in the universal policy.
+The policy checker includes a must-catch fixture that replaces it with a
+transient progress-message request and verifies that the weaker behavior fails.
+
 ## 2026-07-13 - Universal policy replaced the root-cause skill
 
 Decision: Remove `trace-fix-root-causes` as a canonical skill and make Holy

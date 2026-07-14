@@ -176,8 +176,9 @@
   and confirm the new item is revealed in context. Treat hidden, overlapping,
   clipped, inaccessible, misleading, or displaced primary content as a
   functional defect.
-- Use visual exploration for a new direction or material redesign, not as a
-  requirement for a behavior-only repair that preserves an accepted design.
+- Use visual exploration only for new directions or redesigns. Persist the
+  approval state and exact response request, embedding both when no follow-up
+  can appear.
 
 ## Respect data and system boundaries
 

@@ -180,6 +180,18 @@ def find_policy_violations(text: str) -> list[str]:
                 "new item",
             ),
         )
+        require_terms(
+            violations,
+            interface,
+            "persistent-approval contract",
+            (
+                "visual exploration",
+                "approval state",
+                "exact response request",
+                "embedding",
+                "no follow-up",
+            ),
+        )
         if not re.search(
             r"(?is)^- .*\b(?:list or collection|collection)\b.*\b(?:show|first|lead)\b",
             interface,

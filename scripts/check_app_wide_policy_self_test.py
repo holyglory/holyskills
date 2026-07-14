@@ -52,6 +52,9 @@ strengthen a guardrail and retest the original path.
 - A compact title, search, filter, count, or critical alert may precede the list
   without displacing it. A form may lead on a destination explicitly dedicated
   to creating one item or editing one selected item.
+- Use visual exploration only for new directions or redesigns. Persist the
+  approval state and exact response request, embedding both when no follow-up
+  can appear.
 """
 
 
@@ -121,6 +124,17 @@ def main() -> int:
         "- Place creation forms where they fit the page layout.",
     )
     check("visible-create-flow contract" in messages(offscreen_create), "off-screen create policy must fail")
+
+    transient_approval = VALID_POLICY.replace(
+        "- Use visual exploration only for new directions or redesigns. Persist the\n"
+        "  approval state and exact response request, embedding both when no follow-up\n"
+        "  can appear.",
+        "- Ask for visual approval only in a transient progress message.",
+    )
+    check(
+        "persistent-approval contract" in messages(transient_approval),
+        "transient-only visual approval must fail",
+    )
 
     named_tool = VALID_POLICY + "\nUse Codex for implementation.\n"
     check("named product or tool" in messages(named_tool), "named assistant must fail")
