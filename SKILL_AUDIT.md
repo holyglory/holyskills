@@ -63,26 +63,70 @@ suitability still need their proper review surfaces.
 ### `full-repo-audit`
 
 Honest description: a manifest-verified framework for repository-wide manual
-source, architecture, journey, interface, and test review. Deterministic batches
-and hashes prove queue coverage and evidence identity; agents still perform the
-semantic judgment.
+semantic implementation, source, architecture, journey, interface, and test
+review. Deterministic batches and hashes prove queue coverage and evidence
+identity; responsibility-level rows with unique `Contract ID`s record the
+judgment, while agents still decide whether arbitrary domain behavior is
+actually complete.
 
 Improvements present:
 
 - effort and worker capability are runtime-attested only with immutable
   evidence, otherwise explicitly unverified;
 - detected high-risk files require a direct lead-review ledger;
+- every coverage unit, high-confidence named source definition, and distinct
+  responsibility receives a source-backed implementation row with its own
+  deterministic `batch_###:C###` ID; each row has entry anchors,
+  calculation/data/side-effect trace, failure/permission/recovery evidence,
+  verification, and a status-derived PASS/GAP/BLOCKED result, while PASS
+  requires substantive evidence of the real outcome rather than symbol or
+  type/shape presence;
+- every responsibility records an enumerated authoritative or source-inferred
+  basis and parsed/manual discovery bound to an assigned-unit anchor; every
+  verification records one test/runtime/source-only evidence type and one
+  counterfactual or invariance, while source-only evidence cannot close a
+  persistence, integration, external-effect, or success PASS;
+- batch prompts explicitly target marker-free gaps such as hard-coded
+  calculations, ignored inputs/configuration, fake success or persistence,
+  incomplete plumbing, unregistered jobs/routes, production mocks, and shallow
+  outcome tests;
+- a required manifest-bound `lead_reconciliation.md` maps every batch Contract
+  ID exactly once into `lead:C###` cross-file traces with all nine implementation
+  labels, derives each lead result from those statuses, preserves mapped gaps or
+  blocked results, and records atomic lead findings and open questions; the
+  lead independently reopens every PASS anchor with the same typed verification
+  discipline, incrementally if needed but without sampling;
+- a pass-only verification receipt binds the manifest, exact non-symlinked
+  report root, and hashes for the authorized batch, journey, and lead reports;
+  consolidation consumes only that receipt-bound set and merges findings only
+  when all immutable fields match;
+- completion-ledger plan and apply rerun the verifier while holding its exact
+  report, source, effort/queue/exclusion, prompt, and artifact input closure;
+  only a genuine pass whose canonical result digest matches the receipt is
+  accepted, with a narrowly proven ledger-only freshness normalization;
+- every verified artifact-backed audit produces a fully dispositioned external
+  projection whose `review_status` is complete, including an empty projection
+  when clean; an explicit user request or applicable project instruction may
+  then authorize a plan/apply update that preserves unrelated active
+  `CompletionLedger.md` rows and rejects raw, omitted, stale, or concurrent
+  input;
 - screenshots, native evidence, traces, and formal reports are confined and
   hash-bound with route/state/viewport metadata;
 - formal-report target coverage and visible-scrollbar inventories are checked;
 - missing/tampered evidence, dishonest effort, and skipped high-risk review
   have realistic must-catch fixtures and valid controls.
+- `evals/marker-free/` can separately measure fresh-agent recall and
+  intentional-lookalike precision across six marker-free gap classes when the
+  cases are actually run; its self-test synthesizes oracle-derived responses
+  and proves only the evaluation infrastructure, not agent performance.
 
-What can improve: hashes prove identity, not whether an image or judgment is
-correct. The high-risk classifier is a review floor, not proof that every
-important file was recognized. Generated code, external services, unusual
-languages, and ambiguous user intent can require investigation beyond the
-deterministic queue.
+What can improve: hashes and structurally valid implementation rows prove
+identity and recorded coverage, not that the human/agent's semantic judgment is
+correct. Static review cannot prove dynamic registration, unavailable external
+services, production data behavior, or domain calculations without suitable
+runtime evidence. Generated code, unusual languages, and ambiguous user intent
+can require investigation beyond the deterministic queue; unresolved cases
+remain blocked or open rather than being called complete.
 
 ### `full-repo-test-coverage-audit`
 

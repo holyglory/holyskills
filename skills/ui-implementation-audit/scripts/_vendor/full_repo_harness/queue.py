@@ -598,6 +598,26 @@ HIGH_SIGNAL_SOURCE_DIRS = {
 
 ARTIFACT_MARKER = ".full-repo-audit-artifacts.json"
 ARTIFACT_OWNER = "full-repo-audit"
+VERIFICATION_RECEIPT_NAME = "verification_receipt.json"
+KNOWN_GENERATED_ARTIFACTS = {
+    "audit_complete.json",
+    "audit_complete.json.tmp",
+    "audit_index.md",
+    "completion-ledger-plan.json",
+    "completion_ledger_projection.json",
+    "consolidated-findings.json",
+    "consolidated-findings.md",
+    "effort_ledger.json",
+    "excluded_files.json",
+    "journey_audit.md",
+    "lead_reconciliation.md",
+    "manifest.json",
+    "queue_complete.json",
+    "queue_complete.json.tmp",
+    VERIFICATION_RECEIPT_NAME,
+    "visual_evidence.json",
+    "visual_journey_audit.md",
+}
 COMPANION_SCRIPT_DIR = Path(__file__).resolve().parent
 MARKDOWN_UNSAFE_PATH_CHARS = {"|", "`"}
 
@@ -1853,6 +1873,75 @@ List missing test-mode or journey clarifications for the lead.
 """
 
 
+def render_lead_reconciliation_prompt(repo: Path, run_id: str) -> str:
+    return f"""# Full Repo Audit Lead Reconciliation
+
+Repo root: `{repo}`
+Run ID: `{run_id}`
+
+This is a required lead-owned reconciliation artifact, not a low-effort batch.
+Complete it only after reading every batch report and, when applicable, both
+journey reports. Independently reopen the assigned source and recheck every
+batch `PASS` responsibility anchor; a batch conclusion is a lead, not a
+substitute for this lead-owned review. Rechecks may be completed incrementally,
+but sampling PASS rows is not sufficient for full semantic coverage. Do not
+edit the audited repository.
+
+Trace the repository's real feature, API, command, route, job, event,
+configuration, schema/migration, build/deploy, and operational contracts across
+file and batch boundaries. Find semantic implementation gaps even when the
+source contains no TODO, placeholder, stub, or `NotImplemented` marker. In
+particular, challenge hard-coded values that should be calculated, ignored
+inputs/configuration, fake success, incomplete registration or dependency
+plumbing, memory-only state presented as durable, missing external effects,
+partial read/write paths, production mocks/fixtures, missing lifecycle work,
+and tests that prove only shape rather than the promised outcome.
+
+Every finding must describe exactly one independently closable implementation
+outcome. Do not save a compound finding. Reissue it as separate atomic finding
+blocks, each with its own evidence, gap, and verification direction.
+
+## Required Output
+
+Return Markdown with exactly these sections:
+
+## Run ID
+{run_id}
+
+## Worker
+lead_reconciliation
+
+## Cross-File Contract Trace
+For a non-empty repository, include one row per distinct cross-file, public,
+file-local, or operational contract reconciled by the lead. Assign sequential
+unique IDs in the `lead:C<3+ digits>` namespace (for example `lead:C001` and
+`lead:C1000`). Map every batch `Contract ID` from
+every verified Implementation Inventory to exactly one lead row; group IDs only
+when they jointly implement the same end-to-end contract. No batch Contract ID
+may be omitted or mapped twice.
+
+| Contract ID | Batch Contract IDs | Contract/source anchors | entry-registration | core-logic | data-lifecycle | integration-boundary | authorization-trust | failure-recovery | observable-outcome | operational-lifecycle | verification | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `lead:C<3+ digits>` (for example `lead:C001`) | one or more exact backticked `batch_<3+ digits>:C<3+ digits>` IDs | concrete repo-relative files and at least one backticked source token or occurrence anchor from every mapped batch row | `pass —` registration/caller evidence, or another allowed status plus evidence | `pass —` real calculation/domain evidence, or another allowed status plus evidence | `pass —` validation/ownership/persistence evidence, or justified `not applicable —` evidence | `pass —` dependency/API/event evidence, or justified `not applicable —` evidence | `pass —` permission/trust evidence, or justified `not applicable —` evidence | `pass —` failure/retry/rollback/cleanup evidence, or another allowed status plus evidence | `pass —` real user-visible/API/operational result citing at least one backticked source token or occurrence anchor from every mapped batch row, or another allowed status plus the same per-row anchors | `pass —` startup/scheduling/deploy/monitoring/recovery evidence, or justified `not applicable —` evidence | begin with `pass —`; include `evidence-type: test`; include the literal label evidence-ref followed by backticked `tests/contract_test.py`; include `outcome: the named test asserted the expected changed result`; include `counterfactual: changed input or state must produce the expected changed outcome`; then give independent lead-recheck evidence and at least one backticked source token or occurrence anchor from every mapped batch row | PASS, GAP, or BLOCKED |
+
+For each of the nine trace-label cells, begin with exactly `pass —`, `gap —`, `blocked —`, or `not applicable —`, then give concrete evidence or justification. Derive `Result` from those cells: any `gap` means `GAP`; otherwise any `blocked` means `BLOCKED`; otherwise use `PASS`. Preserve at least one concrete source token or occurrence anchor from every mapped batch row in the lead row's `Contract/source anchors`, `observable-outcome`, and `verification` cells; one shared token cannot stand in for grouped responsibilities. Every lead `verification` cell must also declare exactly one `evidence-type: test`, `evidence-type: runtime`, or `evidence-type: source-only` and exactly one concrete `counterfactual: ...` or `invariance: ...`. A `test` claim must include exactly one `evidence-ref: ...` declaration containing backticked repo-relative test file path(s) present in the manifest. A `runtime` claim must instead cite backticked `evidence:<id>` reference(s) bound to valid artifacts in `visual_evidence.json`; never invent a runtime artifact or cite an unbound filename. A lead `PASS` using test or runtime evidence must also contain exactly one explicit `outcome: ...` or `result: ...` statement naming the observed result, not merely saying that a check exists or passed. This evidence records the independent lead recheck, not merely the batch conclusion. A lead `PASS` for persistence, integration, an external effect, or success requires test or runtime evidence and must never use `source-only`. A `PASS` row must mark both `observable-outcome` and `verification` as `pass`; `not applicable` cannot substitute for either clean-result proof, and an all-`not applicable` row is never a pass. A mapped batch `GAP` cannot become lead `PASS` or `BLOCKED`, and a mapped batch `BLOCKED` cannot become lead `PASS`; keep it unresolved for lead disposition. For an empty manifest, write exactly `No source-backed implementation contracts were queued.` instead of rows. Use `PASS` only when the full contract reaches its real outcome. Use `GAP` for marker-free semantic gaps as well as explicit stubs. Use `BLOCKED` only for a named external condition. Every `GAP` or `BLOCKED` row must have a finding that cites its Contract ID.
+
+## Findings
+Use one atomic subsection per confirmed lead-reconciliation issue, or exactly
+`No findings.` when every traced contract passes:
+### P0/P1/P2/P3 - Short title
+- Files: `repo-relative source file`
+- Evidence: concrete source symbols, values, branches, registrations, calls, persistence, runtime behavior, or tests
+- Interface evidence: exact visible label/control/message when applicable, or `Not applicable`
+- Expected behavior/standard: the real contract or outcome the implementation must provide
+- Gap: the one independently closable missing, partial, substituted, unwired, unverified, or unreachable outcome
+- Suggested direction: concise implementation and end-to-end verification direction
+
+## Open Questions
+List unresolved ambiguities or exactly `None.`. Questions and hypotheses are not findings and do not enter the completion ledger.
+"""
+
+
 def render_batch_prompt(repo: Path, run_id: str, batch_id: int, total_batches: int, entries: list[AuditUnit]) -> str:
     file_lines = "\n".join(
         (
@@ -1892,7 +1981,11 @@ You are a low-effort subagent performing a manual source-code audit for only thi
 For each file, check:
 - What user-facing, system, or build responsibility does this file appear to own?
 - If it defines interface, what visible controls, fields, navigation items, and messages does it expose?
+- Which requirements, public APIs, package exports, commands, routes, events, jobs, schedulers, configuration keys, schemas, migrations, feature flags, build/install paths, deployment paths, and recovery paths does it define or help fulfill?
+- Trace each applicable responsibility from registration or entry point through validation and domain logic to dependencies, persistence or side effects, observable output, failure/recovery behavior, authorization/trust checks, and verification. A present symbol or test name is a lead, not proof that the path works.
 - Is anything stubbed, TODO-only, unreachable, mocked as real behavior, dead-ended, or only partially wired?
+- Is configuration parsed but ignored, a route/job/export implemented but never registered, state described as saved but kept only in memory, an exception swallowed into apparent success, authorization enforced only in presentation code, a production boundary backed by fixtures/mocks, or lifecycle behavior such as migration, rollback, retry, cancellation, cleanup, backup, or recovery missing?
+- Even when no marker advertises a gap, does the code return a hard-coded value where the contract requires a calculation, ignore parameters or parsed data, use a constant status/identifier/result for every case, leave a branch or lifecycle phase unwired, pass data through plumbing without invoking the real dependency, or test only response shape without proving the intended state change or outcome?
 - Could the implementation violate common industry expectations for correctness, reliability, security, accessibility, performance, maintainability, or testability?
 - Could a user reasonably expect behavior that this code does not fully provide?
 - Does this code fully provide the intended feature, UI element, journey step, state, handler, persistence path, permission path, and test evidence it implies?
@@ -1918,6 +2011,39 @@ One row per file or range unit listed above:
 | --- | --- | --- | --- |
 | `path`, `path#Lstart-Lend`, or `path#Bstart-end` | CHECKED or UNCHECKED | `sha256 from Files You Own` | one-line purpose |
 
+## Implementation Inventory
+Include at least one row for every file or range unit listed above, using the exact unit id. Add a separate row for every distinct contract, responsibility, entry point, calculation, state transition, integration, or operational path in that unit; repeat the unit id as needed and assign sequential unique Contract IDs in the `batch_<3+ digits>:C<3+ digits>` namespace. Do not truncate counters after 999: `batch_1000:C1000` is valid. You may inspect adjacent callers and callees for context, but do not claim coverage for files outside this batch.
+
+| File/unit | Contract ID | Contract/responsibility | Entrypoints/source anchors | Implementation/data/side-effect trace | Failure/edge/permission/recovery trace | Verification evidence | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `path`, `path#Lstart-Lend`, or `path#Bstart-end` | `batch_<3+ digits>:C<3+ digits>` (for example `batch_{batch_id:03d}:C001`) | one concrete responsibility; Basis: public-contract — `docs/requirements.md#L12-L18`; Discovery: parsed — `definition@L12:C5` or Discovery: manual — `manually enumerated source reference` | concrete backticked symbols/tokens from the assigned source unit; every parsed definition uses its backticked occurrence anchor such as `definition@L12:C5` (or `definition@B123` for a byte unit); use the unit SHA-256 only for an empty/non-text byte unit | `pass —` / `gap —` / `blocked —` / `not applicable —` then entry/registration -> validation/core logic -> dependency/persistence/side effect -> observable outcome | the same status prefix, then concrete failure, edge, authorization, trust, retry, rollback, cancellation, cleanup, or justified non-applicability evidence | the same status prefix, then `evidence-type: test`, `evidence-type: runtime`, or `evidence-type: source-only`; when test/runtime, one `evidence-ref: ...` declaration; when test/runtime PASS, one explicit `outcome: ...` or `result: ...`; exactly one concrete `counterfactual: ...` or `invariance: ...`; and a named behavior check tied to the anchors | PASS, GAP, or BLOCKED |
+
+Every `Contract/responsibility` cell must include exactly one explicit basis and
+one discovery statement. Use `Basis: <kind> — <concrete backticked reference>`,
+where `<kind>` is `user-requirement`, `acceptance-criterion`,
+`recorded-decision`, `public-contract`, `interface-promise`,
+`caller-contract`, `schema-invariant`, `operational-contract`, or
+`source-inferred`. The first eight kinds identify authoritative intent;
+`source-inferred` must be labeled honestly when no authoritative contract is
+available. For every non-`source-inferred` kind, every backticked Basis
+reference must resolve to a manifest-owned repository file, optionally with a
+precise `#Lx-Ly`, `#Bx-By`, or `#symbol` suffix. A user statement that was not
+materialized in a queued requirement or decision artifact cannot be presented
+as mechanically authenticated: use honest `source-inferred`/manual discovery
+or mark the contract `BLOCKED`. Use `Discovery: parsed — ...` only when the row cites a recognized
+occurrence-aware named-definition anchor in its assigned source. Format the
+anchor as `<name>@L<absolute-line>:C<column>`, or `<name>@B<absolute-byte>` for
+a byte-range unit, and repeat that exact backticked anchor in the row's source
+anchors, implementation trace, and verification evidence. Every occurrence
+requires its own row: two methods named `__init__` at different coordinates are
+two responsibilities and cannot share one row. Otherwise use `Discovery:
+manual — ...` and cite what was manually enumerated. Every high-confidence named definition requires its own row. Declarative, unsupported, or unparsed
+responsibilities require manual discovery. If they cannot be manually
+enumerated, record `BLOCKED` and the exact unblock condition rather than a clean
+result.
+
+Begin each of the three trace/evidence cells with exactly `pass —`, `gap —`, `blocked —`, or `not applicable —`. Set `Result` mechanically: any `gap` cell means `GAP`; otherwise any `blocked` cell means `BLOCKED`; otherwise use `PASS`. Every `Verification evidence` cell must declare exactly one `evidence-type: test`, `evidence-type: runtime`, or `evidence-type: source-only` and exactly one concrete `counterfactual: ...` or `invariance: ...`. A `test` claim also requires exactly one `evidence-ref: ...` declaration containing only backticked repo-relative test source path(s) present in the manifest. A `runtime` claim requires the same declaration with only backticked `evidence:<id>` reference(s) bound to valid audit artifacts in `visual_evidence.json`; never invent runtime artifacts. Every `PASS` using test or runtime evidence additionally requires exactly one explicit `outcome: ...` or `result: ...` statement naming what the cited check observed, not merely that it passed. A counterfactual states which changed input, configuration, state, dependency response, or failure must change the result; an invariance explains why the result must remain constant. `PASS` for persistence, integration, external-effect, or success claims requires test or runtime evidence and must never use `source-only`. A `PASS` row must mark both `Implementation/data/side-effect trace` and `Verification evidence` as `pass`; only a genuinely inapplicable failure/edge/permission/recovery path may be `not applicable`, and an all-`not applicable` row is never a pass. Use `PASS` only when that one responsibility is semantically implemented—not merely present or free of TODO markers—and the row cites concrete behavior-specific verification evidence. Follow inputs and configuration into the real calculation/domain behavior, state/persistence or external side effect, and observable result. Inventory every high-confidence named definition occurrence in the assigned source in its own responsibility row; do not cover only a working helper while omitting another entry point or collapse same-name methods. Use `GAP` for hard-coded substitutes, ignored inputs, incomplete plumbing, fake success, memory-only persistence presented as durable, test fixtures/mocks on production paths, missing branches/lifecycle work, missing/partial/unverified/unreachable behavior, or tests that prove only shape. Use `BLOCKED` only when an external condition prevents determining or completing the path, and name that condition. Every `GAP` or `BLOCKED` row must have a finding bound to the real repository file and cite its Contract ID; include the exact range unit too when applicable. Documentation, configuration, assets, package markers, and declarative files still require a concrete responsibility/consumer trace rather than an implementation-inventory sentinel.
+
 ## Interface Inventory
 For batches with interface-relevant files, include one or more rows for every interface-relevant file:
 | File | Surface | Visible text/control/message | Expected behavior path | Actual implementation notes |
@@ -1928,7 +2054,10 @@ For batches without interface-relevant files, write exactly:
 No interface-relevant files in this batch.
 
 ## Findings
-Use one subsection per issue:
+Use one subsection per independently closable issue. Every finding must cite
+exactly one `GAP` or `BLOCKED` Contract ID from this batch; never combine
+multiple responsibilities or completion outcomes in one block. Reissue
+compound issues as separate atomic blocks before returning the report:
 ### P0/P1/P2/P3 - Short title
 - Files: `path`
 - Evidence: concrete code detail, symbol, route, state, TODO, or behavior
@@ -2009,6 +2138,12 @@ def previous_generated_artifacts(out_dir: Path, marker: dict | None) -> list[str
                 for value in (journey.get("source_prompt"), journey.get("visual_prompt"))
                 if isinstance(value, str)
             ] if isinstance(journey, dict) else []
+            lead_reconciliation = manifest.get("lead_reconciliation", {})
+            lead_prompt = (
+                [lead_reconciliation.get("prompt")]
+                if isinstance(lead_reconciliation, dict) and isinstance(lead_reconciliation.get("prompt"), str)
+                else []
+            )
             archived_reports = []
             archived_reports_dir = manifest.get("archived_reports_dir")
             if isinstance(archived_reports_dir, str):
@@ -2022,6 +2157,7 @@ def previous_generated_artifacts(out_dir: Path, marker: dict | None) -> list[str
                 "excluded_files.json",
                 "manifest.json",
                 "queue_complete.json",
+                *lead_prompt,
                 *journey_prompts,
                 *archived_reports,
                 *prompts,
@@ -2040,6 +2176,7 @@ def previous_generated_artifacts(out_dir: Path, marker: dict | None) -> list[str
         "queue_complete.json",
         "journey_audit.md",
         "visual_journey_audit.md",
+        "lead_reconciliation.md",
         *fallback_prompts,
     ]
 
@@ -2092,7 +2229,13 @@ def generated_artifact_path_is_safe(out_dir: Path, path: Path) -> bool:
 
 
 def clean_generated_artifacts(out_dir: Path, marker: dict | None) -> None:
-    for name in [*previous_generated_artifacts(out_dir, marker), "audit_complete.json.tmp", "queue_complete.json.tmp"]:
+    recovery_names = set(previous_generated_artifacts(out_dir, marker)) | KNOWN_GENERATED_ARTIFACTS
+    for candidate in out_dir.iterdir():
+        if re.fullmatch(r"batch_\d{3,}\.md", candidate.name) or re.fullmatch(
+            r"reports\.stale\.\d{8}T\d{6}Z(?:\.\d+)?", candidate.name
+        ):
+            recovery_names.add(candidate.name)
+    for name in sorted(recovery_names):
         if not is_safe_generated_artifact_name(name):
             continue
         path = out_dir / name
@@ -2137,6 +2280,7 @@ def write_completion_marker(out_dir: Path, manifest: dict) -> None:
 
 def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
     journey = manifest.get("journey_audit", {})
+    lead_reconciliation = manifest.get("lead_reconciliation", {})
     journey_required = bool(journey.get("required"))
     pruned_hints = manifest.get("pruned_directory_review_hints", [])
     ledger = {
@@ -2200,6 +2344,12 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
                 }
                 for item in manifest.get("high_risk_files", [])
             ],
+        },
+        "lead_reconciliation": {
+            "status": "pending",
+            "prompt": lead_reconciliation.get("prompt"),
+            "report": lead_reconciliation.get("report"),
+            "notes": "Required lead-owned cross-file semantic implementation reconciliation.",
         },
         "journey_source_worker": {
             "status": "pending" if journey_required else "not-applicable",
@@ -2398,6 +2548,8 @@ def write_outputs(
         ownership_marker = read_ownership_marker(out_dir)
     clean_generated_artifacts(out_dir, ownership_marker)
     reports_dir = out_dir / "reports"
+    if reports_dir.is_symlink():
+        raise ValueError(f"Audit reports path must not be a symlink: {reports_dir}")
     archived_reports_dir = None
     archived_reports_name = None
     if reports_dir.exists() and any(reports_dir.iterdir()):
@@ -2463,6 +2615,16 @@ def write_outputs(
         "visual_prompt": "visual_journey_audit.md" if journey_required else None,
         "visual_report": "reports/visual_journey_audit.md" if journey_required else None,
     }
+    lead_reconciliation = {
+        "required": True,
+        "worker": "lead_reconciliation",
+        "prompt": "lead_reconciliation.md",
+        "report": "reports/lead_reconciliation.md",
+    }
+    (out_dir / "lead_reconciliation.md").write_text(
+        render_lead_reconciliation_prompt(repo, run_id),
+        encoding="utf-8",
+    )
     if journey_required:
         (out_dir / "journey_audit.md").write_text(
             render_journey_source_prompt(repo, run_id, interface_entries),
@@ -2481,6 +2643,8 @@ def write_outputs(
         str(out_dir / "manifest.json"),
         "--reports",
         str(reports_dir),
+        "--receipt-out",
+        str(out_dir / VERIFICATION_RECEIPT_NAME),
     ]
     verifier_command = " ".join(shlex.quote(arg) for arg in verifier_args)
     generated_artifacts = [
@@ -2489,6 +2653,8 @@ def write_outputs(
         "excluded_files.json",
         "manifest.json",
         "queue_complete.json",
+        "lead_reconciliation.md",
+        VERIFICATION_RECEIPT_NAME,
         *(
             ["journey_audit.md", "visual_journey_audit.md", "visual_evidence.json"]
             if journey_required
@@ -2522,6 +2688,7 @@ def write_outputs(
         "coverage_units": [asdict(item) for item in units],
         "batches": batch_records,
         "journey_audit": journey_audit,
+        "lead_reconciliation": lead_reconciliation,
         "coverage_invariants": {
             "unique_batched_file_count": len(set(all_batched_paths)),
             "unique_batched_unit_count": len(set(all_batched_units)),
@@ -2560,6 +2727,7 @@ def render_index(repo: Path, out_dir: Path, manifest: dict) -> str:
 
     invariant = manifest["coverage_invariants"]["all_source_files_queued_exactly_once"]
     journey = manifest.get("journey_audit", {})
+    lead_reconciliation = manifest.get("lead_reconciliation", {})
     if journey.get("required"):
         journey_prompts = (
             f"- Source journey worker prompt: `{journey['source_prompt']}` -> `{journey['source_report']}`\n"
@@ -2601,7 +2769,7 @@ All source files queued exactly once: **{str(invariant).lower()}**
 1. Run the lead architectural audit with extra-high effort.
 2. Spawn one low-effort subagent per batch prompt, in waves if needed.
 {journey_instruction}
-4. Require each subagent to return coverage for every file or range unit in its batch.
+4. Require each subagent to return file coverage and one or more source-backed `Implementation Inventory` rows for every file or range unit in its batch, with one uniquely identified row per distinct responsibility.
 5. Confirm `queue_complete.json` exists and its `run_id` matches `manifest.json` before dispatching batches.
 6. Fill `effort_ledger.json` with the subagent capability check, lead effort status, per-batch agent/effort status, and journey worker status.
 7. Inspect `excluded_files.json`; resolve any `scope_warning: true` exclusions and review any `pruned_directory_review_hints` before claiming full coverage.
@@ -2609,8 +2777,10 @@ All source files queued exactly once: **{str(invariant).lower()}**
    `{manifest['verifier_command']}`
 9. If the verifier reports missing reports or ledger/report drift after an interrupted run, treat the verifier and manifest as authoritative: rerun the missing batch/journey prompts, save the exact report filenames, update `effort_ledger.json`, and rerun the verifier before final synthesis.
 10. Requeue missing or unchecked files before final synthesis.
-11. Validate high-impact findings directly before placing them in the implementation plan.
-12. Include interface and journey findings for controls, fields, menu items, routes, visible decision information, messages, intended features, implementation paths, and tests that imply missing or wrong behavior.
+11. Reconcile implementation rows across batches into a feature/entry-point inventory. Trace every promised feature, API, command, route, job, event, configuration, schema/migration, build/deploy path, and operational lifecycle through registration, core logic, data/integration effects, authorization, failure/recovery, observable outcome, and verification; file coverage alone is not feature-completeness evidence.
+12. Complete `{lead_reconciliation.get('prompt', 'lead_reconciliation.md')}` and save the exact verified report `{lead_reconciliation.get('report', 'reports/lead_reconciliation.md')}`. Record every lead-only cross-file gap as an atomic finding there, including marker-free semantic gaps.
+13. Validate every candidate finding directly before placing it in the implementation plan or a completion-ledger projection.
+14. Include implementation, interface, and journey findings for controls, fields, menu items, routes, visible decision information, messages, intended features, implementation paths, and tests that imply missing or wrong behavior.
 
 ## Batches
 
@@ -2627,9 +2797,11 @@ All source files queued exactly once: **{str(invariant).lower()}**
 - `manifest.json`: source-file inventory and coverage invariants.
 - `{ARTIFACT_MARKER}`: ownership marker that lets reruns clean only harness-owned directories.
 - `queue_complete.json`: queue-generation marker written only after queue artifacts are complete; it is not proof that subagent reports were completed or verified.
+- `{VERIFICATION_RECEIPT_NAME}`: written only by a passing stable verifier run and required for manifest-bound consolidation.
 - `effort_ledger.json`: required lead/subagent capability and effort ledger.
 - `excluded_files.json`: skipped files and reasons.
 - `reports/`: required destination for returned `batch_###.md` subagent reports.
+- `lead_reconciliation.md`: required lead prompt; its exact report is `reports/lead_reconciliation.md`.
 - `journey_audit.md` and `visual_journey_audit.md`: generated when interface-relevant files exist and tracked in `effort_ledger.json`.
 - `batch_###.md`: exact subagent prompts, including range unit ids for oversized files when needed.
 """

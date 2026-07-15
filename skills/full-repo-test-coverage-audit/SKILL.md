@@ -51,7 +51,9 @@ Treat documented product intent, confirmed user journeys, source-backed feature 
      --markdown-out <audit-output>/consolidated-findings.md
    ```
 
-   This deduplicates by primary file and summary, ranks P0→P3, and cites the source reports; it supports lead synthesis rather than replacing it.
+   This conservatively deduplicates only findings whose immutable fields all
+   match, ranks P0→P3, and cites the source reports; it supports lead synthesis
+   rather than replacing it.
 
 ## Batch Worker Review Rules
 

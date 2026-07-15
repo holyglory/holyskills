@@ -1,15 +1,25 @@
 ---
 name: full-repo-audit
-description: Run a manifest-verified repository source, interface, and user-journey audit with a lead architectural review, deterministic file batches, explicit high-risk lead rechecks, real hashed visual evidence, and honest runtime capability/effort provenance. Use for incomplete features, TODO/stub behavior, architecture and security risk, misleading UI promises, unclear journeys, missing implementation/tests, and prioritized repository-wide plans.
+description: Run a manifest-verified repository implementation, source, interface, and user-journey audit with semantic end-to-end contract tracing, deterministic file batches, explicit lead rechecks, real hashed visual evidence, and honest runtime capability/effort provenance. Use for incomplete features, hidden implementation gaps, hard-coded substitutes, partial plumbing, TODO/stub behavior, architecture and security risk, misleading UI promises, missing tests, and prioritized repository-wide completion ledgers or plans.
 ---
 
 # Full Repo Audit
 
 ## Overview
 
-Run a multi-level audit: the lead agent performs the architectural, product-flow, and interface review; low-effort subagents manually inspect every source file in deterministic batches; separate UI journey workers inspect source-level journeys and visual testability. Use the harness script to create a coverage manifest and worker prompts, then reconcile all results before producing the final implementation plan.
+Run a multi-level audit: the lead agent performs the architectural, product-flow, implementation, and interface review; low-effort subagents manually inspect every source file in deterministic batches; separate UI journey workers inspect source-level journeys and visual testability. Use the harness script to create a coverage manifest and worker prompts, then reconcile file traces into complete feature and entry-point traces before producing the final implementation plan.
 
 Treat documented product intent, confirmed user journeys, source-backed feature promises, visible UI elements, and expected tests as one complete product contract. Every intended journey, feature, route, control, state, handler, persistence path, permission path, error path, and verification path must be present, implemented, and tested; otherwise report the gap.
+A checked file and matching hash prove review coverage, not implementation completeness. Build a source-backed inventory of every promised feature and public or operational entry point, assign every distinct file-level responsibility a unique stable audit-local `Contract ID`, then manually trace each item through all applicable implementation layers. Do not equate the absence of `TODO`, `NotImplemented`, placeholder vocabulary, or test failures with completeness. Present symbols, registrations, and tests are leads; prove what the code actually calculates, persists, calls, changes, returns, exposes, and recovers from.
+
+For every contract item, explicitly account for `entry-registration`, `core-logic`, `data-lifecycle`, `integration-boundary`, `authorization-trust`, `failure-recovery`, `observable-outcome`, `operational-lifecycle`, and `verification` as `pass`, `gap`, `blocked`, or `not applicable`, with concrete source or runtime evidence. Any `gap` or `blocked` result needs a finding. A clean implementation claim requires every inventoried contract item to be accounted for; UI review cannot substitute for this trace.
+Every batch responsibility records why its expected behavior is authoritative or
+honestly source-inferred, how it was discovered, and a verification
+counterfactual or invariance. Source-only evidence cannot close a PASS for
+persistence, integration, external effects, or success. The lead independently
+reopens and rechecks every batch PASS anchor; this can be incremental, but a
+sample cannot support full semantic coverage.
+Hard reporting gate for every repo: the final audit's `## Implementation Findings` must contain those nine literal trace labels with evidence-backed statuses for every inventoried `Contract ID`, or a compact table that maps every item to all nine statuses. A clean audit still includes the complete trace table, followed by `No confirmed findings.`; the sentinel never replaces the table. If any item or label is absent, rewrite the final report before returning it.
 Hard reporting gate for UI-bearing repos: the final audit must contain the
 literal checklist labels `badge-detail`, `row-hit-target`,
 `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`,
@@ -34,9 +44,18 @@ escalate to screenshot-based visual review or `ui-implementation-audit`.
 - Keep a lead-recorded effort/capability ledger. Every capability and effort claim needs a claim basis (`runtime-attested`, `tool-schema-inspected`, `self-reported`, or `manual-fallback`), a consistent claim label, and concrete provenance/evidence. The verifier checks ledger consistency, not hidden scheduler state.
 - If the lead x-high gate is satisfied but the runtime cannot spawn worker subagents or set low worker effort, continue only in **manual fallback mode** for worker coverage: disclose the limitation, run each generated batch sequentially in the current agent, save one report per batch under `<audit-output>/reports/batch_###.md`, verify coverage with `verify_audit_results.py`, and label final coverage as `manual fallback coverage` rather than subagent coverage.
 - Keep subagent ownership disjoint: one batch prompt per subagent, no overlapping file ownership unless a batch must be rechecked.
-- Keep the audited repo read-only unless the user separately asks to implement the resulting plan. Generated audit artifacts are allowed, but place them outside the audited repo by default and disclose their path.
+- Keep the audited repo read-only by default. Every verified artifact-backed
+  audit creates and fully reviews an exact external completion-ledger
+  projection, including an empty projection for a clean audit; creating that
+  artifact does not authorize repository mutation. An explicit user request to
+  record, write, update, or reconcile audit findings—or an applicable project
+  instruction that already requires active findings to be recorded—permits
+  only project-root `CompletionLedger.md`; it does not authorize implementing
+  findings, changing any other source, committing, or pushing. Place other
+  audit artifacts outside the audited repo and disclose their path.
 - If the user explicitly forbids all file writes or artifact creation, do not run the harness or save reports unless they authorize audit artifacts. Perform a chat-only manual audit, label coverage as `chat-only unverified coverage`, and state that manifest/report verification was not run.
 - Do not claim every file was checked until the manifest coverage and subagent coverage reports match.
+- Never write raw worker or lead findings directly to `CompletionLedger.md`. Verify the batch, journey, visual, and `reports/lead_reconciliation.md` artifacts; reconcile cross-file traces; directly review every candidate; deduplicate by completion outcome; and dispose every candidate before any authorized ledger update.
 
 ## Workflow
 
@@ -48,7 +67,7 @@ escalate to screenshot-based visual review or `ui-implementation-audit`.
 
 2. **Generate the audit queue**
    - Resolve the audited repo to an absolute path before generation and echo it in your working notes.
-   - Resolve `FULL_REPO_AUDIT_SKILL_DIR` to the directory containing this `SKILL.md` from the loaded skill path. Preflight the skill harness before starting: verify `scripts/build_audit_batches.py`, `scripts/verify_audit_results.py`, and `scripts/self_test.py` exist under `$FULL_REPO_AUDIT_SKILL_DIR` and are readable, then run `python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/self_test.py"` unless the user explicitly forbids validation commands. If any companion script is missing or the self-test fails, stop and tell the user the skill harness is incomplete or failing instead of treating the failure as an audited-repo finding.
+   - Resolve `FULL_REPO_AUDIT_SKILL_DIR` to the directory containing this `SKILL.md` from the loaded skill path. Preflight the skill harness before starting: verify `scripts/build_audit_batches.py`, `scripts/verify_audit_results.py`, `scripts/update_completion_ledger.py`, and `scripts/self_test.py` exist under `$FULL_REPO_AUDIT_SKILL_DIR` and are readable, then run `python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/self_test.py"` unless the user explicitly forbids validation commands. If any companion script is missing or the self-test fails, stop and tell the user the skill harness is incomplete or failing instead of treating the failure as an audited-repo finding.
    - Run:
      ```bash
      REPO_ROOT="${REPO_ROOT:-$PWD}"
@@ -64,7 +83,8 @@ escalate to screenshot-based visual review or `ui-implementation-audit`.
    - Use `--run-id <stable-token>` only when an external orchestrator or repeated audit loop needs artifacts to share a caller-supplied run id; otherwise let the harness generate one.
    - Use `--batch-size` and `--max-batch-bytes` to keep batches small enough for manual inspection. Oversized UTF-8 multi-line files are split into line-range coverage units; long/minified single-line or non-UTF-8 files are split into byte-range coverage units. Dispatch and verify each unit instead of treating a very large file as one undifferentiated worker task.
    - Confirm `queue_complete.json` exists, its `phase` is `queue_generated`, and its `run_id` matches `manifest.json` before dispatching subagents. This marker means queue generation completed; it is not proof that the audit reports are complete.
-   - Fill `effort_ledger.json` as you dispatch and reconcile: subagent capability check, spawn tool, capability notes/evidence, lead effort status, fallback status, pruned-directory review status/notes when required, journey worker agent id/effort/status/report, per-batch agent id/effort/status/report, per-batch runtime provenance, and the ledger's self-reported provenance scope.
+   - Confirm the manifest's `lead_reconciliation` entry points to generated `<audit-output>/lead_reconciliation.md`; this is the mandatory prompt for the lead's verified cross-file report, not an optional note.
+   - Fill `effort_ledger.json` as you dispatch and reconcile: subagent capability check, spawn tool, capability notes/evidence, lead effort status, lead-reconciliation status/report, fallback status, pruned-directory review status/notes when required, journey worker agent id/effort/status/report, per-batch agent id/effort/status/report, per-batch runtime provenance, and the ledger's self-reported provenance scope.
    - Review every `manifest.json.high_risk_files` entry directly as lead. Complete the exact `lead_high_risk_review.files[]` row with the manifest hash, risk reasons, concrete source evidence, and security/data-loss/recovery notes. Batch-worker review alone cannot close a high-risk file.
    - Inspect `excluded_files.json` after generation and resolve any `scope_warning: true` rows before claiming full coverage. If `manifest.json` has `pruned_directory_review_hint_count > 0`, inspect `pruned_directory_review_hints`, requeue first-party source-like samples when needed, and record one structured `pruned_directory_review.decisions[]` entry per hinted path in `effort_ledger.json` using `requeued`, `excluded-with-rationale`, or `out-of-scope-with-user-confirmation` plus a concrete rationale.
    - A scope warning is verifier-cleared only by re-running the queue with the needed include flag or requeuing the specific file in a new/manual batch. If the user confirms an exclusion or the lead downgrades the final coverage claim, keep the verifier failure visible and list the exclusion explicitly.
@@ -72,6 +92,11 @@ escalate to screenshot-based visual review or `ui-implementation-audit`.
 3. **Run the lead architectural pass**
    - Inspect the repo structure, docs, package/build files, routes, schemas, tests, deployment config, entry points, and domain terminology.
    - Identify intended product surfaces, feature families, UI elements, user journeys, and test expectations before reading subagent findings.
+   - Build an implementation-contract inventory from requirements, acceptance criteria, help and visible promises, public APIs/package exports, commands, routes, event consumers, scheduled jobs, workers, configuration, schemas/migrations, feature flags, build/install/package paths, deployment/upgrade/backup/recovery paths, and operational documentation. Give every distinct file-level responsibility row its own unique stable audit-local `Contract ID`; never reuse an ID across rows. The lead reconciliation groups the relevant IDs when one end-to-end contract crosses files or batches.
+   - For every contract item, trace `entry-registration`, `core-logic`, `data-lifecycle`, `integration-boundary`, `authorization-trust`, `failure-recovery`, `observable-outcome`, `operational-lifecycle`, and `verification`. Mark each `pass`, `gap`, `blocked`, or `not applicable` with concrete `path#symbol`, configuration, test, command, or runtime evidence. Treat dynamic/reflection/generated registration as requiring runtime or generated-output evidence rather than assuming it works from source shape.
+   - For each responsibility, identify its contract basis as `user-requirement`, `acceptance-criterion`, `recorded-decision`, `public-contract`, `interface-promise`, `caller-contract`, `schema-invariant`, `operational-contract`, or honestly `source-inferred`, and cite the concrete reference. State a counterfactual whose changed input/configuration/state/dependency/failure should change the result, or an invariance that explains why the result must remain constant.
+   - Compare intended semantics with actual behavior even when the code looks finished. Look for ignored parameters or parsed configuration; constants standing in for required calculations, selection, identifiers, status, or state; functions that always return success/defaults; branches or lifecycle phases that never run; route/job/export implementations that are never registered; adapters or plumbing that transform data without invoking the real dependency; local-memory or temporary writes presented as durable persistence; read and write paths that do not meet; swallowed errors; presentation-only authorization; production paths backed by fixtures, synthetic data, null adapters, or mocks; missing migrations/rollback/retry/cancellation/cleanup; and tests that assert only type, shape, or status without proving the intended outcome.
+   - Do not label an intentional constant, pure function, abstract/protocol method, documented null adapter, unsupported-platform error, test-only fixture, or read-only path incomplete without contract evidence that more behavior is required. Record ambiguity as an open question, not a confirmed finding.
    - Look for cross-cutting risks: missing integration paths, incomplete intended features, inconsistent state models, auth/permission drift, data migration gaps, error handling, observability, accessibility, security, performance, reliability, and test strategy.
    - Build an interface inventory from routes, pages, components, templates, command palettes, menus, forms, message catalogs, and visible copy.
    - Trace important controls and messages to handlers, state transitions, API calls, persistence, navigation, permission checks, and error/loading/empty states.
@@ -89,24 +114,32 @@ escalate to screenshot-based visual review or `ui-implementation-audit`.
 4. **Dispatch low-effort workers**
    - Open the generated `audit_index.md`.
    - For each `batch_###.md`, spawn one low-effort subagent and pass the entire prompt file content.
+   - Require at least one `Implementation Inventory` row for every owned file or range unit and one separate row for every distinct responsibility found there. A unit may therefore appear in multiple rows. Each row has a unique stable `Contract ID` in deterministic `batch_###:C###` namespace, numbered within its owning batch, plus concrete source anchors, ordered implementation/data/side-effect flow, failure/permission/recovery handling, verification evidence, and `PASS`, `GAP`, or `BLOCKED`; marker searches, one catch-all file row, or a generic purpose summary are not substitutes. In the responsibility cell, require an enumerated `Basis: <kind> — <reference>` and `Discovery: parsed|manual — <assigned-unit anchor>`. Parsed discovery requires a recognized named definition; declarative, unsupported, and unparsed responsibilities require manual enumeration, and inability to enumerate is `BLOCKED`. Begin all three trace/evidence cells with `pass`, `gap`, `blocked`, or `not applicable`; derive the row result from them, and inventory every high-confidence named source definition in its own row so a working helper cannot hide an omitted entry point.
    - When generated, spawn a separate low-effort source journey worker with `journey_audit.md`. This worker checks journey documentation, drafts missing journeys, estimates UI element relevance, and traces navigation/decision information through UI source.
    - When generated, spawn a separate visual journey worker with `visual_journey_audit.md`. If the repo is UI-heavy or screenshots are available, the lead must review the visual findings directly or rerun the dedicated `ui-implementation-audit`; do not let low-effort visual notes be the only basis for declaring a UI usable.
-   - Tell subagents not to edit files and to report coverage for every listed file.
+   - Tell subagents not to edit files and to report file coverage plus implementation coverage for every listed unit. They may inspect adjacent callers/callees for context, but findings and ownership remain bound to their assigned files.
    - Run in waves if the repo is large; keep a ledger of batch id, agent id, status, and returned checked files.
    - If subagents are unavailable, use manual fallback mode: process each `batch_###.md` and generated journey prompt yourself, save the required reports under `<audit-output>/reports/`, and keep the reduced coverage label through the final report.
 
 5. **Reconcile coverage**
    - Compare `manifest.json` source files, coverage units, run id, and SHA-256 fingerprints with every subagent `File Coverage` table. For range units, the coverage row must use the exact unit id such as `path#Lstart-Lend` or `path#Bstart-end`; the exact unit id must also appear in `Findings` or `No Finding Notes` so the verifier can prove that specific range was checked, while the finding `Files` field still references the real repo-relative file path.
+   - Compare the same exact coverage-unit set with every batch's `Implementation Inventory`. Require at least one row per unit, permit repeated units for separate responsibilities, and reject missing units or high-confidence named definitions, duplicate or generic `Contract ID`s, extra units, fabricated or source-unanchored basis/discovery rows, trace/result contradictions, missing or duplicate evidence type/counterfactual/invariance declarations, source-only PASS for stateful/external claims, `PASS` without concrete verification, and any non-atomic result/finding mapping. Every `GAP`/`BLOCKED` row has exactly one file-bound finding, and every finding cites exactly one `GAP`/`BLOCKED` Contract ID; a compound outcome must be reissued as separate rows/findings. A valid table proves that the manual trace was recorded, not that the judgment is automatically correct.
    - Confirm required journey reports exist at `reports/journey_audit.md` and `reports/visual_journey_audit.md` when interface-relevant files were queued, and that `effort_ledger.json` records those workers as completed or manual fallback.
-   - Save one subagent Markdown report per batch under `<audit-output>/reports/` using the exact filename `batch_###.md`, then run:
-     ```bash
-     python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/verify_audit_results.py" --manifest <audit-output>/manifest.json --reports <audit-output>/reports
-     ```
-   - Treat verifier failures for unresolved scope warnings, incomplete effort or journey-worker ledger entries, queue marker mismatches, missing or boilerplate interface inventory rows, missing high-confidence visible controls/messages, generic interface trace rows, placeholder/stub source omissions, malformed or boilerplate finding fields, out-of-batch finding file references, missing files, `UNCHECKED` rows, missing/mismatched SHA-256 values, stale run ids, changed files, unavailable repo source for source-backed checks, excluded-file digest drift, or directory-only descriptions as blockers before final synthesis. Every `scope_warning: true` row is intentionally unresolved until it is requeued or cleared by regenerating the queue.
-   - If a run is interrupted or the ledger claims a worker is complete but its report file is missing, treat the verifier as authoritative and recover from the manifest rather than the stale ledger: inspect `manifest.json` and `reports/`, mark missing batch/journey reports back to pending or rerun them, save the exact report filenames, update `effort_ledger.json` with the new agent/fallback status, and rerun the verifier. Do not claim completion from ledger status alone.
-   - Requeue any source-like unknown file or source-backed UI asset needed to resolve a warning by regenerating the queue with `--include-file`, `--include-glob`, or `--include-assets`, then rerun the affected batch and verifier.
+   - Save one subagent Markdown report per batch under `<audit-output>/reports/` using the exact filename `batch_###.md`.
    - Inspect suspicious high-impact findings directly as lead before including them.
+   - Reconcile all responsibility-level rows by `Contract ID` into the lead implementation-contract inventory. Independently reopen and recheck every batch PASS anchor against its source, callers, registrations, persistence, integrations, and verification until every contract item has a complete trace; incremental waves are allowed, but sampling is not. Do not infer end-to-end completeness by merging file-local `PASS` rows.
+   - Complete generated `<audit-output>/lead_reconciliation.md` and save the result as required `<audit-output>/reports/lead_reconciliation.md`. It contains `Run ID`, `Worker` with exact value `lead_reconciliation`, `Cross-File Contract Trace`, atomic `Findings`, and `Open Questions`. In `Cross-File Contract Trace`, assign every file-local, cross-file, public, or operational contract a unique sequential `lead:C###` ID; map every batch `Contract ID` to exactly one lead row; cite every mapped source and concrete evidence; and give evidence-backed `pass`, `gap`, `blocked`, or `not applicable` statuses for all nine implementation trace labels. The lead verification cell records its independent recheck with exactly one evidence type and counterfactual or invariance; source-only evidence cannot close a stateful or external PASS. Derive the overall `Result` from those statuses and never hide a mapped batch `GAP` or `BLOCKED`. Use the exact `No findings.` sentinel when clean. The verifier must validate this manifest-declared artifact; a final response or private lead notes cannot substitute for it.
    - When visual checks are applicable, populate `<audit-output>/visual_evidence.json`. Reports must cite stable `evidence:<id>` values. Each screenshot/native snapshot must be a real confined file with verified SHA-256, MIME, dimensions, route, state, viewport, and capture tool. Web audits must bind the actual formal-verifier JSON, including checked-page coverage and visible scrollbar inventory. Filenames or words such as “screenshot” are not evidence.
+   - Run the verifier only after all required batch, journey, visual, and lead-reconciliation reports are saved:
+     ```bash
+     python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/verify_audit_results.py" \
+       --manifest <audit-output>/manifest.json \
+       --reports <audit-output>/reports \
+       --receipt-out <audit-output>/verification_receipt.json
+     ```
+   - Treat verifier failures for unresolved scope warnings, incomplete effort or journey-worker ledger entries, queue marker mismatches, missing or invalid implementation inventories or lead reconciliation, missing or boilerplate interface inventory rows, missing high-confidence visible controls/messages, generic interface traces, placeholder/stub source omissions, malformed or boilerplate finding fields, out-of-batch finding file references, missing files, `UNCHECKED` rows, missing/mismatched SHA-256 values, stale run ids, changed files, unavailable repo source for source-backed checks, excluded-file digest drift, or directory-only descriptions as blockers before final synthesis. Every `scope_warning: true` row is intentionally unresolved until it is requeued or cleared by regenerating the queue.
+   - If a run is interrupted or `effort_ledger.json` claims a worker is complete but its report file is missing, treat the verifier as authoritative and recover from the manifest rather than stale effort records: inspect `manifest.json` and `reports/`, mark missing batch/journey/visual/lead-reconciliation reports back to pending or rerun them, save the exact report filenames, update `effort_ledger.json` with the new agent/fallback status, and rerun the verifier. Do not claim completion from effort-ledger status alone.
+   - Requeue any source-like unknown file or source-backed UI asset needed to resolve a warning by regenerating the queue with `--include-file`, `--include-glob`, or `--include-assets`, then rerun the affected batch, lead reconciliation, and verifier.
 
 6. **Synthesize the implementation plan**
    - For large repos, first consolidate findings mechanically instead of merging
@@ -114,16 +147,48 @@ escalate to screenshot-based visual review or `ui-implementation-audit`.
      ```bash
      python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/_vendor/full_repo_harness/merge_findings.py" \
        --reports <audit-output>/reports \
+       --manifest <audit-output>/manifest.json \
        --markdown-out <audit-output>/consolidated-findings.md \
        --json-out <audit-output>/consolidated-findings.json
      ```
-     This deduplicates findings that share a primary file and summary, ranks them
-     P0→P3, and records which reports raised each one. Use it as the starting
-     point for the lead synthesis; it does not replace lead judgment.
+     The manifest restricts input to the exact verified report allowlist and
+     hashes. The merger deduplicates only findings whose immutable fields all
+     match, ranks them P0→P3, and records which reports raised each one. Use it
+     as the starting point for lead synthesis; it does not replace lead judgment.
    - Deduplicate batch findings.
    - Separate confirmed issues from hypotheses and open questions.
+   - Directly inspect every consolidated candidate as lead, not only high-priority candidates. Assign exactly one disposition: `confirmed`, `duplicate`, `hypothesis`, `invalid`, or `out_of_scope`, with a concrete reason. Findings must be atomic before projection: if a worker or lead finding contains multiple independently completable obligations, reject and reissue the owning report with separate atomic findings, refresh lead reconciliation, rerun verification and consolidation, and only then project. Combine true duplicates through disposition; never simulate a split by editing or adding projection candidates.
    - Prioritize by user impact, correctness, security/reliability, blast radius, and implementation dependency order.
    - Produce an implementation plan with concrete verification steps that reproduce or demonstrate each gap across the intended product contract.
+
+7. **Project confirmed findings into the completion ledger**
+   - After `verify_audit_results.py` passes, create the consolidated findings and a lead-review projection outside the audited repo:
+     ```bash
+     python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/_vendor/full_repo_harness/merge_findings.py" \
+       --reports <audit-output>/reports \
+       --manifest <audit-output>/manifest.json \
+       --markdown-out <audit-output>/consolidated-findings.md \
+       --json-out <audit-output>/consolidated-findings.json \
+       --ledger-projection-out <audit-output>/completion_ledger_projection.json
+     ```
+   - Complete every projection disposition. After every candidate is disposed, set top-level `review_status` to `complete`, including when the candidate list is empty. Only `confirmed` unresolved implementation, verification, integration, limitation, improvement, or generalization obligations become ledger rows. Keep hypotheses, open questions, audit-environment limitations, exclusions, invalid findings, and resolved work outside the ledger. A concrete external blocker remains a row with `Blocked — <unblock condition>`.
+   - Map each confirmed atomic obligation to exactly one active row with `ID | Remaining work | Why it matters | Status | Verification`. Include priority and affected repo-relative paths concisely in `Remaining work`; state real impact in `Why it matters`; and give an end-to-end closure check in `Verification`. Raw evidence and audit chronology stay in the external artifacts.
+   - Preserve every unrelated existing active row. Reuse an existing ID only by marking the candidate `duplicate` of that row. Never remove a row merely because a later audit did not rediscover it, never prune during import, and never create or delete a ledger for a clean audit. Later implementation removes a row only in the same change that implements and verifies it.
+   - When ledger mutation is not authorized, keep the completed exact projection in the audit output and report `not applied`. When authorized, run the updater's read-only plan, review its candidate mapping and before/after hashes, then apply that exact plan:
+     ```bash
+     python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/update_completion_ledger.py" plan \
+       --repo <repo> --manifest <audit-output>/manifest.json \
+       --reports <audit-output>/reports \
+       --projection <audit-output>/completion_ledger_projection.json \
+       --out <audit-output>/completion-ledger-plan.json
+
+     python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/update_completion_ledger.py" apply \
+       --repo <repo> --manifest <audit-output>/manifest.json \
+       --reports <audit-output>/reports \
+       --projection <audit-output>/completion_ledger_projection.json \
+       --plan <audit-output>/completion-ledger-plan.json
+     ```
+   - The updater must not trust the receipt as proof by itself. During both plan and apply it must reopen the exact manifest-authorized report set, hold the manifest, reports, current source files, queue/exclusion/effort records, prompts, visual-evidence manifest, and referenced artifacts under no-follow guards, rerun `verify_audit_results.py`, validate every guard after the run, normalize only a proven `CompletionLedger.md`-only freshness mismatch, and require the canonical rerun result digest to equal the receipt's verifier-result digest. It must reject pending, omitted, or tampered candidates; malformed or symlinked ledgers; stale or forged receipts and plans; concurrent ledger drift; and source, report, companion, or evidence drift; preserve unrelated rows; write only project-root `CompletionLedger.md`; and verify the applied hash. Recording a finding is not fixing it and does not make the audited product ready.
 
 ## Subagent Result Requirements
 
@@ -133,8 +198,40 @@ Require each batch subagent to return:
 - `Batch ID`: the exact `batch_###` id.
 - `Batch Summary`: what the files collectively do.
 - `File Coverage`: one row per listed file with `CHECKED` or `UNCHECKED`, the exact SHA-256 from the batch prompt, and a one-line purpose.
+- `Implementation Inventory`: at least one row per owned file or range unit,
+  one row per high-confidence named source definition, and one row per distinct
+  responsibility, using the exact columns `File/unit`, `Contract ID`,
+  `Contract/responsibility`, `Entrypoints/source anchors`,
+  `Implementation/data/side-effect trace`,
+  `Failure/edge/permission/recovery trace`, `Verification evidence`, and
+  `Result`. Repeating a unit for separate responsibilities is required when
+  applicable, and each named definition must appear in its row's anchors,
+  implementation trace, and verification evidence rather than being listed as
+  an untraced token. Use globally unique, stable IDs `batch_###:C###`, numbered
+  within the owning batch; cross-file lead-reconciliation rows use
+  `lead:C###`. Cite concrete backticked source anchors or the assigned byte-unit
+  hash for a non-text byte range and show an ordered entry-to-outcome trace.
+  Begin the implementation, failure/edge/permission/recovery, and verification
+  cells with `pass`, `gap`, `blocked`, or `not applicable`; derive `Result` as
+  `PASS`, `GAP`, or `BLOCKED` from those statuses. A `PASS` requires concrete
+  evidence that the intended outcome, side effects, and applicable failure path
+  were actually verified; source existence, type/shape assertions, or generic
+  prose are insufficient. Every `GAP`/`BLOCKED` row maps one-to-one to an
+  independently closable file-bound finding that cites exactly its `Contract
+  ID`; ranged findings also cite the exact unit ID.
+  In every responsibility cell, append exactly one `Basis: <kind> —
+  <backticked reference>` using `user-requirement`, `acceptance-criterion`,
+  `recorded-decision`, `public-contract`, `interface-promise`,
+  `caller-contract`, `schema-invariant`, `operational-contract`, or
+  `source-inferred`, plus exactly one `Discovery: parsed|manual — <backticked
+  assigned-unit anchor>`. Parsed discovery uses a recognized named definition;
+  otherwise manually enumerate the responsibility or mark it `BLOCKED` when
+  enumeration is unavailable. Every verification cell declares exactly one
+  `evidence-type: test|runtime|source-only` and one concrete `counterfactual:
+  ...` or `invariance: ...`. Stateful, integration, external-effect, and
+  success PASS rows require test or runtime evidence.
 - `Interface Inventory`: for every interface-relevant file, one or more table rows with file, surface, visible label/control/message, expected behavior path, and actual implementation notes; visible text must be concrete source text or an explicit `None found` note, not boilerplate; for non-interface batches, the exact sentinel `No interface-relevant files in this batch.`
-- `Findings`: prioritized issues with file references, concrete evidence, expected behavior or standard, gap, and suggested fix direction. Finding `Files` fields must reference only files owned by the batch.
+- `Findings`: prioritized, independently closable issues with file references, concrete evidence, expected behavior or standard, gap, and suggested fix direction. Each block cites exactly one `GAP`/`BLOCKED` Contract ID and maps to exactly that row. Finding `Files` fields must reference only files owned by the batch.
 - `No Finding Notes`: files checked with no notable issue.
 - `Open Questions`: ambiguity the lead should resolve.
 
@@ -147,11 +244,25 @@ Require the journey source worker to return `Run ID`, `Worker`, `Journey Sources
 Return a concise but complete plan with exactly these top-level Markdown headings, in this order:
 
 ## Coverage
-Repo root, audit output path, run id, source files queued, coverage units queued, files or units checked by subagents or manual fallback, files rechecked by the lead, journey workers run, scope warnings, exclusions, unchecked files or units, verifier result, subagent capability check result, ledger-recorded lead effort status, and per-batch/journey effort/fallback ledger.
+Repo root, audit output path, run id, source files queued, coverage units queued, files or units checked by subagents or manual fallback, implementation contract items inventoried, trace counts by pass/gap/blocked/not-applicable, files rechecked by the lead, journey workers run, scope warnings, exclusions, unchecked files or units, verifier result, subagent capability check result, ledger-recorded lead effort status, and per-batch/journey effort/fallback ledger.
 State effort as `runtime-attested`, `ledger-recorded-unverified`, or `manual-fallback`; never shorten an unattested claim to “confirmed x-high.” List every high-risk file and lead-review status. List every bound visual evidence id/path/hash/viewport and formal-verifier evidence id.
 
 ## Architecture Findings
-Repo-wide design, feature-completeness, and product-flow gaps from the lead pass, or `No confirmed findings.`
+Cross-cutting structural design, ownership/boundary, dependency, lifecycle, and product-flow risks from the lead pass, or `No confirmed findings.` Put contract-to-outcome feature completeness in `## Implementation Findings`; cross-reference instead of duplicating the same issue.
+
+## Implementation Findings
+Include the verified lead trace table, showing each `lead:C###` ID and every
+mapped batch `Contract ID` exactly once, with statuses for
+`entry-registration`, `core-logic`, `data-lifecycle`,
+`integration-boundary`, `authorization-trust`, `failure-recovery`,
+`observable-outcome`, `operational-lifecycle`, and `verification`. Derive each
+lead result from those statuses and preserve every mapped batch `GAP` or
+`BLOCKED`, then describe confirmed semantic implementation gaps. Identify
+hard-coded substitutes, ignored inputs, incomplete plumbing, false
+success/persistence, missing registration or lifecycle work, production
+mocks/fixtures, and shallow verification even when no explicit marker exists.
+When every item is accounted for and no gap remains, keep the table and follow
+it with `No confirmed findings.`
 
 ## Interface Findings
 Buttons, menu items, links, form fields, messages, command items, empty states, toasts, or labels that point to missing, unimplemented, partial, untested, misleading, wrongly wired, wrongly prioritized, or journey-mismatched behavior, or `No confirmed findings.`
@@ -162,8 +273,11 @@ Missing or unclear journeys, explicit UI assumption status (`confirmed`, `source
 ## File-Level Findings
 Confirmed issues from batch results, deduplicated and grouped by feature area, or `No confirmed findings.`
 
+## Completion Ledger
+State whether ledger mutation was authorized or required by applicable project instructions. Always give the reviewed projection path/hash and confirmed/excluded/deduplicated counts. Give a plan path/hash, candidate-to-row mapping, preserved/added/deduplicated row IDs, rejected-collision status, and before/after ledger hashes only when a plan was generated; otherwise mark each as `not generated` or `not applicable`. If mutation was not authorized, say `Not applied—exact reviewed projection retained outside the repository.` If there are no confirmed findings, say that no ledger row was created or pruned.
+
 ## Implementation Plan
-Ordered work items with expected behavior, affected files or modules, implementation steps, tests, and risk for completing the intended product contract. Use `No implementation work recommended from this audit.` when clean.
+Ordered work items with expected behavior, affected files or modules, implementation steps, tests, risk, and completion-ledger row IDs when applied. Use `No implementation work recommended from this audit.` when clean.
 
 ## Verification Plan
 Commands, browser/API checks, fixtures, or user workflows needed to prove each improvement. Include the exact verifier command and any commands already run.
@@ -222,13 +336,20 @@ During the visual journey pass, use available visual tooling such as Playwright,
 - `visual_evidence.json`: real screenshot/native/formal-verifier artifact bindings; generated empty and completed by the visual worker when visual checks apply.
 - `journey_audit.md`: source-level user-journey worker prompt generated when interface-relevant files exist.
 - `visual_journey_audit.md`: visual journey worker prompt generated when interface-relevant files exist.
+- `lead_reconciliation.md`: generated lead prompt for cross-file contract tracing and atomic lead findings.
+- `verification_receipt.json`: pass-only verifier receipt binding the manifest, exact report root, and SHA-256 of every authorized batch, journey, visual, and lead report; required by manifest-mode consolidation.
 - `batch_###.md`: subagent-ready prompts with exact file or range ownership and interface-specific checks when relevant.
 - `excluded_files.json`: files skipped with reasons for transparency.
-- `reports/`: required destination for returned subagent reports, one exact `batch_###.md` file per batch.
+- `reports/`: required destination for returned reports, including one exact `batch_###.md` file per batch and manifest-declared, verifier-checked `lead_reconciliation.md`.
+- `consolidated-findings.json` / `.md`: candidates from the manifest's exact verified report allowlist and hashes; immutable finding fields are preserved and only exact matches deduplicate, but the merge does not confirm correctness.
+- `completion_ledger_projection.json`: lead-reviewed disposition and exact active-row projection for every consolidated candidate; created after report verification, not during queue generation.
+- `completion-ledger-plan.json`: immutable before/after ledger plan and candidate mapping produced only after audit/projection validation.
 
 Companion scripts included with this skill:
 
-- `scripts/verify_audit_results.py`: result verifier for returned subagent `Run ID`, exact report section shape, `File Coverage` SHA-256 tables, `Interface Inventory` coverage and concrete visible-text checks for interface-relevant files, high-confidence visible-control/message hint coverage, source-backed UI asset evidence, generic interface trace rejection, obvious placeholder/stub/dead-control source omission checks, finding severity/field shape/content and batch-file binding, current file fingerprints, queue marker consistency, effort and journey-worker ledger completion/provenance fields including duplicate batch rows, `excluded_files.json` count/digest consistency, and policy-blocking unresolved scope warnings.
-- `scripts/self_test.py`: fixture-based smoke tests for classification, interface detection, env/generated/vendor exclusion and opt-in behavior, batch invariants, and result verification.
+- `scripts/verify_audit_results.py`: result verifier for returned subagent `Run ID`, exact report section shape, `File Coverage` SHA-256 tables, per-unit and responsibility-level source-backed `Implementation Inventory` coverage with unique `Contract ID` and atomic result/finding linkage, required manifest-declared `lead_reconciliation.md` cross-file trace and atomic findings, `Interface Inventory` coverage and concrete visible-text checks, source-backed UI asset evidence, generic trace rejection, obvious placeholder/stub/dead-control source omission checks, finding severity/field shape/content and batch-file binding, current file fingerprints, queue marker consistency, effort and journey-worker ledger completion/provenance fields, `excluded_files.json` count/digest consistency, policy-blocking unresolved scope warnings, and a pass-only stable-input verification receipt.
+- `scripts/update_completion_ledger.py`: verifier-rerunning plan/apply importer for a fully reviewed projection. It binds the exact verifier input closure and canonical pass result to the receipt, preserves unrelated active work, never prunes, rejects raw/pending/omitted candidates and concurrent drift, and mutates only project-root `CompletionLedger.md` when that mutation is authorized.
+- `scripts/self_test.py`: deterministic fixture tests for classification, interface detection, env/generated/vendor exclusion and opt-in behavior, batch invariants, evidence-contract enforcement, and result verification. These tests prove verifier behavior, not manual-agent semantic recall.
+- `evals/marker-free/`: six isolated manual-agent evaluations for ignored input/config, partial plumbing, false persistence/success, missing registration/lifecycle, production fixture data, and shallow outcome tests. When supplied with responses from fresh agent runs, its deterministic scorer can measure finding recall and intentional-lookalike precision. Its self-test uses synthesized oracle-derived responses and proves only the schemas and scorer, so it is not empirical evidence of agent performance; keep actual run results separate from verifier self-tests and do not generalize one run into a mechanical guarantee.
 
-The harness is the source of truth for batch coverage; the lead agent is responsible for validating that every manifest source file has a corresponding subagent coverage row before final synthesis.
+The harness is the source of truth for batch coverage; the lead agent is responsible for validating that every manifest source file has a file-coverage row, every distinct responsibility has a unique `Contract ID` inventory row, and `reports/lead_reconciliation.md` proves cross-file semantic reconciliation before final synthesis. The verifier can enforce evidence shape and source binding; it cannot replace the lead's judgment about whether arbitrary domain behavior is correct.

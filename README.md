@@ -15,8 +15,11 @@ Holy Skills does not import, clone, pin, build, or test that repository.
   for rendered geometry, visibility, clipping, overlap, media health, target
   coverage, declared areas, and visible scrollbars. It can optionally consume
   URLs from a separately installed coordinator script supplied by the caller.
-- `full-repo-audit`: a manifest-verified repository review framework with
-  deterministic batches, evidence binding, lead review, and merged findings.
+- `full-repo-audit`: a manifest-verified semantic implementation review with
+  deterministic responsibility-level `Contract ID`s (`batch_###:C###` and
+  lead-reconciliation `lead:C###`), cross-file reconciliation, evidence binding,
+  atomic findings, and a required reviewed external active-ledger projection;
+  applying that projection to a repository remains authorization-gated.
 - `full-repo-test-coverage-audit`: a structural test-assurance audit with exact
   target decisions, validated test references, and optional empirical coverage
   ingestion.
@@ -99,6 +102,21 @@ Every field is required and IDs are unique. Status begins with `Active`,
 `TODO`, `Unresolved`, or `Waiting`. Do not add prose, checklists, extra tables,
 or terminal rows outside the schema; history belongs in the sources named
 above.
+
+Every verified artifact-backed full-repo audit produces a reviewed ledger
+projection outside the audited repository, including an empty projection for a
+clean audit. Verified batch reports and the required manifest-bound
+`reports/lead_reconciliation.md` feed atomic candidates through a pass-only
+receipt that binds the exact report root and hashes; every candidate must be
+disposed and top-level `review_status` set to `complete`. Its plan/apply importer
+reruns the verifier over guarded current reports, sources, companion records,
+prompts, and evidence artifacts and requires that canonical pass result to
+match the receipt. It runs only when ledger mutation is authorized by an
+explicit user request or applicable project instruction, preserves unrelated
+active rows, never prunes, and writes only confirmed unresolved obligations
+into this five-column schema.
+Raw findings, hypotheses, audit limitations, and resolved evidence remain
+outside the ledger.
 
 ## Install as direct links
 

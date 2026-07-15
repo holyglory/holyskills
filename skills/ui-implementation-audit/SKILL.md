@@ -201,9 +201,9 @@ and the documentation handoff conflict instead of marking the UI as compliant.
        --reports <audit-output>/reports \
        --markdown-out <audit-output>/consolidated-findings.md
      ```
-     It deduplicates by primary file and summary, ranks P0→P3, and cites the
-     source reports; use it as the starting point, not a replacement for lead
-     judgment.
+     It conservatively deduplicates only findings whose immutable fields all
+     match, ranks P0→P3, and cites the source reports; use it as the starting
+     point, not a replacement for lead judgment.
    - Deduplicate source and visual findings.
    - Separate confirmed screenshot/source gaps from hypotheses and blockers.
    - Treat rendered journey-usability failures as real UI defects even when the

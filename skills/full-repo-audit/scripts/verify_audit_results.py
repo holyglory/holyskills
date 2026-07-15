@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import struct
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from pathlib import Path, PurePosixPath
@@ -27,11 +29,13 @@ for root in reversed([item for item in path_roots if item.is_dir()]):
         sys.path.insert(0, root_text)
 
 from full_repo_harness import evidence as audit_evidence
+from full_repo_harness import merge_findings
 from full_repo_harness import verify_common as common
 
 
 BATCH_ID_RE = re.compile(r"\bbatch_(\d{3,})\b", re.IGNORECASE)
 REPORT_FILENAME_RE = re.compile(r"^batch_\d{3,}\.md$", re.IGNORECASE)
+LEAD_RECONCILIATION_REPORT_NAME = "lead_reconciliation.md"
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
 MARKDOWN_UNSAFE_PATH_CHARS = {"|", "`"}
@@ -40,12 +44,125 @@ REQUIRED_SECTIONS = (
     "batch id",
     "batch summary",
     "file coverage",
+    "implementation inventory",
     "interface inventory",
     "findings",
     "no finding notes",
     "open questions",
 )
 REQUIRED_SECTION_LIST = list(REQUIRED_SECTIONS)
+IMPLEMENTATION_INVENTORY_HEADERS = (
+    "file/unit",
+    "contract id",
+    "contract/responsibility",
+    "entrypoints/source anchors",
+    "implementation/data/side-effect trace",
+    "failure/edge/permission/recovery trace",
+    "verification evidence",
+    "result",
+)
+IMPLEMENTATION_RESULTS = {"PASS", "GAP", "BLOCKED"}
+BATCH_IMPLEMENTATION_CONTRACT_ID_RE = re.compile(r"^(batch_\d{3,}):C\d{3,}$")
+LEAD_IMPLEMENTATION_CONTRACT_ID_RE = re.compile(r"^lead:C\d{3,}$")
+IMPLEMENTATION_BASIS_KINDS = {
+    "user-requirement",
+    "acceptance-criterion",
+    "recorded-decision",
+    "public-contract",
+    "interface-promise",
+    "caller-contract",
+    "schema-invariant",
+    "operational-contract",
+    "source-inferred",
+}
+IMPLEMENTATION_BASIS_RE = re.compile(
+    r"\bBasis:\s*([a-z][a-z-]*)\s*(?:[-–—:])\s*(.+?)(?=\s+Discovery:|$)",
+    re.IGNORECASE,
+)
+IMPLEMENTATION_DISCOVERY_RE = re.compile(
+    r"\bDiscovery:\s*(parsed|manual)\s*(?:[-–—:])\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+IMPLEMENTATION_EVIDENCE_TYPE_RE = re.compile(
+    r"\bevidence-type:\s*(test|runtime|source-only)\b",
+    re.IGNORECASE,
+)
+IMPLEMENTATION_EVIDENCE_REF_RE = re.compile(
+    r"\bevidence-ref:\s*([^;|]+)",
+    re.IGNORECASE,
+)
+IMPLEMENTATION_EVIDENCE_OUTCOME_RE = re.compile(
+    r"\b(?:outcome|result):\s*([^;|]+)",
+    re.IGNORECASE,
+)
+IMPLEMENTATION_EXPECTATION_RE = re.compile(
+    r"\b(counterfactual|invariance):\s*([^;|]+(?:\s+[^;|]+)*)",
+    re.IGNORECASE,
+)
+SOURCE_ONLY_DISALLOWED_CLAIM_RE = re.compile(
+    r"\b(?:persist(?:s|ed|ing|ence|ent)?|durab(?:le|ility)|database|transaction|"
+    r"read[- ]?back|sav(?:e|es|ed|ing)|stor(?:e|es|ed|ing)|writ(?:e|es|ten|ing)|"
+    r"integration|external[- ](?:effect|service|dependency|system|call)|side[- ]effect|"
+    r"gateway|webhook|enqueue(?:s|d|ing)?|publish(?:es|ed|ing)?|emit(?:s|ted|ting)?|"
+    r"send(?:s|ing)?|sent|upload(?:s|ed|ing)?|success(?:ful|fully)?|"
+    r"succeed(?:s|ed|ing)?)\b",
+    re.IGNORECASE,
+)
+IMPLEMENTATION_VERIFICATION_BEHAVIOR_RE = re.compile(
+    r"\b(?:assert(?:s|ed|ing)?|accept(?:s|ed|ing)?|block(?:s|ed|ing)?|"
+    r"calculat(?:e|es|ed|ing)|call(?:s|ed|ing)?|compar(?:e|es|ed|ing)|"
+    r"confirm(?:s|ed|ing)?|cover(?:s|ed|ing)?|creat(?:e|es|ed|ing)|"
+    r"delet(?:e|es|ed|ing)|emit(?:s|ted|ting)?|exercis(?:e|es|ed|ing)|"
+    r"fail(?:s|ed|ing)?|invok(?:e|es|ed|ing)|load(?:s|ed|ing)?|"
+    r"persist(?:s|ed|ing)?|prov(?:e|es|ed|ing)|read(?:s|ing)?|"
+    r"register(?:s|ed|ing)?|reject(?:s|ed|ing)?|render(?:s|ed|ing)?|"
+    r"report(?:s|ed|ing)?|return(?:s|ed|ing)?|sav(?:e|es|ed|ing)|"
+    r"updat(?:e|es|ed|ing)|validat(?:e|es|ed|ing)|verif(?:y|ies|ied|ying)|"
+    r"writ(?:e|es|ten|ing))\b",
+    re.IGNORECASE,
+)
+IMPLEMENTATION_OUTCOME_BEHAVIOR_RE = re.compile(
+    r"\b(?:accepted|asserted|blocked|calculated|called|created|deleted|"
+    r"emitted|failed|loaded|matched|persisted|produced|read|registered|"
+    r"rejected|rendered|returned|saved|sent|updated|validated|verified|wrote)\b",
+    re.IGNORECASE,
+)
+GENERIC_IMPLEMENTATION_EVIDENCE_PHRASES = (
+    "manual source tracing is bound to manifest",
+    "manifest sha-256",
+    "source-defined output or side effect",
+    "owned source logic",
+    "fixture report",
+)
+LEAD_RECONCILIATION_SECTIONS = (
+    "run id",
+    "worker",
+    "cross-file contract trace",
+    "findings",
+    "open questions",
+)
+LEAD_RECONCILIATION_HEADERS = (
+    "contract id",
+    "batch contract ids",
+    "contract/source anchors",
+    "entry-registration",
+    "core-logic",
+    "data-lifecycle",
+    "integration-boundary",
+    "authorization-trust",
+    "failure-recovery",
+    "observable-outcome",
+    "operational-lifecycle",
+    "verification",
+    "result",
+)
+LEAD_RECONCILIATION_TRACE_FIELDS = LEAD_RECONCILIATION_HEADERS[3:-1]
+LEAD_RECONCILIATION_EMPTY_SENTINEL = "No source-backed implementation contracts were queued."
+LEAD_RECONCILIATION_TRACE_STATUS_RE = re.compile(
+    r"^\s*(pass|gap|blocked|not applicable)\s*(?:[-–—:])\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+IMPLEMENTATION_TRACE_STATUS_RE = LEAD_RECONCILIATION_TRACE_STATUS_RE
 JOURNEY_REPORT_SECTIONS = {
     "journey_source_worker": (
         "run id",
@@ -512,6 +629,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not compare manifest SHA-256 fingerprints to the current repo files.",
     )
+    parser.add_argument(
+        "--receipt-out",
+        help=(
+            "Write a stable verification receipt only when verification passes and every "
+            "manifest-authorized report remains byte-identical throughout the run."
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     return parser.parse_args()
 
@@ -524,17 +648,30 @@ def iter_report_files(paths: list[str]) -> list[Path]:
             files.extend(
                 sorted(
                     item
-                    for item in path.glob("batch_*.md")
-                    if item.is_file() and REPORT_FILENAME_RE.match(item.name)
+                    for item in path.glob("*.md")
+                    if item.is_file()
+                    and (
+                        REPORT_FILENAME_RE.match(item.name)
+                        or item.name == LEAD_RECONCILIATION_REPORT_NAME
+                    )
                 )
             )
         elif path.is_file():
-            if not REPORT_FILENAME_RE.match(path.name):
-                raise ValueError(f"Report file must use exact batch_###.md filename: {path}")
+            if not REPORT_FILENAME_RE.match(path.name) and path.name != LEAD_RECONCILIATION_REPORT_NAME:
+                raise ValueError(
+                    "Report file must use exact batch_###.md or lead_reconciliation.md filename: "
+                    f"{path}"
+                )
             files.append(path)
         else:
             raise FileNotFoundError(f"Report path does not exist: {path}")
-    return files
+    for reports_parent in {
+        path.parent for path in files if REPORT_FILENAME_RE.match(path.name)
+    }:
+        lead_report = reports_parent / LEAD_RECONCILIATION_REPORT_NAME
+        if lead_report.is_file() and lead_report not in files:
+            files.append(lead_report)
+    return sorted(set(files))
 
 
 def validate_markdown_safe_manifest_token(value: str, field_name: str) -> None:
@@ -737,6 +874,19 @@ def load_manifest(manifest_path: Path) -> dict:
     journey_audit = manifest.get("journey_audit")
     if journey_audit is not None and not isinstance(journey_audit, dict):
         raise ValueError("Manifest field journey_audit must be an object when present.")
+    lead_reconciliation = manifest.get("lead_reconciliation")
+    if not isinstance(lead_reconciliation, dict):
+        raise ValueError("Manifest field lead_reconciliation must be an object.")
+    expected_lead_reconciliation = {
+        "required": True,
+        "worker": "lead_reconciliation",
+        "prompt": "lead_reconciliation.md",
+        "report": "reports/lead_reconciliation.md",
+    }
+    if lead_reconciliation != expected_lead_reconciliation:
+        raise ValueError(
+            "Manifest field lead_reconciliation must exactly declare the required lead prompt/report contract."
+        )
 
     validate_manifest_count(manifest, "source_file_count", len(source_files))
     if "coverage_unit_count" in manifest:
@@ -1475,6 +1625,49 @@ def verify_effort_ledger(
             issues.append({"path": str(ledger_path), **issue})
         if not isinstance(lead.get("runtime_provenance"), str) or len(lead.get("runtime_provenance", "").strip()) < 12:
             issues.append({"path": str(ledger_path), "field": "lead.runtime_provenance", "expected": "concrete runtime provenance", "actual": lead.get("runtime_provenance")})
+
+    expected_lead_reconciliation = manifest.get("lead_reconciliation", {})
+    lead_reconciliation = ledger.get("lead_reconciliation")
+    if not isinstance(lead_reconciliation, dict):
+        issues.append(
+            {
+                "path": str(ledger_path),
+                "field": "lead_reconciliation",
+                "expected": "object",
+                "actual": type(lead_reconciliation).__name__,
+            }
+        )
+    else:
+        if lead_reconciliation.get("status") != "completed":
+            issues.append(
+                {
+                    "path": str(ledger_path),
+                    "field": "lead_reconciliation.status",
+                    "expected": "completed",
+                    "actual": lead_reconciliation.get("status"),
+                }
+            )
+        for ledger_field, manifest_field in (("prompt", "prompt"), ("report", "report")):
+            expected_value = expected_lead_reconciliation.get(manifest_field)
+            actual_value = lead_reconciliation.get(ledger_field)
+            if actual_value != expected_value:
+                issues.append(
+                    {
+                        "path": str(ledger_path),
+                        "field": f"lead_reconciliation.{ledger_field}",
+                        "expected": expected_value,
+                        "actual": actual_value,
+                    }
+                )
+            if isinstance(actual_value, str) and not (manifest_path.parent / actual_value).is_file():
+                issues.append(
+                    {
+                        "path": str(ledger_path),
+                        "field": f"lead_reconciliation.{ledger_field}",
+                        "reason": "referenced lead reconciliation artifact is missing",
+                        "actual": actual_value,
+                    }
+                )
 
     journey = manifest.get("journey_audit") if isinstance(manifest.get("journey_audit"), dict) else {}
     journey_required = bool(journey.get("required"))
@@ -2286,6 +2479,332 @@ def parse_interface_inventory_rows(text: str, report_path: Path) -> tuple[list[d
     return rows, malformed_rows
 
 
+def parse_implementation_inventory_rows(text: str, report_path: Path) -> tuple[list[dict], list[str]]:
+    rows: list[dict] = []
+    malformed_rows: list[str] = []
+    in_inventory = False
+    table_lines: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("## implementation inventory"):
+            in_inventory = True
+            continue
+        if in_inventory and stripped.startswith("## ") and not stripped.lower().startswith(
+            "## implementation inventory"
+        ):
+            break
+        if not in_inventory or not stripped.startswith("|"):
+            continue
+        table_lines.append((stripped, split_markdown_row(stripped)))
+
+    if not table_lines or tuple(column.lower() for column in table_lines[0][1]) != IMPLEMENTATION_INVENTORY_HEADERS:
+        malformed_rows.append(
+            "missing or invalid exact 8-column implementation inventory header; "
+            f"expected columns {IMPLEMENTATION_INVENTORY_HEADERS!r}"
+        )
+    if (
+        len(table_lines) < 2
+        or len(table_lines[1][1]) != len(IMPLEMENTATION_INVENTORY_HEADERS)
+        or not is_separator_row(table_lines[1][1])
+    ):
+        malformed_rows.append(
+            "missing or invalid exact 8-column implementation inventory separator immediately after the header"
+        )
+
+    for stripped, columns in table_lines[2:]:
+        if tuple(column.lower() for column in columns) == IMPLEMENTATION_INVENTORY_HEADERS or is_separator_row(columns):
+            malformed_rows.append(f"unexpected repeated implementation inventory header/separator: {stripped}")
+            continue
+        if len(columns) != len(IMPLEMENTATION_INVENTORY_HEADERS) or any(not column for column in columns):
+            malformed_rows.append(stripped)
+            continue
+        rows.append(
+            {
+                "file": columns[0].strip("`").strip(),
+                "contract_id": columns[1].strip("`").strip(),
+                "contract": columns[2],
+                "anchors": columns[3],
+                "implementation_trace": columns[4],
+                "failure_trace": columns[5],
+                "verification_evidence": columns[6],
+                "result": columns[7].strip().upper(),
+                "report": str(report_path),
+            }
+        )
+    return rows, malformed_rows
+
+
+def implementation_definition_patterns(rel_path: str) -> list[str]:
+    suffix = PurePosixPath(rel_path).suffix.casefold()
+    patterns: list[str] = []
+    if suffix == ".py":
+        patterns = [
+            r"(?m)^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(",
+            r"(?m)^\s*class\s+([A-Za-z_]\w*)\b",
+        ]
+    elif suffix in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".vue", ".svelte"}:
+        patterns = [
+            r"(?m)^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(",
+            r"(?m)^\s*(?:export\s+)?(?:default\s+)?class\s+([A-Za-z_$][\w$]*)\b",
+            r"(?m)^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:\([^\n]*\)|[A-Za-z_$][\w$]*)\s*=>",
+            r"(?m)^\s*(?:(?:public|private|protected|static|async|abstract|override|readonly|declare|get|set)\s+)*([A-Za-z_$][\w$]*)\s*(?:<[^\n>{}]+>)?\s*\([^;\n{}]*\)\s*(?::\s*[^={\n]+)?\s*\{",
+        ]
+    elif suffix == ".go":
+        patterns = [r"(?m)^\s*func\s+(?:\([^\n)]*\)\s*)?([A-Za-z_]\w*)\s*\("]
+    elif suffix == ".rs":
+        patterns = [
+            r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)\s*\(",
+            r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait)\s+([A-Za-z_]\w*)\b",
+        ]
+    elif suffix == ".swift":
+        patterns = [
+            r"(?m)^\s*(?:public\s+|private\s+|internal\s+|fileprivate\s+|open\s+)*(?:static\s+|class\s+)?func\s+([A-Za-z_]\w*)\s*\(",
+            r"(?m)^\s*(?:public\s+|private\s+|internal\s+|fileprivate\s+|open\s+)*(?:class|struct|enum|protocol)\s+([A-Za-z_]\w*)\b",
+        ]
+    elif suffix in {".rb", ".rake"}:
+        patterns = [
+            r"(?m)^\s*def\s+(?:self\.)?([A-Za-z_]\w*[!?=]?)",
+            r"(?m)^\s*(?:class|module)\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)",
+        ]
+    elif suffix in {".sh", ".bash", ".zsh"}:
+        patterns = [r"(?m)^\s*(?:function\s+)?([A-Za-z_]\w*)\s*(?:\(\s*\))?\s*\{"]
+    elif suffix == ".java":
+        patterns = [
+            r"(?m)^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|abstract\s+)*(?:class|interface|enum|record)\s+([A-Za-z_]\w*)\b",
+            r"(?m)^\s*(?:public\s+|protected\s+|private\s+|static\s+|final\s+|abstract\s+|synchronized\s+|native\s+)+[A-Za-z_][\w<>,.?\[\]\s]*\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:throws\s+[^{}]+)?\{",
+        ]
+    elif suffix in {".kt", ".kts"}:
+        patterns = [
+            r"(?m)^\s*(?:(?:public|private|protected|internal|open|abstract|sealed|data|value|enum|annotation)\s+)*(?:class|interface|object)\s+([A-Za-z_]\w*)\b",
+            r"(?m)^\s*(?:(?:public|private|protected|internal|open|override|suspend|inline|operator|tailrec|infix|external)\s+)*fun\s+(?:[\w<>?.]+\.)?([A-Za-z_]\w*)\s*\(",
+        ]
+    elif suffix in {".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh"}:
+        patterns = [
+            r"(?m)^\s*(?:class|struct|enum)\s+([A-Za-z_]\w*)\b",
+            r"(?m)^\s*(?:[A-Za-z_]\w*[\s*&:<>,\[\]]+)+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:const\s*)?\{",
+        ]
+    elif suffix == ".cs":
+        patterns = [
+            r"(?m)^\s*(?:(?:public|private|protected|internal|static|abstract|sealed|partial)\s+)*(?:class|interface|struct|record|enum)\s+([A-Za-z_]\w*)\b",
+            r"(?m)^\s*(?:(?:public|private|protected|internal|static|virtual|override|abstract|async|sealed|partial|extern)\s+)+[A-Za-z_][\w<>,.?\[\]\s]*\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{",
+        ]
+    elif suffix in {".php", ".phtml"}:
+        patterns = [
+            r"(?mi)^\s*(?:(?:final|abstract|readonly)\s+)*(?:class|interface|trait|enum)\s+([A-Za-z_]\w*)\b",
+            r"(?mi)^\s*(?:(?:public|private|protected|static|final|abstract)\s+)*function\s+&?\s*([A-Za-z_]\w*)\s*\(",
+        ]
+    elif suffix == ".dart":
+        patterns = [
+            r"(?m)^\s*(?:(?:abstract|base|final|interface|sealed)\s+)*(?:class|mixin|enum|extension)\s+([A-Za-z_]\w*)\b",
+            r"(?m)^\s*(?:[A-Za-z_][\w<>?,\[\]]*\s+)+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:async\*?|sync\*)?\s*\{",
+        ]
+    elif suffix == ".lua":
+        patterns = [r"(?m)^\s*(?:local\s+)?function\s+([A-Za-z_]\w*(?:[.:][A-Za-z_]\w*)*)\s*\("]
+    elif suffix in {".ex", ".exs"}:
+        patterns = [r"(?m)^\s*defp?\s+([a-z_]\w*[!?]?)\s*(?:\(|do\b)"]
+    elif suffix == ".sql":
+        patterns = [
+            r"(?im)^\s*CREATE\s+(?:OR\s+(?:REPLACE|ALTER)\s+)?(?:FUNCTION|PROCEDURE|TRIGGER|(?:MATERIALIZED\s+)?VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?((?:\"?[A-Za-z_]\w*\"?\.)?\"?[A-Za-z_]\w*\"?)"
+        ]
+    return patterns
+
+
+def implementation_responsibility_occurrences(
+    rel_path: str,
+    source_text: str,
+    *,
+    start_line: int | None = 1,
+    start_byte: int | None = None,
+) -> list[dict[str, object]]:
+    """Return every recognized definition with an occurrence-aware source anchor.
+
+    Line/column anchors are absolute for whole-file and line-range units. Byte
+    units use an absolute byte offset because a decoded byte slice need not
+    begin at a source line boundary. The manifest hash makes either coordinate
+    stable for the exact audited source snapshot.
+    """
+
+    control_keywords = {
+        "catch",
+        "do",
+        "else",
+        "finally",
+        "for",
+        "if",
+        "return",
+        "switch",
+        "try",
+        "while",
+        "with",
+    }
+    occurrences: list[dict[str, object]] = []
+    seen: set[tuple[str, int]] = set()
+    for pattern in implementation_definition_patterns(rel_path):
+        for match in re.finditer(pattern, source_text):
+            value = match.group(1)
+            key = (value, match.start(1))
+            if value.casefold() in control_keywords or key in seen:
+                continue
+            seen.add(key)
+            if isinstance(start_byte, int):
+                byte_offset = start_byte + len(source_text[: match.start(1)].encode("utf-8"))
+                anchor = f"{value}@B{byte_offset}"
+                coordinate = {"byte": byte_offset}
+            else:
+                relative_line = source_text.count("\n", 0, match.start(1)) + 1
+                line_number = (start_line if isinstance(start_line, int) else 1) + relative_line - 1
+                line_start = source_text.rfind("\n", 0, match.start(1)) + 1
+                column_number = match.start(1) - line_start + 1
+                anchor = f"{value}@L{line_number}:C{column_number}"
+                coordinate = {"line": line_number, "column": column_number}
+            occurrences.append(
+                {
+                    "name": value,
+                    "anchor": anchor,
+                    "start": match.start(1),
+                    **coordinate,
+                }
+            )
+    occurrences.sort(key=lambda item: (int(item["start"]), str(item["name"]), str(item["anchor"])))
+    return occurrences
+
+
+def implementation_responsibility_hints(rel_path: str, source_text: str) -> list[str]:
+    """Return unique high-confidence names for diagnostics and compatibility.
+
+    Exact inventory coverage uses :func:`implementation_responsibility_occurrences`
+    so repeated method names cannot collapse into one row.
+    """
+
+    hints: list[str] = []
+    for occurrence in implementation_responsibility_occurrences(rel_path, source_text):
+        value = str(occurrence["name"])
+        if value not in hints:
+            hints.append(value)
+    return hints
+
+
+def is_manifest_test_path(rel_path: str) -> bool:
+    path = PurePosixPath(rel_path)
+    parts = {part.casefold() for part in path.parts[:-1]}
+    name = path.name.casefold()
+    stem = path.stem.casefold()
+    return bool(
+        parts & {"test", "tests", "__tests__", "spec", "specs"}
+        or name in {"self_test.py", "self-test.py"}
+        or stem.startswith(("test_", "spec_"))
+        or stem.endswith(("_test", "_tests", "_spec", ".test", ".spec"))
+        or re.search(r"(?:^|[._-])(?:test|tests|spec)(?:[._-]|$)", name)
+    )
+
+
+def manifest_source_path_for_reference(
+    reference: str,
+    known_source_files: set[str],
+) -> str | None:
+    """Resolve an exact manifest path or a path with a precise source suffix."""
+
+    if reference in known_source_files:
+        return reference
+    base, separator, suffix = reference.partition("#")
+    if not separator or base not in known_source_files or not suffix:
+        return None
+    if re.fullmatch(r"L\d+(?:-L?\d+)?", suffix, re.IGNORECASE):
+        return base
+    if re.fullmatch(r"B\d+(?:-B?\d+)?", suffix, re.IGNORECASE):
+        return base
+    if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$.:@-]*(?:\(\))?", suffix):
+        return base
+    return None
+
+
+def validate_typed_implementation_evidence(
+    *,
+    verification: str,
+    evidence_type: str | None,
+    result: str,
+    known_source_files: set[str],
+    valid_bound_evidence_ids: set[str],
+    context: str,
+) -> list[dict]:
+    """Bind test/runtime labels to real files or attested audit artifacts."""
+
+    if evidence_type not in {"test", "runtime"}:
+        return []
+    issues: list[dict] = []
+    reference_matches = list(IMPLEMENTATION_EVIDENCE_REF_RE.finditer(verification))
+    evidence_refs: list[str] = []
+    if len(reference_matches) == 1:
+        reference_detail = reference_matches[0].group(1)
+        evidence_refs = [plain_cell(value) for value in PATH_IN_BACKTICKS_RE.findall(reference_detail)]
+        unexplained = re.sub(r"`[^`]+`", "", reference_detail).strip(" ,\t")
+        if not evidence_refs or unexplained:
+            evidence_refs = []
+    if len(reference_matches) != 1 or not evidence_refs:
+        issues.append(
+            {
+                "reason": f"{context} evidence-type {evidence_type} requires exactly one evidence-ref declaration containing only concrete backticked references",
+                "verification": verification,
+            }
+        )
+    elif evidence_type == "test":
+        valid_test_paths = {path for path in known_source_files if is_manifest_test_path(path)}
+        invalid_refs = sorted(set(evidence_refs) - valid_test_paths)
+        if invalid_refs:
+            issues.append(
+                {
+                    "reason": f"{context} test evidence-ref values must resolve to manifest-owned test source files",
+                    "invalid_evidence_refs": invalid_refs,
+                    "available_test_files": sorted(valid_test_paths),
+                }
+            )
+    else:
+        runtime_ids = []
+        invalid_syntax = []
+        for reference in evidence_refs:
+            match = re.fullmatch(r"evidence:([A-Za-z][A-Za-z0-9_-]{0,63})", reference)
+            if match:
+                runtime_ids.append(match.group(1))
+            else:
+                invalid_syntax.append(reference)
+        unresolved = sorted(set(runtime_ids) - valid_bound_evidence_ids)
+        if invalid_syntax or unresolved:
+            issues.append(
+                {
+                    "reason": f"{context} runtime evidence-ref values must resolve to valid bound audit evidence:<id> artifacts",
+                    "invalid_evidence_refs": sorted(invalid_syntax),
+                    "unresolved_evidence_ids": unresolved,
+                }
+            )
+    if result == "PASS":
+        outcome_matches = list(IMPLEMENTATION_EVIDENCE_OUTCOME_RE.finditer(verification))
+        outcome = plain_cell(outcome_matches[0].group(1)) if len(outcome_matches) == 1 else ""
+        if (
+            len(outcome_matches) != 1
+            or len(outcome) < 12
+            or is_boilerplate_value(outcome)
+            or not IMPLEMENTATION_OUTCOME_BEHAVIOR_RE.search(outcome)
+        ):
+            issues.append(
+                {
+                    "reason": f"{context} PASS with test or runtime evidence requires exactly one explicit outcome: or result: statement naming the observed result",
+                    "verification": verification,
+                }
+            )
+    return issues
+
+
+def finding_cites_implementation_contract(
+    block: dict,
+    *,
+    contract_id: str,
+    unit_id: str,
+    rel_path: str,
+) -> bool:
+    refs = set(PATH_IN_BACKTICKS_RE.findall(block.get("text", "")))
+    return contract_id in refs and (unit_id == rel_path or unit_id in refs)
+
+
 def parse_finding_blocks(findings_body: str) -> list[dict]:
     lines = findings_body.splitlines()
     heading_indexes = [index for index, line in enumerate(lines) if FINDING_HEADING_RE.match(line.strip())]
@@ -2440,12 +2959,675 @@ def validate_journey_findings_semantics(
     return issues
 
 
+def validate_lead_reconciliation_report(
+    report_path: Path,
+    *,
+    expected_run_id: str,
+    known_source_files: set[str],
+    source_file_count: int,
+    source_text_for_file,
+    batch_contracts: dict[str, dict],
+    source_hashes: dict[str, str],
+    valid_bound_evidence_ids: set[str],
+) -> tuple[list[dict], list[dict]]:
+    issues: list[dict] = []
+    rows: list[dict] = []
+    try:
+        text = report_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return ([{"reason": f"lead reconciliation report could not be read as UTF-8: {exc}"}], rows)
+
+    bodies = section_bodies(text)
+    ordered_sections = [
+        match.group(1).strip().lower()
+        for line in text.splitlines()
+        if (match := SECTION_RE.match(line.strip()))
+    ]
+    if ordered_sections != list(LEAD_RECONCILIATION_SECTIONS):
+        issues.append(
+            {
+                "reason": "lead reconciliation report sections must exactly match the required order",
+                "expected": list(LEAD_RECONCILIATION_SECTIONS),
+                "actual": ordered_sections,
+            }
+        )
+    run_ids = declared_run_ids(text)
+    if run_ids != [expected_run_id]:
+        issues.append(
+            {
+                "reason": "lead reconciliation report must declare the exact audit Run ID once",
+                "expected": expected_run_id,
+                "actual": run_ids,
+            }
+        )
+    if bodies.get("worker", "").strip() != "lead_reconciliation":
+        issues.append(
+            {
+                "reason": "lead reconciliation Worker must be exactly lead_reconciliation",
+                "actual": bodies.get("worker", "").strip(),
+            }
+        )
+
+    trace_body = bodies.get("cross-file contract trace", "").strip()
+    if source_file_count == 0:
+        if trace_body != LEAD_RECONCILIATION_EMPTY_SENTINEL:
+            issues.append(
+                {
+                    "reason": "empty manifests require the exact lead reconciliation sentinel",
+                    "expected": LEAD_RECONCILIATION_EMPTY_SENTINEL,
+                    "actual": trace_body,
+                }
+            )
+    else:
+        table_lines = [
+            (line.strip(), split_markdown_row(line.strip()))
+            for line in trace_body.splitlines()
+            if line.strip().startswith("|")
+        ]
+        if not table_lines or tuple(column.lower() for column in table_lines[0][1]) != LEAD_RECONCILIATION_HEADERS:
+            issues.append(
+                {
+                    "reason": "lead reconciliation requires the exact 13-column Cross-File Contract Trace header",
+                    "expected": LEAD_RECONCILIATION_HEADERS,
+                }
+            )
+        if (
+            len(table_lines) < 2
+            or len(table_lines[1][1]) != len(LEAD_RECONCILIATION_HEADERS)
+            or not is_separator_row(table_lines[1][1])
+        ):
+            issues.append(
+                {
+                    "reason": "lead reconciliation requires the exact 13-column table separator immediately after the header"
+                }
+            )
+        for raw, columns in table_lines[2:]:
+            if tuple(column.lower() for column in columns) == LEAD_RECONCILIATION_HEADERS or is_separator_row(columns):
+                issues.append({"reason": "lead reconciliation contains a repeated header/separator", "row": raw})
+                continue
+            if len(columns) != len(LEAD_RECONCILIATION_HEADERS) or any(not column for column in columns):
+                issues.append({"reason": "malformed lead reconciliation contract row", "row": raw})
+                continue
+            rows.append(
+                {
+                    "contract_id": columns[0].strip("`").strip(),
+                    "batch_contract_ids_cell": columns[1],
+                    "anchors": columns[2],
+                    **{
+                        field: columns[index]
+                        for index, field in enumerate(LEAD_RECONCILIATION_TRACE_FIELDS, start=3)
+                    },
+                    "result": columns[12].strip().upper(),
+                }
+            )
+        if not rows:
+            issues.append(
+                {"reason": "non-empty manifests require at least one lead cross-file/public/operational contract row"}
+            )
+
+    contract_id_counts = Counter(row["contract_id"] for row in rows)
+    mapped_batch_counts: Counter[str] = Counter()
+    for row in rows:
+        contract_id = row["contract_id"]
+        if not LEAD_IMPLEMENTATION_CONTRACT_ID_RE.fullmatch(contract_id):
+            issues.append(
+                {
+                    "reason": "lead reconciliation Contract ID must use the lead:C### namespace with at least three digits",
+                    "contract_id": contract_id,
+                }
+            )
+        if contract_id_counts[contract_id] > 1:
+            issues.append(
+                {
+                    "reason": "lead reconciliation Contract IDs must be unique",
+                    "contract_id": contract_id,
+                }
+            )
+        result = row["result"]
+        if result not in IMPLEMENTATION_RESULTS:
+            issues.append(
+                {
+                    "reason": "lead reconciliation Result must be PASS, GAP, or BLOCKED",
+                    "contract_id": contract_id,
+                    "actual": result,
+                }
+            )
+        raw_batch_refs = PATH_IN_BACKTICKS_RE.findall(row["batch_contract_ids_cell"])
+        batch_refs = [
+            reference
+            for reference in raw_batch_refs
+            if BATCH_IMPLEMENTATION_CONTRACT_ID_RE.fullmatch(reference)
+        ]
+        if not batch_refs or len(batch_refs) != len(raw_batch_refs) or len(batch_refs) != len(set(batch_refs)):
+            issues.append(
+                {
+                    "reason": "lead reconciliation Batch Contract IDs must contain unique exact backticked batch_<3+ digits>:C<3+ digits> IDs",
+                    "contract_id": contract_id,
+                    "actual": row["batch_contract_ids_cell"],
+                }
+            )
+        row["batch_contract_ids"] = batch_refs
+        mapped_batch_counts.update(batch_refs)
+        unknown_batch_refs = sorted(set(batch_refs) - set(batch_contracts))
+        if unknown_batch_refs:
+            issues.append(
+                {
+                    "reason": "lead reconciliation maps unknown batch Contract IDs",
+                    "contract_id": contract_id,
+                    "batch_contract_ids": unknown_batch_refs,
+                }
+            )
+        anchor_refs = set(PATH_IN_BACKTICKS_RE.findall(row["anchors"]))
+        source_refs = anchor_refs & known_source_files
+        symbol_refs = {
+            reference
+            for reference in anchor_refs - known_source_files - {contract_id}
+            if len(reference.strip()) >= 2 and not is_boilerplate_value(reference)
+        }
+        mapped_anchor_tokens = {
+            token
+            for batch_id in batch_refs
+            if batch_id in batch_contracts
+            for token in batch_contracts[batch_id].get("anchor_tokens", [])
+        }
+        if not source_refs or not symbol_refs:
+            issues.append(
+                {
+                    "reason": "lead reconciliation anchors must cite a repo source file and a concrete backticked symbol/token",
+                    "contract_id": contract_id,
+                    "anchors": row["anchors"],
+                }
+            )
+        elif not any(
+            symbol in source_text_for_file(source_file)
+            or symbol.casefold() == str(source_hashes.get(source_file, "")).casefold()
+            or symbol in mapped_anchor_tokens
+            for source_file in source_refs
+            for symbol in symbol_refs
+        ):
+            issues.append(
+                {
+                    "reason": "lead reconciliation anchor token must occur in at least one cited manifest source file",
+                    "contract_id": contract_id,
+                    "source_files": sorted(source_refs),
+                    "tokens": sorted(symbol_refs),
+                }
+            )
+        trace_statuses: list[str] = []
+        trace_status_by_field: dict[str, str] = {}
+        for field in LEAD_RECONCILIATION_TRACE_FIELDS:
+            value = row[field]
+            status_match = LEAD_RECONCILIATION_TRACE_STATUS_RE.match(value)
+            if not status_match:
+                issues.append(
+                    {
+                        "reason": "lead reconciliation trace cells must begin with pass, gap, blocked, or not applicable plus evidence",
+                        "contract_id": contract_id,
+                        "field": field,
+                        "actual": value,
+                    }
+                )
+                continue
+            trace_status = status_match.group(1).casefold()
+            trace_statuses.append(trace_status)
+            trace_status_by_field[field] = trace_status
+            evidence = status_match.group(2)
+            if is_boilerplate_value(evidence) or len(plain_cell(evidence)) < 12:
+                issues.append(
+                    {
+                        "reason": "lead reconciliation trace cells require concrete evidence or justified non-applicability",
+                        "contract_id": contract_id,
+                        "field": field,
+                        "actual": evidence,
+                    }
+                )
+        derived_result = (
+            "GAP"
+            if "gap" in trace_statuses
+            else "BLOCKED"
+            if "blocked" in trace_statuses
+            else "PASS"
+        )
+        if result in IMPLEMENTATION_RESULTS and trace_statuses and result != derived_result:
+            issues.append(
+                {
+                    "reason": "lead reconciliation Result contradicts its trace statuses",
+                    "contract_id": contract_id,
+                    "expected": derived_result,
+                    "actual": result,
+                }
+            )
+        if result == "PASS":
+            non_pass_clean_fields = {
+                field: trace_status_by_field.get(field)
+                for field in ("observable-outcome", "verification")
+                if trace_status_by_field.get(field) != "pass"
+            }
+            if non_pass_clean_fields:
+                issues.append(
+                    {
+                        "reason": "lead reconciliation PASS requires pass observable-outcome and verification trace statuses",
+                        "contract_id": contract_id,
+                        "actual": non_pass_clean_fields,
+                    }
+                )
+        mapped_results = {
+            batch_contracts[batch_id]["result"]
+            for batch_id in batch_refs
+            if batch_id in batch_contracts
+        }
+        if "GAP" in mapped_results and result != "GAP":
+            issues.append(
+                {
+                    "reason": "lead reconciliation cannot hide a mapped batch GAP",
+                    "contract_id": contract_id,
+                    "actual": result,
+                }
+            )
+        elif "BLOCKED" in mapped_results and result == "PASS":
+            issues.append(
+                {
+                    "reason": "lead reconciliation cannot hide a mapped batch BLOCKED result",
+                    "contract_id": contract_id,
+                    "actual": result,
+                }
+            )
+        required_source_refs = {
+            batch_contracts[batch_id]["source_file"]
+            for batch_id in batch_refs
+            if batch_id in batch_contracts
+        }
+        missing_source_refs = sorted(required_source_refs - source_refs)
+        if missing_source_refs:
+            issues.append(
+                {
+                    "reason": "lead reconciliation anchors must cover every mapped batch contract source file",
+                    "contract_id": contract_id,
+                    "missing_source_files": missing_source_refs,
+                }
+            )
+        lead_evidence_refs = {
+            "Contract/source anchors": anchor_refs,
+            "observable-outcome": set(PATH_IN_BACKTICKS_RE.findall(row["observable-outcome"])),
+            "verification": set(PATH_IN_BACKTICKS_RE.findall(row["verification"])),
+        }
+        missing_anchor_evidence: dict[str, dict[str, list[str]]] = {}
+        for batch_id in batch_refs:
+            if batch_id not in batch_contracts:
+                continue
+            batch_anchor_tokens = set(batch_contracts[batch_id].get("anchor_tokens", []))
+            missing_cells = {
+                field: sorted(batch_anchor_tokens)
+                for field, evidence_refs in lead_evidence_refs.items()
+                if not batch_anchor_tokens or not (batch_anchor_tokens & evidence_refs)
+            }
+            if missing_cells:
+                missing_anchor_evidence[batch_id] = missing_cells
+        if missing_anchor_evidence:
+            issues.append(
+                {
+                    "reason": "lead reconciliation must carry a concrete source anchor token for every mapped batch contract through anchors, observable outcome, and verification",
+                    "contract_id": contract_id,
+                    "missing_batch_anchor_evidence": missing_anchor_evidence,
+                }
+            )
+        verification = row["verification"]
+        lead_evidence_type_matches = list(
+            IMPLEMENTATION_EVIDENCE_TYPE_RE.finditer(verification)
+        )
+        lead_evidence_type = (
+            lead_evidence_type_matches[0].group(1).casefold()
+            if len(lead_evidence_type_matches) == 1
+            else None
+        )
+        if len(lead_evidence_type_matches) != 1:
+            issues.append(
+                {
+                    "reason": "lead reconciliation verification requires exactly one evidence-type: test|runtime|source-only declaration",
+                    "contract_id": contract_id,
+                    "verification": verification,
+                }
+            )
+        for typed_issue in validate_typed_implementation_evidence(
+            verification=verification,
+            evidence_type=lead_evidence_type,
+            result=result,
+            known_source_files=known_source_files,
+            valid_bound_evidence_ids=valid_bound_evidence_ids,
+            context="lead reconciliation verification",
+        ):
+            issues.append({"contract_id": contract_id, **typed_issue})
+        lead_expectation_matches = list(
+            IMPLEMENTATION_EXPECTATION_RE.finditer(verification)
+        )
+        if len(lead_expectation_matches) != 1 or len(
+            plain_cell(lead_expectation_matches[0].group(2))
+        ) < 12:
+            issues.append(
+                {
+                    "reason": "lead reconciliation verification requires exactly one concrete counterfactual: ... or invariance: ... statement",
+                    "contract_id": contract_id,
+                    "verification": verification,
+                }
+            )
+        lead_claim_text = " ".join(
+            row[field] for field in LEAD_RECONCILIATION_TRACE_FIELDS
+        )
+        if (
+            result == "PASS"
+            and lead_evidence_type == "source-only"
+            and SOURCE_ONLY_DISALLOWED_CLAIM_RE.search(lead_claim_text)
+        ):
+            issues.append(
+                {
+                    "reason": "lead PASS persistence, integration, external-effect, or success claims require test or runtime evidence, not source-only",
+                    "contract_id": contract_id,
+                    "verification": verification,
+                }
+            )
+        if (
+            not IMPLEMENTATION_VERIFICATION_BEHAVIOR_RE.search(verification)
+            or not PATH_IN_BACKTICKS_RE.search(verification)
+            or any(
+                phrase in normalized_text(verification)
+                for phrase in GENERIC_IMPLEMENTATION_EVIDENCE_PHRASES
+            )
+        ):
+            issues.append(
+                {
+                    "reason": "lead reconciliation verification must name a behavior-specific test, runtime check, or source proof",
+                    "contract_id": contract_id,
+                    "verification": verification,
+                }
+            )
+
+    missing_batch_contracts = sorted(set(batch_contracts) - set(mapped_batch_counts))
+    duplicate_batch_contracts = sorted(
+        contract_id for contract_id, count in mapped_batch_counts.items() if count > 1
+    )
+    if missing_batch_contracts:
+        issues.append(
+            {
+                "reason": "lead reconciliation must map every batch implementation Contract ID exactly once",
+                "missing_batch_contract_ids": missing_batch_contracts,
+            }
+        )
+    if duplicate_batch_contracts:
+        issues.append(
+            {
+                "reason": "lead reconciliation must not map a batch implementation Contract ID more than once",
+                "duplicate_batch_contract_ids": duplicate_batch_contracts,
+            }
+        )
+
+    findings_body = bodies.get("findings", "")
+    issues.extend(validate_findings_schema(findings_body))
+    normalized_findings = re.sub(r"[\s.]+", " ", findings_body.strip().lower()).strip()
+    finding_blocks = parse_finding_blocks(findings_body)
+    gap_ids = {
+        row["contract_id"] for row in rows if row["result"] in {"GAP", "BLOCKED"}
+    }
+    blocks_by_contract: dict[str, list[dict]] = defaultdict(list)
+    if normalized_findings in NO_FINDINGS_SENTINELS:
+        if gap_ids:
+            issues.append(
+                {
+                    "reason": "lead GAP or BLOCKED contracts require atomic finding blocks",
+                    "contract_ids": sorted(gap_ids),
+                }
+            )
+    else:
+        for block in finding_blocks:
+            fields = block["fields"]
+            file_refs = PATH_IN_BACKTICKS_RE.findall(fields.get("files", ""))
+            unknown_files = sorted(set(file_refs) - known_source_files)
+            if not file_refs or unknown_files:
+                issues.append(
+                    {
+                        "reason": "lead reconciliation finding Files must cite one or more manifest source files",
+                        "heading": block["heading"],
+                        "unknown_files": unknown_files,
+                    }
+                )
+            cited_ids = sorted(
+                ref
+                for ref in set(PATH_IN_BACKTICKS_RE.findall(block.get("text", "")))
+                if LEAD_IMPLEMENTATION_CONTRACT_ID_RE.fullmatch(ref)
+            )
+            if len(cited_ids) != 1 or cited_ids[0] not in gap_ids:
+                issues.append(
+                    {
+                        "reason": "each atomic lead finding must cite exactly one GAP or BLOCKED lead Contract ID",
+                        "heading": block["heading"],
+                        "contract_ids": cited_ids,
+                    }
+                )
+            else:
+                blocks_by_contract[cited_ids[0]].append(block)
+            for field_name in REQUIRED_FINDING_FIELDS - {"files", "interface evidence"}:
+                value = fields.get(field_name, "")
+                if is_boilerplate_value(value) or len(plain_cell(value)) < 12:
+                    issues.append(
+                        {
+                            "reason": "lead reconciliation finding fields require concrete atomic evidence",
+                            "heading": block["heading"],
+                            "field": field_name,
+                            "actual": value,
+                        }
+                    )
+            interface_evidence = fields.get("interface evidence", "")
+            if len(plain_cell(interface_evidence)) < 4:
+                issues.append(
+                    {
+                        "reason": "lead reconciliation finding requires interface evidence or Not applicable",
+                        "heading": block["heading"],
+                    }
+                )
+        for contract_id in sorted(gap_ids):
+            if len(blocks_by_contract.get(contract_id, [])) != 1:
+                issues.append(
+                    {
+                        "reason": "each lead GAP or BLOCKED Contract ID requires exactly one atomic finding block",
+                        "contract_id": contract_id,
+                        "finding_count": len(blocks_by_contract.get(contract_id, [])),
+                    }
+                )
+
+    if not bodies.get("open questions", "").strip():
+        issues.append({"reason": "lead reconciliation Open Questions must not be empty"})
+    return issues, rows
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def manifest_authorized_report_names(manifest: dict) -> list[str]:
+    """Return the exact batch, journey, and lead report basenames owned by the manifest."""
+    return merge_findings.manifest_report_names(manifest)
+
+
+def manifest_reports_root(manifest_path: Path, manifest: dict) -> Path:
+    declared = manifest.get("reports_dir")
+    owned_path = manifest_path.parent / "reports"
+    if owned_path.is_symlink():
+        raise ValueError(f"Manifest-owned reports directory must not be a symlink: {owned_path}")
+    reports_root = owned_path.resolve()
+    if not reports_root.is_dir():
+        raise ValueError(f"Manifest-owned reports directory is missing: {reports_root}")
+    if not isinstance(declared, str) or Path(declared).expanduser().resolve() != reports_root:
+        raise ValueError("Manifest reports_dir must resolve to its exact manifest-owned reports directory.")
+    return reports_root
+
+
+def snapshot_authorized_report_state(
+    manifest_path: Path,
+    manifest: dict,
+) -> tuple[Path, dict[str, str], dict[str, tuple[int, ...]]]:
+    reports_root = manifest_reports_root(manifest_path, manifest)
+    hashes: dict[str, str] = {}
+    identities: dict[str, tuple[int, ...]] = {}
+    for name in manifest_authorized_report_names(manifest):
+        report_path = reports_root / name
+        report_bytes, identity = merge_findings.read_stable_regular_file(
+            report_path,
+            f"manifest-authorized report {name}",
+        )
+        hashes[name] = hashlib.sha256(report_bytes).hexdigest()
+        identities[name] = identity
+    return reports_root, hashes, identities
+
+
+def snapshot_authorized_report_hashes(
+    manifest_path: Path,
+    manifest: dict,
+) -> tuple[Path, dict[str, str]]:
+    reports_root, hashes, _identities = snapshot_authorized_report_state(
+        manifest_path,
+        manifest,
+    )
+    return reports_root, hashes
+
+
+def build_verification_receipt(
+    *,
+    manifest: dict,
+    manifest_sha256: str,
+    reports_root: Path,
+    report_sha256: dict[str, str],
+    verifier_result: dict,
+) -> dict:
+    if verifier_result.get("ok") is not True:
+        raise ValueError("A verification receipt requires a passing verifier result.")
+    return {
+        "schema_version": 1,
+        "audit_kind": "full-repo-audit",
+        "run_id": manifest.get("run_id"),
+        "repo_root": manifest.get("repo_root"),
+        "manifest_sha256": manifest_sha256,
+        "reports_dir": str(reports_root),
+        "report_sha256": report_sha256,
+        "verifier_result_sha256": canonical_json_sha256(verifier_result),
+    }
+
+
+def verify_with_receipt_data(
+    manifest_path: Path,
+    reports: list[Path],
+    *,
+    skip_current_hash_check: bool = False,
+) -> tuple[dict, dict | None]:
+    manifest_bytes_before, manifest_identity_before = merge_findings.read_stable_regular_file(
+        manifest_path,
+        "audit manifest",
+    )
+    manifest_sha256 = hashlib.sha256(manifest_bytes_before).hexdigest()
+    manifest = load_manifest(manifest_path)
+    reports_root_before, report_hashes_before, report_identities_before = snapshot_authorized_report_state(
+        manifest_path,
+        manifest,
+    )
+    result = verify(
+        manifest_path,
+        reports,
+        skip_current_hash_check=skip_current_hash_check,
+    )
+    if result.get("ok") is not True:
+        return result, None
+
+    manifest_bytes_after, manifest_identity_after = merge_findings.read_stable_regular_file(
+        manifest_path,
+        "audit manifest",
+    )
+    reports_root_after, report_hashes_after, report_identities_after = snapshot_authorized_report_state(
+        manifest_path,
+        manifest,
+    )
+    if (
+        manifest_bytes_after != manifest_bytes_before
+        or manifest_identity_after != manifest_identity_before
+    ):
+        raise ValueError("Audit manifest changed during verification; refusing verification receipt.")
+    if (
+        reports_root_after != reports_root_before
+        or report_hashes_after != report_hashes_before
+        or report_identities_after != report_identities_before
+    ):
+        raise ValueError(
+            "Manifest-authorized reports changed during verification; refusing verification receipt."
+        )
+    receipt = build_verification_receipt(
+        manifest=manifest,
+        manifest_sha256=manifest_sha256,
+        reports_root=reports_root_before,
+        report_sha256=report_hashes_before,
+        verifier_result=result,
+    )
+    return result, receipt
+
+
+def resolved_receipt_output_path(raw_path: str | Path) -> Path:
+    path = Path(raw_path).expanduser()
+    if not path.name or path.name in {".", ".."}:
+        raise ValueError("Verification receipt output must name a file.")
+    parent = path.parent.resolve()
+    if not parent.is_dir():
+        raise ValueError(f"Verification receipt output parent is missing: {parent}")
+    return parent / path.name
+
+
+def prepare_receipt_output(
+    raw_path: str | Path,
+    *,
+    manifest_path: Path,
+    manifest: dict,
+) -> Path:
+    """Validate and invalidate a prior receipt before a new verification attempt."""
+    target = resolved_receipt_output_path(raw_path)
+    expected_target = manifest_path.parent.resolve() / "verification_receipt.json"
+    if target != expected_target:
+        raise ValueError(
+            "Verification receipt output must be exactly <manifest-dir>/verification_receipt.json."
+        )
+    # Validate the manifest-owned report root and allowlist before invalidating a prior receipt.
+    manifest_reports_root(manifest_path, manifest)
+    manifest_authorized_report_names(manifest)
+    if target.is_symlink():
+        raise ValueError(f"Verification receipt output must not be a symlink: {target}")
+    if target.exists():
+        if not target.is_file():
+            raise ValueError(f"Verification receipt output must be a regular file: {target}")
+        target.unlink()
+    return target
+
+
+def write_json_atomic(path: Path, payload: dict) -> None:
+    if path.is_symlink():
+        raise ValueError(f"Verification receipt output must not be a symlink: {path}")
+    if path.exists() and not path.is_file():
+        raise ValueError(f"Verification receipt output must be a regular file: {path}")
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.is_symlink():
+            raise ValueError(f"Verification receipt output became a symlink: {path}")
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
 
 
 def parse_report(report_path: Path, known_batch_ids: set[str]) -> dict:
@@ -2470,6 +3652,7 @@ def parse_report(report_path: Path, known_batch_ids: set[str]) -> dict:
     file_batch_id = filename_batch_id(report_path)
     known_declared_ids = [batch_id for batch_id in declared_ids if batch_id in known_batch_ids]
     batch_id = known_declared_ids[0] if len(known_declared_ids) == 1 else None
+    implementation_rows, malformed_implementation_rows = parse_implementation_inventory_rows(text, report_path)
     interface_rows, malformed_interface_rows = parse_interface_inventory_rows(text, report_path)
 
     for line in text.splitlines():
@@ -2532,6 +3715,9 @@ def parse_report(report_path: Path, known_batch_ids: set[str]) -> dict:
         "declared_batch_ids": declared_ids,
         "rows": rows,
         "malformed_rows": malformed_rows,
+        "implementation_rows": implementation_rows,
+        "malformed_implementation_rows": malformed_implementation_rows,
+        "implementation_inventory_body": bodies.get("implementation inventory", ""),
         "interface_rows": interface_rows,
         "malformed_interface_rows": malformed_interface_rows,
         "interface_inventory_body": bodies.get("interface inventory", ""),
@@ -2715,11 +3901,30 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
     }
     known_batch_ids = set(expected_by_batch)
     expected_run_id = manifest.get("run_id")
+    bound_evidence_records, bound_evidence_issues = audit_evidence.validate_visual_evidence_manifest(
+        manifest_path.parent,
+        expected_run_id or "",
+        required=False,
+    )
+    invalid_bound_evidence_ids = {
+        issue.get("record")
+        for issue in bound_evidence_issues
+        if isinstance(issue.get("record"), str)
+    }
+    has_global_bound_evidence_issue = any(
+        not isinstance(issue.get("record"), str) for issue in bound_evidence_issues
+    )
+    valid_bound_evidence_ids = (
+        set()
+        if has_global_bound_evidence_issue
+        else set(bound_evidence_records) - invalid_bound_evidence_ids
+    )
     repo_root_raw = manifest.get("repo_root")
     repo_root_text = repo_root_raw.strip() if isinstance(repo_root_raw, str) else ""
     repo_root = Path(repo_root_text).expanduser() if repo_root_text else None
     source_text_checks_enabled = repo_root is not None and repo_root.exists() and repo_root.is_dir()
     source_text_cache: dict[str, str] = {}
+    source_bytes_cache: dict[str, bytes] = {}
 
     def source_text(rel_path: str) -> str:
         if not source_text_checks_enabled or repo_root is None:
@@ -2731,6 +3936,40 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
             except OSError:
                 source_text_cache[rel_path] = ""
         return source_text_cache[rel_path]
+
+    def source_bytes(rel_path: str) -> bytes:
+        if not source_text_checks_enabled or repo_root is None:
+            return b""
+        if rel_path not in source_bytes_cache:
+            try:
+                source_bytes_cache[rel_path] = (repo_root / rel_path).read_bytes()
+            except OSError:
+                source_bytes_cache[rel_path] = b""
+        return source_bytes_cache[rel_path]
+
+    def source_bytes_for_unit(unit_id: str) -> bytes:
+        rel_path = expected_unit_to_file.get(unit_id, unit_id)
+        unit = coverage_unit_by_id.get(unit_id, {})
+        data = source_bytes(rel_path)
+        start_byte = unit.get("start_byte") if isinstance(unit, dict) else None
+        end_byte = unit.get("end_byte") if isinstance(unit, dict) else None
+        if isinstance(start_byte, int) and isinstance(end_byte, int):
+            return data[start_byte - 1 : end_byte]
+        start_line = unit.get("start_line") if isinstance(unit, dict) else None
+        end_line = unit.get("end_line") if isinstance(unit, dict) else None
+        if isinstance(start_line, int) and isinstance(end_line, int):
+            return b"".join(data.splitlines(keepends=True)[start_line - 1 : end_line])
+        return data
+
+    def unit_requires_source_token_anchor(unit_id: str) -> bool:
+        data = source_bytes_for_unit(unit_id)
+        if not data or b"\0" in data:
+            return False
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+        return bool(text.strip())
 
     def source_text_for_unit(unit_id: str) -> str:
         rel_path = expected_unit_to_file.get(unit_id, unit_id)
@@ -2759,10 +3998,107 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
         lines = text.splitlines()
         return "\n".join(lines[start_line - 1 : end_line])
 
+    def responsibility_occurrences_for_unit(unit_id: str) -> list[dict[str, object]]:
+        rel_path = expected_unit_to_file.get(unit_id, unit_id)
+        unit = coverage_unit_by_id.get(unit_id, {})
+        start_line = unit.get("start_line") if isinstance(unit, dict) else None
+        start_byte = unit.get("start_byte") if isinstance(unit, dict) else None
+        return implementation_responsibility_occurrences(
+            rel_path,
+            source_text_for_unit(unit_id),
+            start_line=start_line if isinstance(start_line, int) else 1,
+            start_byte=start_byte if isinstance(start_byte, int) else None,
+        )
+
     unresolved_scope_warnings, excluded_file_mismatches = verify_excluded_files(manifest_path, manifest)
     completion_marker_mismatches = verify_completion_marker(manifest_path, manifest)
 
-    parsed_reports = [parse_report(report, known_batch_ids) for report in reports]
+    lead_report_paths = [
+        report for report in reports if report.name == LEAD_RECONCILIATION_REPORT_NAME
+    ]
+    batch_report_paths = [
+        report for report in reports if report.name != LEAD_RECONCILIATION_REPORT_NAME
+    ]
+    parsed_reports = [parse_report(report, known_batch_ids) for report in batch_report_paths]
+    batch_contracts: dict[str, dict] = {}
+    for parsed in parsed_reports:
+        for row in parsed["implementation_rows"]:
+            contract_id = row.get("contract_id")
+            unit_id = row.get("file")
+            if (
+                isinstance(contract_id, str)
+                and BATCH_IMPLEMENTATION_CONTRACT_ID_RE.fullmatch(contract_id)
+                and isinstance(unit_id, str)
+            ):
+                source_file = expected_unit_to_file.get(unit_id, unit_id)
+                expected_unit_hash = expected_hashes.get(unit_id, "")
+                excluded_anchor_refs = {unit_id, source_file, contract_id}
+                unit_text = source_text_for_unit(unit_id)
+                requires_source_token = unit_requires_source_token_anchor(unit_id)
+                occurrence_anchors = {
+                    str(item["anchor"])
+                    for item in responsibility_occurrences_for_unit(unit_id)
+                }
+                anchor_tokens = sorted(
+                    {
+                        plain_cell(reference)
+                        for reference in PATH_IN_BACKTICKS_RE.findall(row.get("anchors", ""))
+                        if plain_cell(reference) not in excluded_anchor_refs
+                        and (
+                            (
+                                plain_cell(reference) in unit_text
+                                or plain_cell(reference) in occurrence_anchors
+                            )
+                            if requires_source_token
+                            else (
+                                plain_cell(reference) in unit_text
+                                or plain_cell(reference) in occurrence_anchors
+                                or (
+                                    expected_unit_hash
+                                    and plain_cell(reference).casefold()
+                                    == expected_unit_hash.casefold()
+                                )
+                            )
+                        )
+                    }
+                )
+                batch_contracts[contract_id] = {
+                    "unit": unit_id,
+                    "source_file": source_file,
+                    "result": row.get("result"),
+                    "anchor_tokens": anchor_tokens,
+                }
+    lead_reconciliation_issues: list[dict] = []
+    lead_reconciliation_rows: list[dict] = []
+    expected_lead_path = (manifest_path.parent / "reports" / LEAD_RECONCILIATION_REPORT_NAME).resolve()
+    if len(lead_report_paths) != 1:
+        lead_reconciliation_issues.append(
+            {
+                "reason": "exactly one reports/lead_reconciliation.md artifact is required",
+                "reports": [str(path) for path in lead_report_paths],
+            }
+        )
+    else:
+        actual_lead_path = lead_report_paths[0].resolve()
+        if actual_lead_path != expected_lead_path:
+            lead_reconciliation_issues.append(
+                {
+                    "reason": "lead reconciliation report must use the manifest-owned exact report path",
+                    "expected": str(expected_lead_path),
+                    "actual": str(actual_lead_path),
+                }
+            )
+        report_issues, lead_reconciliation_rows = validate_lead_reconciliation_report(
+            lead_report_paths[0],
+            expected_run_id=expected_run_id,
+            known_source_files=set(expected_source_files),
+            source_file_count=len(expected_source_files),
+            source_text_for_file=source_text,
+            batch_contracts=batch_contracts,
+            source_hashes=expected_source_hashes,
+            valid_bound_evidence_ids=valid_bound_evidence_ids,
+        )
+        lead_reconciliation_issues.extend(report_issues)
     source_interface_relevance = {
         item["rel_path"]: item.get("interface_relevant") is True
         for item in manifest.get("source_files", [])
@@ -2848,7 +4184,7 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
         source_text_errors.append(
             {
                 "repo_root": str(repo_root) if repo_root is not None else None,
-                "reason": "manifest repo_root is missing or not a directory; source-backed interface, placeholder, dead-control, and asset checks cannot run",
+                "reason": "manifest repo_root is missing or not a directory; source-backed implementation, interface, placeholder, dead-control, and asset checks cannot run",
             }
         )
     if skip_current_hash_check:
@@ -2916,6 +4252,572 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
         for parsed in parsed_reports
         if parsed["malformed_rows"]
     ]
+    implementation_inventory_issues = []
+    contract_id_counts = Counter(
+        row["contract_id"]
+        for parsed in parsed_reports
+        for row in parsed["implementation_rows"]
+        if row.get("contract_id")
+    )
+    duplicate_contract_ids = {
+        contract_id for contract_id, count in contract_id_counts.items() if count > 1
+    }
+    for parsed in parsed_reports:
+        batch_id = parsed["batch_id"]
+        if not batch_id or batch_id not in expected_by_batch:
+            continue
+        expected_units = set(expected_by_batch[batch_id])
+        observed_units = [row["file"] for row in parsed["implementation_rows"]]
+        observed_unit_set = set(observed_units)
+        issues = []
+        if parsed["malformed_implementation_rows"]:
+            issues.append(
+                {
+                    "reason": "malformed implementation inventory rows",
+                    "rows": parsed["malformed_implementation_rows"],
+                }
+            )
+        missing_units = sorted(expected_units - observed_unit_set)
+        extra_units = sorted(observed_unit_set - expected_units)
+        if missing_units:
+            issues.append({"reason": "missing implementation inventory rows", "units": missing_units})
+        if extra_units:
+            issues.append({"reason": "implementation inventory rows outside this batch", "units": extra_units})
+
+        responsibility_occurrences_by_unit = {
+            unit_id: responsibility_occurrences_for_unit(unit_id)
+            for unit_id in sorted(expected_units)
+        }
+        for unit_id in sorted(expected_units):
+            rel_path = expected_unit_to_file.get(unit_id, unit_id)
+            responsibility_anchors = [
+                str(item["anchor"])
+                for item in responsibility_occurrences_by_unit[unit_id]
+            ]
+            hint_contracts: dict[str, set[str]] = defaultdict(set)
+            for row in parsed["implementation_rows"]:
+                if row["file"] != unit_id:
+                    continue
+                anchor_refs = set(PATH_IN_BACKTICKS_RE.findall(row["anchors"]))
+                trace_refs = set(PATH_IN_BACKTICKS_RE.findall(row["implementation_trace"]))
+                verification_refs = set(PATH_IN_BACKTICKS_RE.findall(row["verification_evidence"]))
+                for hint in responsibility_anchors:
+                    if hint in anchor_refs and hint in trace_refs and hint in verification_refs:
+                        hint_contracts[hint].add(row["contract_id"])
+            missing_responsibilities = sorted(set(responsibility_anchors) - set(hint_contracts))
+            if missing_responsibilities:
+                issues.append(
+                    {
+                        "reason": "implementation inventory omitted occurrence-aware named source responsibilities",
+                        "unit": unit_id,
+                        "missing_source_anchors": missing_responsibilities,
+                    }
+                )
+            contract_hints: dict[str, set[str]] = defaultdict(set)
+            for hint, contract_ids in hint_contracts.items():
+                for contract_id in contract_ids:
+                    contract_hints[contract_id].add(hint)
+            overloaded_contracts = {
+                contract_id: sorted(hints)
+                for contract_id, hints in contract_hints.items()
+                if len(hints) > 1
+            }
+            if overloaded_contracts:
+                issues.append(
+                    {
+                        "reason": "each named source definition occurrence requires its own implementation inventory row",
+                        "unit": unit_id,
+                        "overloaded_contracts": overloaded_contracts,
+                    }
+                )
+
+        finding_blocks_by_file: dict[str, list[dict]] = defaultdict(list)
+        for block in parsed["finding_blocks"]:
+            for file_ref in PATH_IN_BACKTICKS_RE.findall(block["fields"].get("files", "")):
+                finding_blocks_by_file[file_ref].append(block)
+
+        gap_rows = [
+            row
+            for row in parsed["implementation_rows"]
+            if row["file"] in expected_units and row["result"] in {"GAP", "BLOCKED"}
+        ]
+        gap_rows_by_contract = {
+            row["contract_id"]: row
+            for row in gap_rows
+            if (
+                (match := BATCH_IMPLEMENTATION_CONTRACT_ID_RE.fullmatch(row["contract_id"]))
+                and match.group(1) == batch_id
+            )
+        }
+        finding_blocks_by_contract: dict[str, list[dict]] = defaultdict(list)
+        for block in parsed["finding_blocks"]:
+            cited_ids = sorted(
+                {
+                    reference
+                    for reference in PATH_IN_BACKTICKS_RE.findall(block.get("text", ""))
+                    if BATCH_IMPLEMENTATION_CONTRACT_ID_RE.fullmatch(reference)
+                }
+            )
+            if len(cited_ids) != 1 or cited_ids[0] not in gap_rows_by_contract:
+                issues.append(
+                    {
+                        "reason": "each atomic batch finding must cite exactly one GAP or BLOCKED implementation Contract ID",
+                        "heading": block.get("heading"),
+                        "contract_ids": cited_ids,
+                    }
+                )
+            else:
+                finding_blocks_by_contract[cited_ids[0]].append(block)
+
+        for row in parsed["implementation_rows"]:
+            unit_id = row["file"]
+            if unit_id not in expected_units:
+                continue
+            rel_path = expected_unit_to_file.get(unit_id, unit_id)
+            contract_id = row["contract_id"]
+            result = row["result"]
+            trace_statuses: list[str] = []
+            trace_status_by_field: dict[str, str] = {}
+            for trace_field in (
+                "implementation_trace",
+                "failure_trace",
+                "verification_evidence",
+            ):
+                status_match = IMPLEMENTATION_TRACE_STATUS_RE.match(row[trace_field])
+                if not status_match:
+                    issues.append(
+                        {
+                            "reason": "implementation trace fields must begin with pass, gap, blocked, or not applicable plus evidence",
+                            "unit": unit_id,
+                            "contract_id": contract_id,
+                            "field": trace_field,
+                            "actual": row[trace_field],
+                        }
+                    )
+                    continue
+                trace_status = status_match.group(1).casefold()
+                trace_statuses.append(trace_status)
+                trace_status_by_field[trace_field] = trace_status
+            derived_result = (
+                "GAP"
+                if "gap" in trace_statuses
+                else "BLOCKED"
+                if "blocked" in trace_statuses
+                else "PASS"
+            )
+            if result in IMPLEMENTATION_RESULTS and trace_statuses and result != derived_result:
+                issues.append(
+                    {
+                        "reason": "implementation inventory Result contradicts its trace statuses",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        "expected": derived_result,
+                        "actual": result,
+                    }
+                )
+            if result == "PASS":
+                non_pass_clean_fields = {
+                    field: trace_status_by_field.get(field)
+                    for field in ("implementation_trace", "verification_evidence")
+                    if trace_status_by_field.get(field) != "pass"
+                }
+                if non_pass_clean_fields:
+                    issues.append(
+                        {
+                            "reason": "implementation inventory PASS requires pass implementation and verification trace statuses",
+                            "unit": unit_id,
+                            "contract_id": contract_id,
+                            "actual": non_pass_clean_fields,
+                        }
+                    )
+            contract_id_match = BATCH_IMPLEMENTATION_CONTRACT_ID_RE.fullmatch(contract_id)
+            if (
+                contract_id_match is None
+                or contract_id_match.group(1) != batch_id
+                or is_boilerplate_value(contract_id)
+            ):
+                issues.append(
+                    {
+                        "reason": "implementation inventory Contract ID must use the owning batch_<3+ digits>:C<3+ digits> namespace",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        "expected_batch": batch_id,
+                    }
+                )
+            if contract_id in duplicate_contract_ids:
+                issues.append(
+                    {
+                        "reason": "implementation inventory Contract IDs must be unique across the audit",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                    }
+                )
+            if result not in IMPLEMENTATION_RESULTS:
+                issues.append(
+                    {
+                        "reason": "implementation inventory Result must be PASS, GAP, or BLOCKED",
+                        "unit": unit_id,
+                        "actual": result,
+                    }
+                )
+            field_minimums = {
+                "contract": 12,
+                "anchors": 3,
+                "implementation_trace": 12,
+                "failure_trace": 12,
+                "verification_evidence": 24,
+            }
+            for field, minimum in field_minimums.items():
+                value = row[field]
+                if is_boilerplate_value(value) or len(plain_cell(value)) < minimum:
+                    issues.append(
+                        {
+                            "reason": "implementation inventory field must contain concrete non-boilerplate evidence",
+                            "unit": unit_id,
+                            "field": field,
+                            "actual": value,
+                        }
+                    )
+
+            contract_text = row["contract"]
+            basis_matches = list(IMPLEMENTATION_BASIS_RE.finditer(contract_text))
+            if len(basis_matches) != 1:
+                issues.append(
+                    {
+                        "reason": "implementation responsibility requires exactly one 'Basis: <kind> — <backticked reference>' statement",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        "actual": contract_text,
+                    }
+                )
+                basis_kind = None
+                basis_refs: set[str] = set()
+            else:
+                basis_kind = basis_matches[0].group(1).casefold()
+                basis_detail = basis_matches[0].group(2)
+                basis_refs = {
+                    plain_cell(reference)
+                    for reference in PATH_IN_BACKTICKS_RE.findall(basis_detail)
+                    if len(plain_cell(reference)) >= 2
+                    and not is_boilerplate_value(plain_cell(reference))
+                }
+                if basis_kind not in IMPLEMENTATION_BASIS_KINDS:
+                    issues.append(
+                        {
+                            "reason": "implementation responsibility Basis kind is not an allowed authoritative or source-inferred kind",
+                            "unit": unit_id,
+                            "contract_id": contract_id,
+                            "actual": basis_kind,
+                            "allowed": sorted(IMPLEMENTATION_BASIS_KINDS),
+                        }
+                    )
+                if not basis_refs:
+                    issues.append(
+                        {
+                            "reason": "implementation responsibility Basis must cite a concrete backticked reference",
+                            "unit": unit_id,
+                            "contract_id": contract_id,
+                            "actual": basis_detail,
+                        }
+                    )
+                if basis_kind in IMPLEMENTATION_BASIS_KINDS - {"source-inferred"}:
+                    unresolved_basis_refs = sorted(
+                        reference
+                        for reference in basis_refs
+                        if manifest_source_path_for_reference(
+                            reference,
+                            set(expected_source_files),
+                        )
+                        is None
+                    )
+                    if unresolved_basis_refs:
+                        issues.append(
+                            {
+                                "reason": "authoritative implementation Basis references must resolve to manifest-owned source files, optionally with a precise #line, #byte, or #symbol suffix",
+                                "unit": unit_id,
+                                "contract_id": contract_id,
+                                "unresolved_basis_references": unresolved_basis_refs,
+                            }
+                        )
+
+            discovery_matches = list(IMPLEMENTATION_DISCOVERY_RE.finditer(contract_text))
+            if len(discovery_matches) != 1:
+                issues.append(
+                    {
+                        "reason": "implementation responsibility requires exactly one 'Discovery: parsed|manual — <backticked reference>' statement",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        "actual": contract_text,
+                    }
+                )
+                discovery_kind = None
+                discovery_refs: set[str] = set()
+            else:
+                discovery_kind = discovery_matches[0].group(1).casefold()
+                discovery_detail = discovery_matches[0].group(2)
+                discovery_refs = {
+                    plain_cell(reference)
+                    for reference in PATH_IN_BACKTICKS_RE.findall(discovery_detail)
+                    if len(plain_cell(reference)) >= 2
+                    and not is_boilerplate_value(plain_cell(reference))
+                }
+                if not discovery_refs:
+                    issues.append(
+                        {
+                            "reason": "implementation responsibility Discovery must cite a concrete backticked reference",
+                            "unit": unit_id,
+                            "contract_id": contract_id,
+                            "actual": discovery_detail,
+                        }
+                    )
+                if discovery_kind == "parsed":
+                    recognized_refs = {
+                        str(item["anchor"])
+                        for item in responsibility_occurrences_by_unit.get(unit_id, [])
+                    }
+                    row_anchor_refs = {
+                        plain_cell(reference)
+                        for reference in PATH_IN_BACKTICKS_RE.findall(row["anchors"])
+                    }
+                    if not (discovery_refs & recognized_refs & row_anchor_refs):
+                        issues.append(
+                            {
+                                "reason": "parsed discovery requires a recognized occurrence-aware named-definition anchor in the assigned unit anchors",
+                                "unit": unit_id,
+                                "contract_id": contract_id,
+                                "recognized": sorted(recognized_refs),
+                                "actual": sorted(discovery_refs),
+                            }
+                        )
+            trace_text = row["implementation_trace"]
+            if "->" not in trace_text and "→" not in trace_text:
+                issues.append(
+                    {
+                        "reason": "implementation/data/side-effect trace must show an ordered path with '->' or '→'",
+                        "unit": unit_id,
+                        "actual": trace_text,
+                    }
+                )
+            valid_anchor_values: list[str] = []
+            if source_text_checks_enabled:
+                unit_text = source_text_for_unit(unit_id)
+                expected_hash = expected_hashes.get(unit_id, "")
+                anchor_values = [plain_cell(value) for value in PATH_IN_BACKTICKS_RE.findall(row["anchors"])]
+                source_anchor_values = [
+                    value
+                    for value in anchor_values
+                    if len(value) >= 1
+                    and value not in {unit_id, rel_path, contract_id, expected_hash}
+                    and (
+                        value in unit_text
+                        or value
+                        in {
+                            str(item["anchor"])
+                            for item in responsibility_occurrences_by_unit.get(unit_id, [])
+                        }
+                    )
+                ]
+                hash_anchor_values = [
+                    value for value in anchor_values
+                    if expected_hash and value.casefold() == expected_hash.casefold()
+                ]
+                requires_source_token = unit_requires_source_token_anchor(unit_id)
+                valid_anchor_values = source_anchor_values if requires_source_token else (source_anchor_values or hash_anchor_values)
+                if requires_source_token and not source_anchor_values:
+                    issues.append(
+                        {
+                            "reason": "non-empty text implementation units require a backticked source token; a file or unit hash is coverage evidence, not an implementation anchor",
+                            "unit": unit_id,
+                            "anchors": row["anchors"],
+                        }
+                    )
+                elif not requires_source_token and not valid_anchor_values:
+                    issues.append(
+                        {
+                            "reason": "empty or non-text implementation units require a backticked assigned-unit SHA-256 or concrete decoded source token",
+                            "unit": unit_id,
+                            "anchors": row["anchors"],
+                        }
+                    )
+
+            if basis_kind == "source-inferred" and basis_refs and not (
+                basis_refs & set(valid_anchor_values)
+            ):
+                issues.append(
+                    {
+                        "reason": "source-inferred Basis must cite a validated source anchor from the assigned unit",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        "basis_references": sorted(basis_refs),
+                        "validated_anchors": sorted(valid_anchor_values),
+                    }
+                )
+            if discovery_refs and not (discovery_refs & set(valid_anchor_values)):
+                issues.append(
+                    {
+                        "reason": "implementation responsibility Discovery must cite a validated source anchor from the assigned unit",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        "discovery_references": sorted(discovery_refs),
+                        "validated_anchors": sorted(valid_anchor_values),
+                    }
+                )
+
+            trace_refs = set(PATH_IN_BACKTICKS_RE.findall(trace_text))
+            if not valid_anchor_values or not any(anchor in trace_refs for anchor in valid_anchor_values):
+                issues.append(
+                    {
+                        "reason": "implementation/data/side-effect trace must repeat a validated backticked source anchor from the assigned unit",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        "actual": trace_text,
+                    }
+                )
+
+            verification_evidence = row["verification_evidence"]
+            evidence_type_matches = list(
+                IMPLEMENTATION_EVIDENCE_TYPE_RE.finditer(verification_evidence)
+            )
+            evidence_type = (
+                evidence_type_matches[0].group(1).casefold()
+                if len(evidence_type_matches) == 1
+                else None
+            )
+            if len(evidence_type_matches) != 1:
+                issues.append(
+                    {
+                        "reason": "implementation verification requires exactly one evidence-type: test|runtime|source-only declaration",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        "verification_evidence": verification_evidence,
+                    }
+                )
+            for typed_issue in validate_typed_implementation_evidence(
+                verification=verification_evidence,
+                evidence_type=evidence_type,
+                result=result,
+                known_source_files=set(expected_source_files),
+                valid_bound_evidence_ids=valid_bound_evidence_ids,
+                context="implementation verification",
+            ):
+                issues.append(
+                    {
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        **typed_issue,
+                    }
+                )
+            expectation_matches = list(
+                IMPLEMENTATION_EXPECTATION_RE.finditer(verification_evidence)
+            )
+            if len(expectation_matches) != 1 or len(
+                plain_cell(expectation_matches[0].group(2))
+            ) < 12:
+                issues.append(
+                    {
+                        "reason": "implementation verification requires exactly one concrete counterfactual: ... or invariance: ... statement",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        "verification_evidence": verification_evidence,
+                    }
+                )
+            claim_text = f"{row['contract']} {row['implementation_trace']}"
+            if (
+                result == "PASS"
+                and evidence_type == "source-only"
+                and SOURCE_ONLY_DISALLOWED_CLAIM_RE.search(claim_text)
+            ):
+                issues.append(
+                    {
+                        "reason": "PASS persistence, integration, external-effect, or success claims require test or runtime evidence, not source-only",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        "verification_evidence": verification_evidence,
+                    }
+                )
+            verification_refs = set(PATH_IN_BACKTICKS_RE.findall(verification_evidence))
+            generic_verification = any(
+                phrase in normalized_text(verification_evidence)
+                for phrase in GENERIC_IMPLEMENTATION_EVIDENCE_PHRASES
+            )
+            if (
+                not valid_anchor_values
+                or not any(anchor in verification_refs for anchor in valid_anchor_values)
+                or not IMPLEMENTATION_VERIFICATION_BEHAVIOR_RE.search(verification_evidence)
+                or generic_verification
+            ):
+                issues.append(
+                    {
+                        "reason": "implementation verification must be behavior-specific, cite a validated source anchor, and name what a test, runtime check, or manual source trace proves",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        "verification_evidence": verification_evidence,
+                    }
+                )
+
+            file_bound_blocks = finding_blocks_by_file.get(rel_path, [])
+            bound_blocks = [
+                block
+                for block in file_bound_blocks
+                if finding_cites_implementation_contract(
+                    block,
+                    contract_id=contract_id,
+                    unit_id=unit_id,
+                    rel_path=rel_path,
+                )
+            ]
+            if result in {"GAP", "BLOCKED"}:
+                if not bound_blocks:
+                    issues.append(
+                        {
+                            "reason": "GAP or BLOCKED implementation inventory row must have a file-bound finding that cites its exact Contract ID and range unit when applicable",
+                            "unit": unit_id,
+                            "source_file": rel_path,
+                            "contract_id": contract_id,
+                            "result": result,
+                        }
+                    )
+
+        for contract_id, row in sorted(gap_rows_by_contract.items()):
+            finding_count = len(finding_blocks_by_contract.get(contract_id, []))
+            if finding_count != 1:
+                issues.append(
+                    {
+                        "reason": "each GAP or BLOCKED implementation Contract ID requires exactly one atomic batch finding",
+                        "unit": row["file"],
+                        "contract_id": contract_id,
+                        "finding_count": finding_count,
+                    }
+                )
+
+        gap_rows_by_file: dict[str, list[dict]] = defaultdict(list)
+        for row in gap_rows:
+            gap_rows_by_file[expected_unit_to_file.get(row["file"], row["file"])].append(row)
+        for rel_path, blocks in finding_blocks_by_file.items():
+            if rel_path not in expected_files_by_batch.get(batch_id, set()):
+                continue
+            gap_rows = gap_rows_by_file.get(rel_path, [])
+            for block in blocks:
+                if not any(
+                    finding_cites_implementation_contract(
+                        block,
+                        contract_id=row["contract_id"],
+                        unit_id=row["file"],
+                        rel_path=rel_path,
+                    )
+                    for row in gap_rows
+                ):
+                    issues.append(
+                        {
+                            "reason": "every file-bound finding must cite a GAP or BLOCKED implementation Contract ID and exact range unit when applicable",
+                            "source_file": rel_path,
+                            "heading": block.get("heading"),
+                        }
+                    )
+        if issues:
+            implementation_inventory_issues.append(
+                {"batch": batch_id, "report": parsed["report"], "issues": issues}
+            )
     interface_inventory_issues = []
     for parsed in parsed_reports:
         batch_id = parsed["batch_id"]
@@ -3172,6 +5074,8 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
             effort_ledger_mismatches,
             batch_id_mismatches,
             malformed,
+            lead_reconciliation_issues,
+            implementation_inventory_issues,
             interface_inventory_issues,
             finding_schema_issues,
             placeholder_omissions,
@@ -3213,6 +5117,9 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
         "effort_ledger_mismatches": effort_ledger_mismatches,
         "batch_id_mismatches": batch_id_mismatches,
         "malformed_rows": malformed,
+        "lead_reconciliation_contract_count": len(lead_reconciliation_rows),
+        "lead_reconciliation_issues": lead_reconciliation_issues,
+        "implementation_inventory_issues": implementation_inventory_issues,
         "interface_inventory_issues": interface_inventory_issues,
         "finding_schema_issues": finding_schema_issues,
         "placeholder_omissions": placeholder_omissions,
@@ -3258,6 +5165,8 @@ def print_human(result: dict) -> None:
         "effort_ledger_mismatches",
         "batch_id_mismatches",
         "malformed_rows",
+        "lead_reconciliation_issues",
+        "implementation_inventory_issues",
         "interface_inventory_issues",
         "finding_schema_issues",
         "placeholder_omissions",
@@ -3278,8 +5187,32 @@ def emit_json(payload: dict) -> None:
 def main() -> int:
     args = parse_args()
     manifest_path = Path(args.manifest).expanduser().resolve()
+    receipt = None
+    receipt_path = None
+    if args.receipt_out:
+        receipt_manifest = load_manifest(manifest_path)
+        receipt_path = prepare_receipt_output(
+            args.receipt_out,
+            manifest_path=manifest_path,
+            manifest=receipt_manifest,
+        )
+        if args.skip_current_hash_check:
+            raise ValueError(
+                "--receipt-out cannot be combined with --skip-current-hash-check; "
+                "a verification receipt requires current source freshness."
+            )
     reports = iter_report_files(args.reports)
-    result = verify(manifest_path, reports, skip_current_hash_check=args.skip_current_hash_check)
+    if args.receipt_out:
+        result, receipt = verify_with_receipt_data(
+            manifest_path,
+            reports,
+            skip_current_hash_check=args.skip_current_hash_check,
+        )
+    else:
+        result = verify(manifest_path, reports, skip_current_hash_check=args.skip_current_hash_check)
+    if receipt is not None:
+        assert receipt_path is not None
+        write_json_atomic(receipt_path, receipt)
     if args.json:
         emit_json(result)
     else:

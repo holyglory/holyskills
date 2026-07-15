@@ -4,10 +4,28 @@ Direction: Confirmed: user decisions favor concise rationale that preserves proj
 complete truthful end-to-end behavior, informed choices,
 production-grade foundations, canonical ownership, realistic verification, and interfaces whose
 visible hierarchy matches the task and promised content (D-20260714-03, D-20260713-03,
-D-20260713-04, D-20260710-03, D-20260710-05). Inferred: repeated choices indicate a taste for compact low-noise UI,
+D-20260713-04, D-20260714-04, D-20260710-03, D-20260710-05). Inferred: repeated choices indicate a taste for compact low-noise UI,
 stable ordering and grouping, visible exceptions, contextual actions, and durable state rather than
 volatile cleverness (D-20260707-01, D-20260707-02, D-20260707-07, D-20260707-08); apply these
 patterns by default while treating them as inference when a new context materially differs.
+
+## [D-20260714-04 — Full-repo audits trace semantic implementation](DecisionDetails/D-20260714-04.md)
+
+Decision: Full-repo audits require source-backed per-unit semantic traces and exact-once batch-to-lead
+reconciliation with derived, gap-preserving results. Every verified artifact-backed audit creates a
+fully reviewed external projection; applying it to the active completion ledger requires an explicit
+user request or applicable project instruction and a verifier-gated plan/apply workflow.
+
+Why: Marker scans and UI inventories can miss code that looks finished but substitutes constants,
+ignores inputs, stops at plumbing, fakes success or persistence, or never registers real behavior.
+Options: selected manual contract-to-outcome tracing with enforced evidence rows over expanding TODO
+regexes or relying on file coverage because arbitrary domain gaps require informed judgment. Prior
+attempts: the former schema failed to prove non-UI implementation review because batches could pass
+with a purpose and generic no-finding note. Intent: audit actual implementation across the whole
+repository, prevent omitted batch contracts or unsupported PASS claims from producing a false-clean
+result, and turn only confirmed active obligations—not raw hypotheses or history—into completion
+work. Revisit only if: another method proves the same semantic and ledger reconciliation coverage
+with stronger recall and precision.
 
 ## [D-20260714-03 — Decision history is a compact direction index](DecisionDetails/D-20260714-03.md)
 

@@ -19,6 +19,10 @@ from shutil import rmtree, which
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "scripts" / "build_audit_batches.py"
 VERIFY = ROOT / "scripts" / "verify_audit_results.py"
+LEDGER_SELF_TEST = ROOT / "scripts" / "update_completion_ledger_self_test.py"
+UPDATE_LEDGER = ROOT / "scripts" / "update_completion_ledger.py"
+MERGE_FINDINGS = ROOT / "scripts" / "_vendor" / "full_repo_harness" / "merge_findings.py"
+MARKER_FREE_EVAL_SELF_TEST = ROOT / "evals" / "marker-free" / "self_test.py"
 
 
 def positive_int_env(name: str, default: int) -> int:
@@ -255,6 +259,10 @@ description: Fixture skill contract.
 """,
     )
     write(root / "src" / "database.py", "def connect_database():\n    return 'connected'\n")
+    write(
+        root / "tests" / "test_fixture.py",
+        "def test_fixture_contract():\n    assert 1 + 1 == 2\n",
+    )
     write(root / "src" / "Fixture.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>\n")
     write(root / "packages" / "app" / "docs" / "behavior.md", "# Nested Behavior\n")
     write(root / "packages" / "app" / "PRODUCT.md", "# Package Product Contract\n")
@@ -318,6 +326,7 @@ description: Fixture skill contract.
 def write_reports(root: Path, manifest_path: Path) -> tuple[
     Path, Path, Path, Path, Path, Path, Path, Path, Path, Path, Path, Path
 ]:
+    verify_module = load_verify_module()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     run_id = manifest["run_id"]
     repo_root = Path(manifest["repo_root"])
@@ -384,6 +393,66 @@ def write_reports(root: Path, manifest_path: Path) -> tuple[
 
     def has_known_fixture_finding() -> bool:
         return any(item["rel_path"] == "src/components/SaveButton.tsx" for item in source_files)
+
+    unit_text_by_id: dict[str, str] = {}
+    responsibilities_by_unit: dict[str, list[str]] = {}
+    parsed_responsibilities_by_unit: dict[str, set[str]] = {}
+    for item in coverage_units:
+        unit_id = item.get("unit_id") or item["rel_path"]
+        rel_path = item["rel_path"]
+        path = repo_root / rel_path
+        start_byte = item.get("start_byte")
+        end_byte = item.get("end_byte")
+        if isinstance(start_byte, int) and isinstance(end_byte, int):
+            data = path.read_bytes()[start_byte - 1 : end_byte]
+        else:
+            data = path.read_bytes()
+            start_line = item.get("start_line")
+            end_line = item.get("end_line")
+            if isinstance(start_line, int) and isinstance(end_line, int):
+                data = b"".join(data.splitlines(keepends=True)[start_line - 1 : end_line])
+        try:
+            unit_text = data.decode("utf-8") if b"\0" not in data else ""
+        except UnicodeDecodeError:
+            unit_text = ""
+        unit_text_by_id[unit_id] = unit_text
+        responsibility_occurrences = verify_module.implementation_responsibility_occurrences(
+            rel_path,
+            unit_text,
+            start_line=item.get("start_line") if isinstance(item.get("start_line"), int) else 1,
+            start_byte=item.get("start_byte") if isinstance(item.get("start_byte"), int) else None,
+        )
+        responsibility_hints = [str(entry["anchor"]) for entry in responsibility_occurrences]
+        parsed_responsibilities_by_unit[unit_id] = set(responsibility_hints)
+        anchor_match = re.search(r"[A-Za-z_][A-Za-z0-9_.-]{2,}", unit_text) or re.search(
+            r"[^\s`|]{1,80}", unit_text
+        )
+        responsibilities_by_unit[unit_id] = responsibility_hints or [
+            anchor_match.group(0) if anchor_match else item["sha256"]
+        ]
+
+    contract_ids: dict[str, str] = {}
+    responsibility_contract_ids: dict[tuple[str, str], str] = {}
+    next_contract_index = 1
+    for item in coverage_units:
+        unit_id = item.get("unit_id") or item["rel_path"]
+        for responsibility in responsibilities_by_unit[unit_id]:
+            contract_id = f"batch_001:C{next_contract_index:03d}"
+            responsibility_contract_ids[(unit_id, responsibility)] = contract_id
+            contract_ids.setdefault(unit_id, contract_id)
+            next_contract_index += 1
+
+    def contract_id_for(unit_id: str) -> str:
+        return contract_ids[unit_id]
+
+    test_evidence_path = next(
+        (
+            item["rel_path"]
+            for item in source_files
+            if verify_module.is_manifest_test_path(item["rel_path"])
+        ),
+        None,
+    )
 
     def no_finding_notes() -> str:
         return "\n".join(
@@ -459,21 +528,90 @@ def write_reports(root: Path, manifest_path: Path) -> tuple[
                 )
         return "\n".join(rows)
 
+    def implementation_inventory() -> str:
+        rows = [
+            "| File/unit | Contract ID | Contract/responsibility | Entrypoints/source anchors | Implementation/data/side-effect trace | Failure/edge/permission/recovery trace | Verification evidence | Result |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for item in coverage_units:
+            unit_id = item.get("unit_id") or item["rel_path"]
+            rel_path = item["rel_path"]
+            unit_text = unit_text_by_id[unit_id]
+            for responsibility in responsibilities_by_unit[unit_id]:
+                contract_id = responsibility_contract_ids[(unit_id, responsibility)]
+                anchor_ref = f"`{responsibility}`"
+                anchors = (
+                    f"Source token {anchor_ref} is present in the assigned unit."
+                    if unit_text
+                    else f"Assigned unit SHA-256 is {anchor_ref}."
+                )
+                if rel_path == "src/components/SaveButton.tsx" and responsibility.startswith("SaveButton@"):
+                    contract = (
+                        "The Save changes control must persist the user's requested update. "
+                        f"Basis: interface-promise — `src/components/SaveButton.tsx#{responsibility}`. Discovery: parsed — {anchor_ref} "
+                        "is a recognized named definition in the assigned unit."
+                    )
+                    trace = f"gap — {anchor_ref} -> `onClick` -> `console.log` -> no durable save outcome."
+                    failure_trace = "gap — The placeholder handler has no loading, persistence failure, retry, or recovery path."
+                    verification = (
+                        "gap — evidence-type: source-only; counterfactual: invoking Save changes must call "
+                        f"the persistence boundary and expose its outcome; manual source review confirms {anchor_ref} "
+                        "reaches only `console.log` and never calls persistence."
+                    )
+                    result = "GAP"
+                else:
+                    discovery_kind = (
+                        "parsed"
+                        if responsibility in parsed_responsibilities_by_unit[unit_id]
+                        else "manual"
+                    )
+                    contract = (
+                        f"Named responsibility `{responsibility}` in `{rel_path}` supplies fixture behavior "
+                        "consumed by queue and verifier coverage tests. "
+                        f"Basis: source-inferred — {anchor_ref}. Discovery: {discovery_kind} — {anchor_ref} "
+                        "was enumerated from the assigned unit."
+                    )
+                    trace = f"pass — {anchor_ref} -> queue classification for `{rel_path}` -> manifest coverage -> verifier source binding."
+                    failure_trace = "pass — Unreadable or stale bytes are rejected by source-anchor and current-hash checks; no runtime permission path applies."
+                    verification = (
+                        (
+                            f"pass — evidence-type: test; evidence-ref: `{test_evidence_path}`; "
+                            "outcome: the referenced fixture test passed and asserted the expected responsibility result; "
+                            "invariance: unchanged source bytes must retain the same manifest-bound responsibility result; "
+                            f"the fixture test and final verifier confirm {anchor_ref} is queued, source-bound, and accepted."
+                        )
+                        if test_evidence_path
+                        else (
+                            "pass — evidence-type: source-only; invariance: unchanged source bytes must retain the same "
+                            f"manifest-bound responsibility result; manual source review confirms {anchor_ref} "
+                            "is queued, source-bound, and accepted for this fixture responsibility."
+                        )
+                    )
+                    result = "PASS"
+                rows.append(
+                    f"| `{unit_id}` | `{contract_id}` | {contract} | {anchors} | {trace} | {failure_trace} | {verification} | {result} |"
+                )
+        return "\n".join(rows)
+
     def findings() -> str:
         if not has_known_fixture_finding():
             return "No findings."
+        contract_id = contract_id_for("src/components/SaveButton.tsx")
         return """### P2 - Save button uses placeholder console-only behavior
 - Files: `src/components/SaveButton.tsx`
-- Evidence: `SaveButton` renders a `Save changes` button whose `onClick` handler only calls `console.log("TODO save")`.
+- Evidence: Contract ID `{contract_id}`: `SaveButton` renders a `Save changes` button whose `onClick` handler only calls `console.log("TODO save")`.
 - Interface evidence: Visible control text `Save changes`.
 - Expected behavior/standard: A save button should persist or dispatch the save action, surface loading/error state, and avoid presenting console-only placeholder behavior as complete.
 - Gap: The fixture button exposes a save action but has only TODO console behavior.
-- Suggested direction: Wire the handler to the real save path and cover the user workflow with a focused test."""
+- Suggested direction: Wire the handler to the real save path and cover the user workflow with a focused test.""".format(contract_id=contract_id)
 
     def report(batch_id: str, body_rows: str, *, include_tail: bool = True, report_run_id: str = run_id) -> str:
         tail = ""
         if include_tail:
             tail = f"""
+## Implementation Inventory
+{implementation_inventory()}
+
 ## Interface Inventory
 {interface_inventory()}
 
@@ -535,9 +673,143 @@ Fixture report.
     )
 
 
+def refresh_lead_reconciliation_report(output_dir: Path, ledger: dict, manifest: dict) -> None:
+    reports_dir = output_dir / "reports"
+    reports_dir.mkdir(exist_ok=True)
+    lead_reconciliation = ledger.get("lead_reconciliation")
+    if not isinstance(lead_reconciliation, dict) or lead_reconciliation.get("status") != "completed":
+        return
+    lead_report = lead_reconciliation.get("report")
+    source_files = manifest.get("source_files") or []
+    if source_files:
+        verify_module = load_verify_module()
+        unit_to_file = {
+            item.get("unit_id"): item.get("rel_path")
+            for item in manifest.get("coverage_units", [])
+            if isinstance(item, dict)
+        }
+        batch_rows: list[dict] = []
+        for batch_report in sorted(reports_dir.glob("batch_*.md")):
+            parsed_rows, _malformed = verify_module.parse_implementation_inventory_rows(
+                batch_report.read_text(encoding="utf-8"), batch_report
+            )
+            batch_rows.extend(parsed_rows)
+        lead_lines = [
+            "| Contract ID | Batch Contract IDs | Contract/source anchors | entry-registration | core-logic | data-lifecycle | integration-boundary | authorization-trust | failure-recovery | observable-outcome | operational-lifecycle | verification | Result |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        lead_findings: list[str] = []
+        test_evidence_path = next(
+            (
+                item["rel_path"]
+                for item in source_files
+                if verify_module.is_manifest_test_path(item["rel_path"])
+            ),
+            None,
+        )
+        for index, batch_row in enumerate(batch_rows, start=1):
+            lead_id = f"lead:C{index:03d}"
+            batch_id = batch_row["contract_id"]
+            unit_id = batch_row["file"]
+            lead_source = unit_to_file.get(unit_id, unit_id)
+            lead_source_text = (Path(manifest["repo_root"]) / lead_source).read_text(
+                encoding="utf-8", errors="ignore"
+            )
+            anchor_candidates = re.findall(r"`([^`]+)`", batch_row["anchors"])
+            occurrence_anchors = {
+                str(item["anchor"])
+                for item in verify_module.implementation_responsibility_occurrences(
+                    lead_source,
+                    lead_source_text,
+                )
+            }
+            lead_anchor = next(
+                (
+                    value
+                    for value in anchor_candidates
+                    if value not in {unit_id, lead_source, batch_id}
+                    and (value in lead_source_text or value in occurrence_anchors or "@B" in value)
+                ),
+                next(
+                    iter(verify_module.implementation_responsibility_hints(lead_source, lead_source_text)),
+                    source_files[0]["sha256"],
+                ),
+            )
+            result = batch_row["result"]
+            core_status = "gap" if result == "GAP" else "blocked" if result == "BLOCKED" else "pass"
+            verification_claim = (
+                f"pass — evidence-type: test; evidence-ref: `{test_evidence_path}`; "
+                "outcome: the referenced fixture test passed and asserted the manifest-bound mapped outcome; "
+                "invariance: unchanged source and report bytes must preserve the same mapped outcome; "
+                f"the final verifier independently rechecks `{lead_anchor}` as source-bound and mapped exactly once."
+                if test_evidence_path
+                else (
+                    "pass — evidence-type: source-only; invariance: unchanged source and report bytes must preserve "
+                    f"the same mapped outcome; manual source review rechecks `{lead_anchor}` as source-bound and mapped exactly once."
+                )
+            )
+            integration_claim = (
+                "pass — The lead checks dependency and integration claims against the mapped batch evidence."
+                if test_evidence_path
+                else "not applicable — This source-only fixture responsibility has no dependency, API, or event boundary."
+            )
+            lead_lines.append(
+                f"| `{lead_id}` | `{batch_id}` | `{lead_source}` and source token `{lead_anchor}` | "
+                f"pass — The batch registers `{lead_source}` and traces its concrete entry or consumer. | "
+                f"{core_status} — Lead reconciliation preserves the `{lead_anchor}` implementation result from `{batch_id}`. | "
+                "pass — Manifest hashes and the batch trace bind data ownership and state claims to reviewed source. | "
+                f"{integration_claim} | "
+                "pass — Repository-relative source binding constrains authorization and trust claims. | "
+                "pass — Missing, changed, or unreadable source and report evidence fails verification. | "
+                f"pass — The reconciled contract reports a concrete source-backed observable outcome for `{lead_anchor}`. | "
+                "pass — Queue, batch, lead reconciliation, and verification cover the audit lifecycle. | "
+                f"{verification_claim} | {result} |"
+            )
+            if result in {"GAP", "BLOCKED"}:
+                lead_findings.append(
+                    f"""### P2 - Lead preserves one unresolved mapped implementation outcome
+- Files: `{lead_source}`
+- Evidence: Contract ID `{lead_id}` maps `{batch_id}` and preserves its source-backed {result} result for `{lead_anchor}`.
+- Interface evidence: Not applicable.
+- Expected behavior/standard: The mapped implementation responsibility must reach its real verified outcome.
+- Gap: The mapped batch responsibility remains one independently closable unresolved implementation outcome.
+- Suggested direction: Complete the mapped responsibility and rerun its batch, lead reconciliation, and verifier."""
+                )
+        lead_trace = "\n".join(lead_lines)
+        lead_findings_text = "\n\n".join(lead_findings) if lead_findings else "No findings."
+    else:
+        lead_trace = "No source-backed implementation contracts were queued."
+        lead_findings_text = "No findings."
+    if isinstance(lead_report, str) and lead_report:
+        write(
+            output_dir / lead_report,
+            f"""## Run ID
+{ledger['run_id']}
+
+## Worker
+lead_reconciliation
+
+## Cross-File Contract Trace
+{lead_trace}
+
+## Findings
+{lead_findings_text}
+
+## Open Questions
+None.
+""",
+        )
+
+
 def install_report(output_dir: Path, source_report: Path, batch_id: str = "batch_001") -> Path:
     target = output_dir / "reports" / f"{batch_id}.md"
     write(target, source_report.read_text(encoding="utf-8"))
+    ledger_path = output_dir / "effort_ledger.json"
+    manifest_path = output_dir / "manifest.json"
+    if ledger_path.is_file() and manifest_path.is_file():
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        refresh_lead_reconciliation_report(output_dir, ledger, manifest)
     return target
 
 
@@ -587,8 +859,10 @@ def complete_effort_ledger(output_dir: Path, *, fallback: bool = False) -> None:
             item["status"] = "completed"
             item["evidence"] = f"Lead opened {item['rel_path']} and reviewed its recorded SHA-256 and risk reasons."
             item["notes"] = "Fixture lead review covered security, data-loss, process, and recovery implications."
-    reports_dir = output_dir / "reports"
-    reports_dir.mkdir(exist_ok=True)
+    lead_reconciliation = ledger.get("lead_reconciliation")
+    if isinstance(lead_reconciliation, dict):
+        lead_reconciliation["status"] = "completed"
+    refresh_lead_reconciliation_report(output_dir, ledger, manifest)
     for worker_key, worker_label in (
         ("journey_source_worker", "journey_source"),
         ("visual_journey_worker", "visual_journey"),
@@ -751,6 +1025,12 @@ def assert_manifest(manifest_path: Path) -> None:
     expected_reports_dir = str((manifest_path.parent / "reports").resolve())
     check(expected_reports_dir in manifest["verifier_command"], "manifest should point verification at reports/")
     check(manifest["reports_dir"] == expected_reports_dir, "manifest should record reports_dir")
+    expected_receipt_path = str((manifest_path.parent / "verification_receipt.json").resolve())
+    check("--receipt-out" in manifest["verifier_args"], "manifest verifier command should request a pass-only receipt")
+    check(
+        expected_receipt_path in manifest["verifier_args"],
+        "manifest verifier command should use the exact canonical verification receipt path",
+    )
     owner_marker = json.loads((manifest_path.parent / ".full-repo-audit-artifacts.json").read_text(encoding="utf-8"))
     check(owner_marker["owned_by"] == "full-repo-audit", "output directory should include ownership marker")
     check("batch_001.md" in owner_marker["generated_artifacts"], "ownership marker should record generated batch prompts")
@@ -767,6 +1047,58 @@ def assert_manifest(manifest_path: Path) -> None:
         "completion marker should record queue marker semantics",
     )
     check(not (manifest_path.parent / "audit_complete.json").exists(), "legacy audit_complete marker should not be generated")
+    batch_prompt_text = (manifest_path.parent / manifest["batches"][0]["prompt"]).read_text(encoding="utf-8")
+    check(
+        "## Implementation Inventory" in batch_prompt_text
+        and "| File/unit | Contract ID | Contract/responsibility | Entrypoints/source anchors | Implementation/data/side-effect trace | Failure/edge/permission/recovery trace | Verification evidence | Result |"
+        in batch_prompt_text,
+        "batch prompts should require responsibility-level implementation traces with stable Contract IDs",
+    )
+    for semantic_gap_prompt in (
+        "hard-coded value",
+        "ignore parameters or parsed data",
+        "pass data through plumbing without invoking the real dependency",
+        "memory-only persistence",
+        "tests that prove only shape",
+        "fake success",
+        "route/job/export implemented but never registered",
+        "production boundary backed by fixtures/mocks",
+        "migration, rollback, retry, cancellation, cleanup, backup, or recovery missing",
+        "A `PASS` row must mark both `Implementation/data/side-effect trace` and `Verification evidence` as `pass`",
+        "Basis: <kind>",
+        "Discovery: parsed",
+        "Discovery: manual",
+        "evidence-type: source-only",
+        "counterfactual: ...",
+        "Every high-confidence named definition requires its own row",
+        "two methods named `__init__` at different coordinates",
+        "evidence-ref: ...",
+        "valid audit artifacts in `visual_evidence.json`",
+        "manifest-owned repository file",
+        "`batch_1000:C1000` is valid",
+        "must never use `source-only`",
+    ):
+        check(
+            semantic_gap_prompt in batch_prompt_text,
+            f"batch prompts should require manual semantic review for {semantic_gap_prompt}",
+        )
+    lead_prompt_text = (
+        manifest_path.parent / manifest["lead_reconciliation"]["prompt"]
+    ).read_text(encoding="utf-8")
+    for lead_requirement in (
+        "Independently reopen the assigned source and recheck every",
+        "sampling PASS rows is not sufficient",
+        "evidence-type: test",
+        "evidence-ref: ...",
+        "explicit `outcome: ...` or `result: ...`",
+        "`lead:C1000`",
+        "counterfactual: ...",
+        "must never use `source-only`",
+    ):
+        check(
+            lead_requirement in lead_prompt_text,
+            f"lead reconciliation prompt should require {lead_requirement}",
+        )
     owner_marker = json.loads((manifest_path.parent / ".full-repo-audit-artifacts.json").read_text(encoding="utf-8"))
     ledger = json.loads((manifest_path.parent / "effort_ledger.json").read_text(encoding="utf-8"))
     check(ledger["run_id"] == manifest["run_id"], "effort ledger run_id should match manifest")
@@ -1061,6 +1393,8 @@ def main() -> int:
     if not which("git"):
         print("self-test requires git on PATH", file=sys.stderr)
         return 2
+    run([sys.executable, str(LEDGER_SELF_TEST)])
+    run([sys.executable, str(MARKER_FREE_EVAL_SELF_TEST), "--quick"])
 
     invalid_timeout_env = os.environ.copy()
     invalid_timeout_env["FULL_REPO_AUDIT_SELF_TEST_TIMEOUT"] = "not-an-int"
@@ -1166,6 +1500,92 @@ def main() -> int:
         finally:
             rmtree(svg_asset.parent, ignore_errors=True)
 
+    with scenario("named implementation responsibility hints"):
+        check(
+            verify_module.BATCH_IMPLEMENTATION_CONTRACT_ID_RE.fullmatch("batch_1000:C1000") is not None,
+            "batch and contract namespaces must support counters above 999",
+        )
+        check(
+            verify_module.LEAD_IMPLEMENTATION_CONTRACT_ID_RE.fullmatch("lead:C1000") is not None,
+            "lead contract namespaces must support counters above 999",
+        )
+        check(
+            verify_module.BATCH_IMPLEMENTATION_CONTRACT_ID_RE.fullmatch("batch_01:C001") is None,
+            "batch IDs must retain a three-digit minimum",
+        )
+        check(
+            verify_module.manifest_source_path_for_reference(
+                "docs/requirements.md#L12-L18",
+                {"docs/requirements.md"},
+            )
+            == "docs/requirements.md",
+            "authoritative references may bind a precise line range in a manifest source",
+        )
+        check(
+            verify_module.manifest_source_path_for_reference(
+                "invented-contract-label",
+                {"docs/requirements.md"},
+            )
+            is None,
+            "arbitrary authoritative labels must not authenticate a contract basis",
+        )
+        typescript_hints = verify_module.implementation_responsibility_hints(
+            "component.ts",
+            """class Totals {
+  calculate(items: Item[]): number { return 42; }
+  async persist(): Promise<void> { return; }
+}
+if (ready) { start(); }
+""",
+        )
+        check(
+            {"Totals", "calculate", "persist"}.issubset(typescript_hints),
+            "TypeScript class and method responsibilities should be discovered",
+        )
+        check(
+            "if" not in typescript_hints,
+            "JavaScript-family control-flow keywords must not be treated as responsibilities",
+        )
+        vue_hints = verify_module.implementation_responsibility_hints(
+            "Panel.vue",
+            """<script>
+export default {
+  methods: {
+    save() { return true; },
+  },
+};
+</script>
+""",
+        )
+        svelte_hints = verify_module.implementation_responsibility_hints(
+            "Widget.svelte",
+            """<script>
+const actions = {
+  submit() { return true; },
+};
+</script>
+""",
+        )
+        check("save" in vue_hints, "Vue object methods should be discovered")
+        check("submit" in svelte_hints, "Svelte object methods should be discovered")
+        sql_hints = verify_module.implementation_responsibility_hints(
+            "schema.sql",
+            """CREATE OR REPLACE FUNCTION public.calculate_total(items jsonb) RETURNS numeric AS $$ SELECT 42 $$ LANGUAGE SQL;
+CREATE PROCEDURE refresh_totals() LANGUAGE SQL AS $$ SELECT 1 $$;
+CREATE TRIGGER totals_updated BEFORE UPDATE ON totals EXECUTE FUNCTION mark_updated();
+CREATE MATERIALIZED VIEW reporting.total_summary AS SELECT 42;
+""",
+        )
+        check(
+            {
+                "public.calculate_total",
+                "refresh_totals",
+                "totals_updated",
+                "reporting.total_summary",
+            }.issubset(sql_hints),
+            "SQL functions, procedures, triggers, and views should be discovered",
+        )
+
     with self_test_workspace() as tmp:
         set_scenario("fixture generation and primary queue build")
         base = Path(tmp)
@@ -1241,13 +1661,29 @@ def main() -> int:
 
         run([sys.executable, str(BUILD), "--repo", str(fixture), "--out", str(reuse_output), "--batch-size", "1"])
         check((reuse_output / "batch_002.md").exists(), "batch-size 1 should create multiple prompt files")
+        stale_derived_names = (
+            "consolidated-findings.json",
+            "consolidated-findings.md",
+            "completion_ledger_projection.json",
+            "completion-ledger-plan.json",
+            "verification_receipt.json",
+        )
+        for stale_name in stale_derived_names:
+            write(reuse_output / stale_name, f"stale derived artifact: {stale_name}\n")
         run([sys.executable, str(BUILD), "--repo", str(fixture), "--out", str(reuse_output), "--batch-size", "200"])
         remaining_prompts = sorted(path.name for path in reuse_output.glob("batch_*.md"))
         check(remaining_prompts == ["batch_001.md"], "reusing an output dir should remove stale batch prompts")
+        check(
+            all(not (reuse_output / stale_name).exists() for stale_name in stale_derived_names),
+            "reusing an output dir should remove every stale derived audit artifact and prior verification receipt",
+        )
         check((reuse_output / "queue_complete.json").exists(), "reused output should have a fresh queue completion marker")
-        write(reuse_output / "batch_999.md", "manual note\n")
+        write(reuse_output / "batch_999.md", "stale derived prompt\n")
         run([sys.executable, str(BUILD), "--repo", str(fixture), "--out", str(reuse_output), "--batch-size", "200"])
-        check((reuse_output / "batch_999.md").read_text(encoding="utf-8") == "manual note\n", "owned output cleanup should preserve unknown root batch files")
+        check(
+            not (reuse_output / "batch_999.md").exists(),
+            "owned output recovery should remove orphan batch prompts even when an interrupted marker omitted them",
+        )
         write(reuse_output / "reports" / "batch_001.md", "stale report\n")
         run([sys.executable, str(BUILD), "--repo", str(fixture), "--out", str(reuse_output), "--batch-size", "200"])
         stale_report_dirs = sorted(reuse_output.glob("reports.stale.*"))
@@ -1284,6 +1720,40 @@ def main() -> int:
         )
         run([sys.executable, str(BUILD), "--repo", str(fixture), "--out", str(symlink_output), "--batch-size", "200"])
         check((outside_output_target / "victim.txt").exists(), "cleanup must not follow intermediate symlinked parents outside output root")
+        symlink_reports_output = base / "symlink-reports-output"
+        symlink_reports_output.mkdir()
+        empty_reports_target = base / "empty-reports-target"
+        empty_reports_target.mkdir()
+        write(
+            symlink_reports_output / ".full-repo-audit-artifacts.json",
+            json.dumps(
+                {
+                    "owned_by": "full-repo-audit",
+                    "repo_root": str(fixture.resolve()),
+                    "generated_artifacts": [],
+                },
+                indent=2,
+            ),
+        )
+        os.symlink(empty_reports_target, symlink_reports_output / "reports")
+        symlink_reports_result = run(
+            [
+                sys.executable,
+                str(BUILD),
+                "--repo",
+                str(fixture),
+                "--out",
+                str(symlink_reports_output),
+                "--batch-size",
+                "200",
+            ],
+            expect=2,
+        )
+        check_output(symlink_reports_result, "reports path must not be a symlink")
+        check(
+            (symlink_reports_output / "reports").is_symlink(),
+            "rejected empty reports symlink should not be followed or replaced",
+        )
         interrupted_output = base / "interrupted-owned-output"
         interrupted_output.mkdir()
         write(
@@ -1291,8 +1761,14 @@ def main() -> int:
             json.dumps({"owned_by": "full-repo-audit", "repo_root": str(fixture.resolve()), "generated_artifacts": []}, indent=2),
         )
         write(interrupted_output / "batch_999.md", "stale interrupted prompt\n")
+        orphan_archive = interrupted_output / "reports.stale.20260714T000000Z"
+        write(orphan_archive / "batch_001.md", "stale interrupted report\n")
         run([sys.executable, str(BUILD), "--repo", str(fixture), "--out", str(interrupted_output), "--batch-size", "200"])
         check(not (interrupted_output / "batch_999.md").exists(), "owned interrupted output cleanup should remove stale batch prompts")
+        check(
+            not orphan_archive.exists(),
+            "owned interrupted output cleanup should remove orphan reports.stale archives omitted from the marker",
+        )
 
         unowned_output = base / "unowned-output"
         write(unowned_output / "batch_999.md", "user notes\n")
@@ -1983,6 +2459,35 @@ def main() -> int:
             complete,
         ) = write_reports(reports_dir, output / "manifest.json")
         semantic_gap = reports_dir / "reports" / "semantic-gap" / "batch_001.md"
+        implementation_section_gap = reports_dir / "reports" / "implementation-section-gap" / "batch_001.md"
+        implementation_header_gap = reports_dir / "reports" / "implementation-header-gap" / "batch_001.md"
+        implementation_separator_gap = reports_dir / "reports" / "implementation-separator-gap" / "batch_001.md"
+        implementation_row_gap = reports_dir / "reports" / "implementation-row-gap" / "batch_001.md"
+        implementation_duplicate_gap = reports_dir / "reports" / "implementation-duplicate-gap" / "batch_001.md"
+        implementation_boilerplate_gap = reports_dir / "reports" / "implementation-boilerplate-gap" / "batch_001.md"
+        implementation_basis_gap = reports_dir / "reports" / "implementation-basis-gap" / "batch_001.md"
+        implementation_basis_kind_gap = reports_dir / "reports" / "implementation-basis-kind-gap" / "batch_001.md"
+        implementation_basis_reference_gap = reports_dir / "reports" / "implementation-basis-reference-gap" / "batch_001.md"
+        implementation_discovery_gap = reports_dir / "reports" / "implementation-discovery-gap" / "batch_001.md"
+        implementation_discovery_anchor_gap = reports_dir / "reports" / "implementation-discovery-anchor-gap" / "batch_001.md"
+        implementation_anchor_gap = reports_dir / "reports" / "implementation-anchor-gap" / "batch_001.md"
+        implementation_hash_anchor_gap = reports_dir / "reports" / "implementation-hash-anchor-gap" / "batch_001.md"
+        implementation_verification_gap = reports_dir / "reports" / "implementation-verification-gap" / "batch_001.md"
+        implementation_generic_verification_gap = reports_dir / "reports" / "implementation-generic-verification-gap" / "batch_001.md"
+        implementation_evidence_type_gap = reports_dir / "reports" / "implementation-evidence-type-gap" / "batch_001.md"
+        implementation_test_reference_gap = reports_dir / "reports" / "implementation-test-reference-gap" / "batch_001.md"
+        implementation_test_non_test_reference_gap = reports_dir / "reports" / "implementation-test-non-test-reference-gap" / "batch_001.md"
+        implementation_test_outcome_gap = reports_dir / "reports" / "implementation-test-outcome-gap" / "batch_001.md"
+        implementation_runtime_reference_gap = reports_dir / "reports" / "implementation-runtime-reference-gap" / "batch_001.md"
+        implementation_test_evidence_valid = reports_dir / "reports" / "implementation-test-evidence-valid" / "batch_001.md"
+        implementation_expectation_gap = reports_dir / "reports" / "implementation-expectation-gap" / "batch_001.md"
+        implementation_source_only_effect_gap = reports_dir / "reports" / "implementation-source-only-effect-gap" / "batch_001.md"
+        implementation_unbound_gap = reports_dir / "reports" / "implementation-unbound-gap" / "batch_001.md"
+        implementation_result_contradiction_gap = reports_dir / "reports" / "implementation-result-contradiction-gap" / "batch_001.md"
+        implementation_not_applicable_pass_gap = reports_dir / "reports" / "implementation-not-applicable-pass-gap" / "batch_001.md"
+        implementation_contract_binding_gap = reports_dir / "reports" / "implementation-contract-binding-gap" / "batch_001.md"
+        implementation_compound_finding_gap = reports_dir / "reports" / "implementation-compound-finding-gap" / "batch_001.md"
+        implementation_duplicate_finding_gap = reports_dir / "reports" / "implementation-duplicate-finding-gap" / "batch_001.md"
         interface_gap = reports_dir / "reports" / "interface-gap" / "batch_001.md"
         interface_boilerplate_gap = reports_dir / "reports" / "interface-boilerplate-gap" / "batch_001.md"
         interface_missing_hint_gap = reports_dir / "reports" / "interface-missing-hint-gap" / "batch_001.md"
@@ -2004,6 +2509,7 @@ def main() -> int:
             for item in output_manifest["source_files"]
             if item.get("interface_relevant") is True
         )
+        implementation_start = complete_text.index("## Implementation Inventory")
         interface_start = complete_text.index("## Interface Inventory")
         findings_start = complete_text.index("## Findings")
         no_notes_start = complete_text.index("## No Finding Notes")
@@ -2014,6 +2520,316 @@ def main() -> int:
             + "## No Finding Notes\n- Fixture report.\n\n"
             + complete_text[open_questions_start:],
         )
+
+        def implementation_row(text: str, unit_id: str = "SKILL.md") -> str:
+            prefix = f"| `{unit_id}` |"
+            body = text[text.index("## Implementation Inventory") : text.index("## Interface Inventory")]
+            return next(line for line in body.splitlines() if line.startswith(prefix))
+
+        def replace_implementation_row(text: str, replacement: str, unit_id: str = "SKILL.md") -> str:
+            original = implementation_row(text, unit_id)
+            return text.replace(original, replacement, 1)
+
+        skill_implementation_row = implementation_row(complete_text)
+        skill_columns = skill_implementation_row.split("|")
+        implementation_separator = next(
+            line
+            for line in complete_text[implementation_start:interface_start].splitlines()
+            if line.startswith("| --- |")
+        )
+        write(
+            implementation_section_gap,
+            complete_text[:implementation_start] + complete_text[interface_start:],
+        )
+        write(
+            implementation_header_gap,
+            complete_text.replace("| File/unit | Contract ID |", "| File/unit | Contract key |", 1),
+        )
+        write(
+            implementation_separator_gap,
+            complete_text.replace(implementation_separator, implementation_separator.replace("---", "--", 1), 1),
+        )
+        write(
+            implementation_row_gap,
+            complete_text.replace(skill_implementation_row + "\n", "", 1),
+        )
+        write(
+            implementation_duplicate_gap,
+            complete_text.replace(skill_implementation_row, skill_implementation_row + "\n" + skill_implementation_row, 1),
+        )
+        boilerplate_columns = list(skill_columns)
+        boilerplate_columns[3] = " implemented "
+        write(
+            implementation_boilerplate_gap,
+            replace_implementation_row(complete_text, "|".join(boilerplate_columns)),
+        )
+        missing_basis_columns = list(skill_columns)
+        missing_basis_columns[3] = re.sub(
+            r"\s+Basis:.*?(?=\s+Discovery:)", "", missing_basis_columns[3], count=1
+        )
+        write(
+            implementation_basis_gap,
+            replace_implementation_row(complete_text, "|".join(missing_basis_columns)),
+        )
+        invalid_basis_columns = list(skill_columns)
+        invalid_basis_columns[3] = invalid_basis_columns[3].replace(
+            "Basis: source-inferred", "Basis: guess", 1
+        )
+        write(
+            implementation_basis_kind_gap,
+            replace_implementation_row(complete_text, "|".join(invalid_basis_columns)),
+        )
+        fabricated_basis_columns = list(skill_columns)
+        fabricated_basis_columns[3] = re.sub(
+            r"Basis:\s*source-inferred\s*—\s*`[^`]+`",
+            "Basis: public-contract — `invented-contract-label`",
+            fabricated_basis_columns[3],
+            count=1,
+        )
+        write(
+            implementation_basis_reference_gap,
+            replace_implementation_row(
+                complete_text,
+                "|".join(fabricated_basis_columns),
+            ),
+        )
+        missing_discovery_columns = list(skill_columns)
+        missing_discovery_columns[3] = re.sub(
+            r"\s+Discovery:.*$", "", missing_discovery_columns[3], count=1
+        )
+        write(
+            implementation_discovery_gap,
+            replace_implementation_row(complete_text, "|".join(missing_discovery_columns)),
+        )
+        fabricated_discovery_columns = list(skill_columns)
+        fabricated_discovery_columns[3] = re.sub(
+            r"Discovery:\s*(?:parsed|manual)\s*—.*$",
+            "Discovery: manual — `definitely_missing_discovery` was claimed as manually enumerated.",
+            fabricated_discovery_columns[3],
+            count=1,
+        )
+        write(
+            implementation_discovery_anchor_gap,
+            replace_implementation_row(
+                complete_text, "|".join(fabricated_discovery_columns)
+            ),
+        )
+        fake_anchor_row = re.sub(
+            r"Source token `[^`]+`",
+            "Source token `definitely_missing_anchor`",
+            skill_implementation_row,
+            count=1,
+        )
+        write(
+            implementation_anchor_gap,
+            replace_implementation_row(complete_text, fake_anchor_row),
+        )
+        hash_anchor_columns = list(skill_columns)
+        skill_source_hash = next(
+            item["sha256"] for item in output_manifest["source_files"] if item["rel_path"] == "SKILL.md"
+        )
+        hash_anchor_columns[4] = f" Assigned source hash `{skill_source_hash}`. "
+        hash_anchor_columns[5] = f" `{skill_source_hash}` -> manifest coverage -> claimed implementation outcome. "
+        hash_anchor_columns[7] = f" The verifier confirms `{skill_source_hash}` is current and claims the source behavior is complete. "
+        write(
+            implementation_hash_anchor_gap,
+            replace_implementation_row(complete_text, "|".join(hash_anchor_columns)),
+        )
+        verification_columns = list(skill_columns)
+        verification_columns[7] = " No verification evidence exists for this responsibility. "
+        write(
+            implementation_verification_gap,
+            replace_implementation_row(complete_text, "|".join(verification_columns)),
+        )
+        generic_verification_columns = list(skill_columns)
+        skill_anchor = re.search(r"`([^`]+)`", skill_columns[4]).group(1)
+        generic_verification_columns[7] = (
+            f" Manual source tracing is bound to manifest SHA-256 and claims `{skill_anchor}` confirms implementation. "
+        )
+        write(
+            implementation_generic_verification_gap,
+            replace_implementation_row(complete_text, "|".join(generic_verification_columns)),
+        )
+        missing_evidence_type_columns = list(skill_columns)
+        missing_evidence_type_columns[7] = re.sub(
+            r"evidence-type:\s*(?:test|runtime|source-only);\s*",
+            "",
+            missing_evidence_type_columns[7],
+            count=1,
+        )
+        write(
+            implementation_evidence_type_gap,
+            replace_implementation_row(
+                complete_text, "|".join(missing_evidence_type_columns)
+            ),
+        )
+        test_reference_columns = list(skill_columns)
+        test_reference_columns[7] = re.sub(
+            r"evidence-ref:\s*`[^`]+`;\s*",
+            "",
+            test_reference_columns[7],
+            count=1,
+        )
+        write(
+            implementation_test_reference_gap,
+            replace_implementation_row(
+                complete_text,
+                "|".join(test_reference_columns),
+            ),
+        )
+        test_non_test_reference_columns = list(skill_columns)
+        test_non_test_reference_columns[7] = re.sub(
+            r"evidence-ref:\s*`[^`]+`",
+            "evidence-ref: `SKILL.md`",
+            test_non_test_reference_columns[7],
+            count=1,
+        )
+        write(
+            implementation_test_non_test_reference_gap,
+            replace_implementation_row(
+                complete_text,
+                "|".join(test_non_test_reference_columns),
+            ),
+        )
+        test_outcome_columns = list(skill_columns)
+        test_outcome_columns[7] = re.sub(
+            r"outcome:[^;]+;\s*",
+            "",
+            test_outcome_columns[7],
+            count=1,
+        )
+        write(
+            implementation_test_outcome_gap,
+            replace_implementation_row(
+                complete_text,
+                "|".join(test_outcome_columns),
+            ),
+        )
+        runtime_reference_columns = list(skill_columns)
+        runtime_reference_columns[7] = runtime_reference_columns[7].replace(
+            "evidence-type: test",
+            "evidence-type: runtime",
+            1,
+        )
+        runtime_reference_columns[7] = re.sub(
+            r"evidence-ref:\s*`[^`]+`",
+            "evidence-ref: `evidence:invented-runtime`",
+            runtime_reference_columns[7],
+            count=1,
+        )
+        write(
+            implementation_runtime_reference_gap,
+            replace_implementation_row(
+                complete_text,
+                "|".join(runtime_reference_columns),
+            ),
+        )
+        valid_test_evidence_columns = list(skill_columns)
+        write(
+            implementation_test_evidence_valid,
+            replace_implementation_row(
+                complete_text,
+                "|".join(valid_test_evidence_columns),
+            ),
+        )
+        missing_expectation_columns = list(skill_columns)
+        missing_expectation_columns[7] = re.sub(
+            r"(?:counterfactual|invariance):[^;]+;\s*",
+            "",
+            missing_expectation_columns[7],
+            count=1,
+        )
+        write(
+            implementation_expectation_gap,
+            replace_implementation_row(
+                complete_text, "|".join(missing_expectation_columns)
+            ),
+        )
+        source_only_effect_columns = list(skill_columns)
+        source_only_effect_columns[3] = source_only_effect_columns[3].replace(
+            "Named responsibility",
+            "Persist an external integration success result for the named responsibility",
+            1,
+        )
+        source_only_effect_columns[7] = source_only_effect_columns[7].replace(
+            "evidence-type: test", "evidence-type: source-only", 1
+        )
+        write(
+            implementation_source_only_effect_gap,
+            replace_implementation_row(
+                complete_text, "|".join(source_only_effect_columns)
+            ),
+        )
+        unbound_columns = list(skill_columns)
+        unbound_columns[8] = " GAP "
+        write(
+            implementation_unbound_gap,
+            replace_implementation_row(complete_text, "|".join(unbound_columns)),
+        )
+        contradictory_columns = list(skill_columns)
+        contradictory_columns[5] = contradictory_columns[5].replace(" pass — ", " gap — ", 1)
+        write(
+            implementation_result_contradiction_gap,
+            replace_implementation_row(complete_text, "|".join(contradictory_columns)),
+        )
+        not_applicable_pass_columns = list(skill_columns)
+        for index in (5, 6, 7):
+            not_applicable_pass_columns[index] = not_applicable_pass_columns[index].replace(
+                " pass — ", " not applicable — ", 1
+            )
+        write(
+            implementation_not_applicable_pass_gap,
+            replace_implementation_row(complete_text, "|".join(not_applicable_pass_columns)),
+        )
+        contract_binding_columns = list(skill_columns)
+        contract_binding_columns[8] = " GAP "
+        contract_binding_text = replace_implementation_row(
+            complete_text,
+            "|".join(contract_binding_columns),
+        )
+        contract_binding_text = contract_binding_text.replace(
+            "## No Finding Notes",
+            """### P2 - Skill contract is intentionally reported without its Contract ID
+- Files: `SKILL.md`
+- Evidence: The fixture claims a concrete implementation gap but deliberately omits the inventory Contract ID.
+- Interface evidence: Not applicable.
+- Expected behavior/standard: Every implementation finding must bind to the exact responsibility row.
+- Gap: File-only binding cannot distinguish multiple responsibilities in one source unit.
+- Suggested direction: Require an exact backticked Contract ID in the finding block.
+
+## No Finding Notes""",
+            1,
+        )
+        write(implementation_contract_binding_gap, contract_binding_text)
+        save_unit_id = "src/components/SaveButton.tsx"
+        save_contract_id = implementation_row(complete_text, save_unit_id).split("|")[2].strip(" `")
+        skill_contract_id = skill_columns[2].strip(" `")
+        compound_columns = list(skill_columns)
+        compound_columns[8] = " GAP "
+        compound_finding_text = replace_implementation_row(
+            complete_text,
+            "|".join(compound_columns),
+        ).replace(
+            f"Contract ID `{save_contract_id}`:",
+            f"Contract IDs `{save_contract_id}` and `{skill_contract_id}`:",
+            1,
+        )
+        write(implementation_compound_finding_gap, compound_finding_text)
+        finding_block_text = complete_text[
+            complete_text.index("### P2 - Save button uses placeholder console-only behavior") : no_notes_start
+        ].rstrip()
+        duplicate_finding_text = complete_text.replace(
+            "\n## No Finding Notes",
+            "\n\n"
+            + finding_block_text.replace(
+                "### P2 - Save button uses placeholder console-only behavior",
+                "### P2 - Duplicate report of the same save responsibility",
+                1,
+            )
+            + "\n\n## No Finding Notes",
+            1,
+        )
+        write(implementation_duplicate_finding_gap, duplicate_finding_text)
         write(
             interface_gap,
             complete_text[:interface_start]
@@ -2184,6 +3000,465 @@ def main() -> int:
         complete_effort_ledger(output)
         output_ledger_path = output / "effort_ledger.json"
         output_ledger_text = output_ledger_path.read_text(encoding="utf-8")
+        lead_report_path = output / "reports" / "lead_reconciliation.md"
+        original_lead_report = lead_report_path.read_text(encoding="utf-8")
+        lead_contract_row = next(
+            line for line in original_lead_report.splitlines() if line.startswith("| `lead:C001` |")
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace("pass — The batch registers", "The batch registers", 1),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead reconciliation trace cells require explicit statuses",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=("lead_reconciliation_issues", "must begin with pass, gap, blocked, or not applicable"),
+        )
+        lead_missing_evidence_columns = lead_contract_row.split("|")
+        lead_missing_evidence_columns[12] = lead_missing_evidence_columns[12].replace(
+            "evidence-type: test; ", "", 1
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace(
+                lead_contract_row, "|".join(lead_missing_evidence_columns), 1
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead independent verification requires an explicit evidence type",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=("lead_reconciliation_issues", "evidence-type", "lead:C001"),
+        )
+        lead_missing_reference_columns = lead_contract_row.split("|")
+        lead_missing_reference_columns[12] = re.sub(
+            r"evidence-ref:\s*`[^`]+`;\s*",
+            "",
+            lead_missing_reference_columns[12],
+            count=1,
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace(
+                lead_contract_row, "|".join(lead_missing_reference_columns), 1
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead test evidence labels require concrete test references",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=("lead_reconciliation_issues", "evidence-ref", "lead:C001"),
+        )
+        lead_non_test_reference_columns = lead_contract_row.split("|")
+        lead_non_test_reference_columns[12] = re.sub(
+            r"evidence-ref:\s*`[^`]+`",
+            "evidence-ref: `SKILL.md`",
+            lead_non_test_reference_columns[12],
+            count=1,
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace(
+                lead_contract_row, "|".join(lead_non_test_reference_columns), 1
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead test evidence cannot relabel an implementation source file",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=(
+                "lead_reconciliation_issues",
+                "manifest-owned test source files",
+                "SKILL.md",
+            ),
+        )
+        lead_missing_outcome_columns = lead_contract_row.split("|")
+        lead_missing_outcome_columns[12] = re.sub(
+            r"outcome:[^;]+;\s*",
+            "",
+            lead_missing_outcome_columns[12],
+            count=1,
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace(
+                lead_contract_row, "|".join(lead_missing_outcome_columns), 1
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead PASS test evidence requires an explicit observed outcome",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=("lead_reconciliation_issues", "explicit outcome", "lead:C001"),
+        )
+        lead_runtime_reference_columns = lead_contract_row.split("|")
+        lead_runtime_reference_columns[12] = lead_runtime_reference_columns[12].replace(
+            "evidence-type: test",
+            "evidence-type: runtime",
+            1,
+        )
+        lead_runtime_reference_columns[12] = re.sub(
+            r"evidence-ref:\s*`[^`]+`",
+            "evidence-ref: `evidence:invented-runtime`",
+            lead_runtime_reference_columns[12],
+            count=1,
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace(
+                lead_contract_row, "|".join(lead_runtime_reference_columns), 1
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead runtime evidence labels require bound audit artifacts",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=(
+                "lead_reconciliation_issues",
+                "valid bound audit evidence",
+                "invented-runtime",
+            ),
+        )
+        lead_missing_expectation_columns = lead_contract_row.split("|")
+        lead_missing_expectation_columns[12] = re.sub(
+            r"(?:counterfactual|invariance):[^;]+;\s*",
+            "",
+            lead_missing_expectation_columns[12],
+            count=1,
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace(
+                lead_contract_row, "|".join(lead_missing_expectation_columns), 1
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead independent verification requires a counterfactual or invariance",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=(
+                "lead_reconciliation_issues",
+                "counterfactual",
+                "invariance",
+                "lead:C001",
+            ),
+        )
+        lead_source_only_columns = lead_contract_row.split("|")
+        lead_source_only_columns[12] = lead_source_only_columns[12].replace(
+            "evidence-type: test", "evidence-type: source-only", 1
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace(
+                lead_contract_row, "|".join(lead_source_only_columns), 1
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead source-only evidence cannot close stateful or integration PASS claims",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=(
+                "lead_reconciliation_issues",
+                "require test or runtime evidence",
+                "source-only",
+                "lead:C001",
+            ),
+        )
+        lead_not_applicable_columns = lead_contract_row.split("|")
+        check(
+            lead_not_applicable_columns[13].strip() == "PASS",
+            "lead all-not-applicable fixture requires a clean source row",
+        )
+        for index in range(4, 13):
+            lead_not_applicable_columns[index] = lead_not_applicable_columns[index].replace(
+                " pass — ", " not applicable — ", 1
+            )
+        write(
+            lead_report_path,
+            original_lead_report.replace(lead_contract_row, "|".join(lead_not_applicable_columns), 1),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead PASS cannot replace observable outcome and verification with not-applicable claims",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=(
+                "lead_reconciliation_issues",
+                "PASS requires pass observable-outcome and verification",
+                "lead:C001",
+            ),
+        )
+        lead_anchor_refs = re.findall(r"`([^`]+)`", lead_contract_row.split("|")[3])
+        manifest_source_paths = {item["rel_path"] for item in output_manifest["source_files"]}
+        lead_anchor_token = next(
+            reference
+            for reference in lead_anchor_refs
+            if reference not in manifest_source_paths and reference != "lead:C001"
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace(
+                f"source token `{lead_anchor_token}`",
+                "source token `definitely_missing_lead_anchor`",
+                1,
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead reconciliation anchors must exist in cited source",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=(
+                "lead_reconciliation_issues",
+                "anchor token must occur",
+                "definitely_missing_lead_anchor",
+            ),
+        )
+        lead_contract_rows = [
+            line
+            for line in original_lead_report.splitlines()
+            if line.startswith("| `lead:C")
+        ]
+        grouped_second_row = next(
+            line
+            for line in lead_contract_rows[1:]
+            if line.split("|")[13].strip() == "PASS"
+            and any(
+                reference not in manifest_source_paths
+                and reference != line.split("|")[1].strip().strip("`")
+                and reference != lead_anchor_token
+                for reference in re.findall(r"`([^`]+)`", line.split("|")[3])
+            )
+        )
+        grouped_first_columns = lead_contract_row.split("|")
+        grouped_second_columns = grouped_second_row.split("|")
+        grouped_first_batch_id = re.findall(r"`([^`]+)`", grouped_first_columns[2])[0]
+        grouped_second_batch_id = re.findall(r"`([^`]+)`", grouped_second_columns[2])[0]
+        grouped_first_columns[2] = (
+            f" `{grouped_first_batch_id}`, `{grouped_second_batch_id}` "
+        )
+        grouped_first_anchor_refs = set(
+            re.findall(r"`([^`]+)`", grouped_first_columns[3])
+        )
+        grouped_second_source_refs = {
+            reference
+            for reference in re.findall(r"`([^`]+)`", grouped_second_columns[3])
+            if reference in manifest_source_paths
+        }
+        for source_ref in sorted(grouped_second_source_refs - grouped_first_anchor_refs):
+            grouped_first_columns[3] += f" and `{source_ref}`"
+        grouped_lead_report = original_lead_report.replace(
+            lead_contract_row,
+            "|".join(grouped_first_columns),
+            1,
+        ).replace(grouped_second_row + "\n", "", 1)
+        write(lead_report_path, grouped_lead_report)
+        verifier_case(
+            scenario_runner,
+            "grouped lead rows must preserve evidence for every mapped batch contract",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=(
+                "lead_reconciliation_issues",
+                "concrete source anchor token for every mapped batch contract",
+                grouped_second_batch_id,
+            ),
+        )
+        fabricated_extra_anchor = "fabricated_extra_batch_anchor"
+        batch_report_text = canonical_complete.read_text(encoding="utf-8")
+        first_batch_row = next(
+            line
+            for line in batch_report_text.splitlines()
+            if f"| `{grouped_first_batch_id}` |" in line
+        )
+        first_batch_columns = first_batch_row.split("|")
+        first_batch_columns[4] += f" and `{fabricated_extra_anchor}`"
+        write(
+            canonical_complete,
+            batch_report_text.replace(
+                first_batch_row, "|".join(first_batch_columns), 1
+            ),
+        )
+        bogus_only_lead_columns = lead_contract_row.split("|")
+        for index in (3, 10, 12):
+            bogus_only_lead_columns[index] = bogus_only_lead_columns[index].replace(
+                f"`{lead_anchor_token}`", f"`{fabricated_extra_anchor}`"
+            )
+        write(
+            lead_report_path,
+            original_lead_report.replace(
+                lead_contract_row, "|".join(bogus_only_lead_columns), 1
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "fabricated batch anchor extras cannot satisfy lead evidence propagation",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=(
+                "lead_reconciliation_issues",
+                "concrete source anchor token for every mapped batch contract",
+                grouped_first_batch_id,
+            ),
+        )
+        write(canonical_complete, batch_report_text)
+        write(lead_report_path, original_lead_report)
+        lead_report_path.unlink()
+        verifier_case(
+            scenario_runner,
+            "required lead reconciliation report cannot be omitted",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=("lead_reconciliation_issues", "exactly one", "lead_reconciliation.md"),
+        )
+        write(lead_report_path, original_lead_report)
+        write(
+            lead_report_path,
+            original_lead_report.replace(output_manifest["run_id"], "wrong-lead-run-id", 1),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead reconciliation must use the exact Run ID",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=("lead_reconciliation_issues", "exact audit Run ID", "wrong-lead-run-id"),
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace("lead_reconciliation\n", "batch_worker\n", 1),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead reconciliation must identify its worker exactly",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=("lead_reconciliation_issues", "Worker", "batch_worker"),
+        )
+        lead_header = next(
+            line for line in original_lead_report.splitlines() if line.startswith("| Contract ID |")
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace(
+                lead_header,
+                lead_header.replace("core-logic", "domain-logic", 1),
+                1,
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead reconciliation requires the exact thirteen-column trace header",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=("lead_reconciliation_issues", "exact 13-column", "header"),
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace(lead_contract_row, lead_contract_row + "\n" + lead_contract_row, 1),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead reconciliation Contract IDs must be unique",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=("lead_reconciliation_issues", "Contract IDs must be unique", "lead:C001"),
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace(lead_contract_row + "\n", "", 1),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead reconciliation must map every batch Contract ID",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=(
+                "lead_reconciliation_issues",
+                "map every batch implementation Contract ID exactly once",
+            ),
+        )
+        write(
+            lead_report_path,
+            original_lead_report.replace(
+                "pass — Lead reconciliation preserves",
+                "gap — Lead reconciliation preserves",
+                1,
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "lead Result must agree with trace-cell statuses",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=(
+                "lead_reconciliation_issues",
+                "Result contradicts its trace statuses",
+            ),
+        )
+        lead_gap_report = original_lead_report.replace(
+            "pass — Lead reconciliation preserves",
+            "gap — Lead reconciliation preserves",
+            1,
+        ).replace(" | PASS |", " | GAP |", 1)
+        write(lead_report_path, lead_gap_report)
+        verifier_case(
+            scenario_runner,
+            "lead GAP contracts require atomic Contract-ID-bound findings",
+            output / "manifest.json",
+            canonical_complete,
+            expect=1,
+            needles=("lead_reconciliation_issues", "atomic finding", "lead:C001"),
+        )
+        lead_source_path = output_manifest["source_files"][0]["rel_path"]
+        lead_gap_finding = f"""### P2 - Lead fixture contract has one atomic gap
+- Files: `{lead_source_path}`
+- Evidence: Contract ID `lead:C001` reaches the verified fixture boundary but deliberately records one missing outcome.
+- Interface evidence: Not applicable.
+- Expected behavior/standard: The cross-file fixture contract must reach its source-bound observable result.
+- Gap: The fixture models exactly one independently closable missing cross-file outcome.
+- Suggested direction: Implement the missing outcome and rerun the source-bound verifier path."""
+        lead_gap_report = lead_gap_report.replace(
+            "\n## Open Questions",
+            f"\n\n{lead_gap_finding}\n\n## Open Questions",
+            1,
+        )
+        write(lead_report_path, lead_gap_report)
+        verifier_case(
+            scenario_runner,
+            "one atomic finding may close one lead GAP Contract ID",
+            output / "manifest.json",
+            canonical_complete,
+            expect=0,
+        )
+        write(lead_report_path, original_lead_report)
         pruned_decision_ledger = json.loads(output_ledger_text)
         pruned_decisions = pruned_decision_ledger.get("pruned_directory_review", {}).get("decisions", [])
         if pruned_decisions:
@@ -2618,6 +3893,275 @@ None.
         )
         verifier_case(
             scenario_runner,
+            "implementation inventory section is mandatory",
+            output / "manifest.json",
+            install_report(output, implementation_section_gap),
+            expect=1,
+            needles=("missing_sections", "implementation inventory"),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation inventory requires the exact eight-column header",
+            output / "manifest.json",
+            install_report(output, implementation_header_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "exact 8-column", "header"),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation inventory requires the exact eight-column separator",
+            output / "manifest.json",
+            install_report(output, implementation_separator_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "exact 8-column", "separator"),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation inventory must cover every unit",
+            output / "manifest.json",
+            install_report(output, implementation_row_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "missing implementation inventory rows", "SKILL.md"),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation inventory rejects duplicate Contract IDs while allowing repeated units",
+            output / "manifest.json",
+            install_report(output, implementation_duplicate_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "Contract IDs must be unique", "SKILL.md"),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation inventory rejects boilerplate contracts",
+            output / "manifest.json",
+            install_report(output, implementation_boilerplate_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "non-boilerplate", "contract"),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation responsibilities require an explicit contract basis",
+            output / "manifest.json",
+            install_report(output, implementation_basis_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "exactly one", "Basis", "SKILL.md"),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation responsibility basis kinds are enumerated",
+            output / "manifest.json",
+            install_report(output, implementation_basis_kind_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "Basis kind", "guess", "SKILL.md"),
+        )
+        verifier_case(
+            scenario_runner,
+            "authoritative Basis references must resolve to manifest-owned source artifacts",
+            output / "manifest.json",
+            install_report(output, implementation_basis_reference_gap),
+            expect=1,
+            needles=(
+                "implementation_inventory_issues",
+                "authoritative implementation Basis references",
+                "invented-contract-label",
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation responsibilities require explicit discovery provenance",
+            output / "manifest.json",
+            install_report(output, implementation_discovery_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "Discovery", "exactly one", "SKILL.md"),
+        )
+        verifier_case(
+            scenario_runner,
+            "manual discovery references must bind to validated assigned-unit anchors",
+            output / "manifest.json",
+            install_report(output, implementation_discovery_anchor_gap),
+            expect=1,
+            needles=(
+                "implementation_inventory_issues",
+                "Discovery must cite a validated source anchor",
+                "definitely_missing_discovery",
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation inventory anchors must exist in the assigned unit",
+            output / "manifest.json",
+            install_report(output, implementation_anchor_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "non-empty text", "definitely_missing_anchor"),
+        )
+        verifier_case(
+            scenario_runner,
+            "text implementation units cannot substitute a hash for a source anchor",
+            output / "manifest.json",
+            install_report(output, implementation_hash_anchor_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "non-empty text", "coverage evidence"),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation rows require behavior-specific verification",
+            output / "manifest.json",
+            install_report(output, implementation_verification_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "behavior-specific", "SKILL.md"),
+        )
+        verifier_case(
+            scenario_runner,
+            "generic manifest-hash notes are not implementation verification",
+            output / "manifest.json",
+            install_report(output, implementation_generic_verification_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "behavior-specific", "manifest SHA-256"),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation verification requires an explicit evidence type",
+            output / "manifest.json",
+            install_report(output, implementation_evidence_type_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "evidence-type", "SKILL.md"),
+        )
+        verifier_case(
+            scenario_runner,
+            "test evidence labels require concrete manifest-owned test references",
+            output / "manifest.json",
+            install_report(output, implementation_test_reference_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "evidence-ref", "test", "SKILL.md"),
+        )
+        verifier_case(
+            scenario_runner,
+            "test evidence references cannot be relabeled implementation source files",
+            output / "manifest.json",
+            install_report(output, implementation_test_non_test_reference_gap),
+            expect=1,
+            needles=(
+                "implementation_inventory_issues",
+                "manifest-owned test source files",
+                "SKILL.md",
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "PASS test evidence requires an explicit observed outcome",
+            output / "manifest.json",
+            install_report(output, implementation_test_outcome_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "explicit outcome", "SKILL.md"),
+        )
+        verifier_case(
+            scenario_runner,
+            "runtime evidence labels require bound audit artifacts",
+            output / "manifest.json",
+            install_report(output, implementation_runtime_reference_gap),
+            expect=1,
+            needles=(
+                "implementation_inventory_issues",
+                "valid bound audit evidence",
+                "invented-runtime",
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "manifest-owned test evidence with an explicit outcome is accepted",
+            output / "manifest.json",
+            install_report(output, implementation_test_evidence_valid),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation verification requires a counterfactual or invariance",
+            output / "manifest.json",
+            install_report(output, implementation_expectation_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "counterfactual", "invariance", "SKILL.md"),
+        )
+        verifier_case(
+            scenario_runner,
+            "source-only evidence cannot close stateful or external PASS claims",
+            output / "manifest.json",
+            install_report(output, implementation_source_only_effect_gap),
+            expect=1,
+            needles=(
+                "implementation_inventory_issues",
+                "require test or runtime evidence",
+                "source-only",
+                "SKILL.md",
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "GAP implementation rows require a bound finding",
+            output / "manifest.json",
+            install_report(output, implementation_unbound_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "Contract ID", "SKILL.md"),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation Result must agree with trace statuses",
+            output / "manifest.json",
+            install_report(output, implementation_result_contradiction_gap),
+            expect=1,
+            needles=(
+                "implementation_inventory_issues",
+                "Result contradicts its trace statuses",
+                "SKILL.md",
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "implementation PASS cannot replace implementation and verification with not-applicable claims",
+            output / "manifest.json",
+            install_report(output, implementation_not_applicable_pass_gap),
+            expect=1,
+            needles=(
+                "implementation_inventory_issues",
+                "PASS requires pass implementation and verification",
+                "SKILL.md",
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "file-bound findings must cite the exact GAP Contract ID",
+            output / "manifest.json",
+            install_report(output, implementation_contract_binding_gap),
+            expect=1,
+            needles=("implementation_inventory_issues", "Contract ID", "SKILL.md"),
+        )
+        verifier_case(
+            scenario_runner,
+            "compound batch findings cannot cite multiple implementation Contract IDs",
+            output / "manifest.json",
+            install_report(output, implementation_compound_finding_gap),
+            expect=1,
+            needles=(
+                "implementation_inventory_issues",
+                "each atomic batch finding must cite exactly one",
+                save_contract_id,
+                skill_contract_id,
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "each GAP implementation Contract ID has exactly one atomic finding",
+            output / "manifest.json",
+            install_report(output, implementation_duplicate_finding_gap),
+            expect=1,
+            needles=(
+                "implementation_inventory_issues",
+                "requires exactly one atomic batch finding",
+                "finding_count",
+                save_contract_id,
+            ),
+        )
+        verifier_case(
+            scenario_runner,
             "missing interface inventory rows are rejected",
             output / "manifest.json",
             install_report(output, interface_gap),
@@ -2825,6 +4369,336 @@ None.
         )
         check_output(malformed_fallback_result, "fallback_mode.active", "boolean")
         write(output_ledger_path, output_ledger_text)
+
+        set_scenario("semantic implementation gap and completion-ledger projection")
+        semantic_repo = base / "semantic-implementation-repo"
+        semantic_source = semantic_repo / "src" / "calculate.py"
+        write(
+            semantic_source,
+            "def calculate_total(items):\n    return 42\n\ndef calculate_tax(total, rate):\n    return total * rate\n",
+        )
+        write(
+            semantic_repo / "tests" / "test_calculate.py",
+            "def test_calculation_contract():\n    assert 2 * 3 == 6\n",
+        )
+        semantic_output = base / "semantic-implementation-output"
+        run(
+            [
+                sys.executable,
+                str(BUILD),
+                "--repo",
+                str(semantic_repo),
+                "--out",
+                str(semantic_output),
+                "--batch-size",
+                "200",
+            ]
+        )
+        semantic_complete = write_reports(
+            base / "semantic-implementation-reports",
+            semantic_output / "manifest.json",
+        )[-1]
+        semantic_report_text = semantic_complete.read_text(encoding="utf-8")
+        implementation_body = semantic_report_text[
+            semantic_report_text.index("## Implementation Inventory") : semantic_report_text.index("## Interface Inventory")
+        ]
+        semantic_rows = [
+            line
+            for line in implementation_body.splitlines()
+            if line.startswith("| `src/calculate.py` |")
+        ]
+        semantic_total_row = next(
+            line for line in semantic_rows if "`calculate_total@L" in line
+        )
+        semantic_tax_row = next(
+            line for line in semantic_rows if "`calculate_tax@L" in line
+        )
+        semantic_columns = semantic_total_row.split("|")
+        semantic_total_anchor = next(
+            value for value in re.findall(r"`([^`]+)`", semantic_columns[4]) if value.startswith("calculate_total@")
+        )
+        semantic_columns[3] = f" Calculate a total from every supplied item rather than returning a fixed substitute. Basis: public-contract — `src/calculate.py#{semantic_total_anchor}`. Discovery: parsed — `{semantic_total_anchor}` is a recognized named definition. "
+        semantic_columns[4] = f" Public function `{semantic_total_anchor}` receives the item collection. "
+        semantic_columns[5] = f" gap — `{semantic_total_anchor}` -> ignores `items` -> returns literal `42` -> incorrect total for varying inputs. "
+        semantic_columns[6] = " gap — Empty, varied, and invalid item inputs all reach the same literal; no calculation failure path exists. "
+        semantic_columns[7] = f" gap — evidence-type: source-only; counterfactual: different supplied item collections must produce their corresponding different totals; manual varied-input review confirms `{semantic_total_anchor}` returns the same literal `42` for every supplied collection. "
+        semantic_columns[8] = " GAP "
+        semantic_gap_row = "|".join(semantic_columns)
+        tax_columns = semantic_tax_row.split("|")
+        semantic_tax_anchor = next(
+            value for value in re.findall(r"`([^`]+)`", tax_columns[4]) if value.startswith("calculate_tax@")
+        )
+        tax_columns[3] = f" Calculate tax from the supplied total and rate. Basis: public-contract — `src/calculate.py#{semantic_tax_anchor}`. Discovery: parsed — `{semantic_tax_anchor}` is a recognized named definition. "
+        tax_columns[4] = f" Public function `{semantic_tax_anchor}` receives `total` and `rate`. "
+        tax_columns[5] = f" pass — `{semantic_tax_anchor}` -> multiplies `total` by `rate` -> returns the calculated tax. "
+        tax_columns[6] = " pass — Numeric edge behavior remains a caller-domain concern; this pure calculation has no permission or recovery path. "
+        tax_columns[7] = f" pass — evidence-type: source-only; counterfactual: changing either total or rate must change the calculated product accordingly; manual varied-input review confirms `{semantic_tax_anchor}` returns products derived from both supplied parameters. "
+        tax_columns[8] = " PASS "
+        semantic_report_text = semantic_report_text.replace(
+            semantic_total_row,
+            semantic_gap_row,
+            1,
+        ).replace(
+            semantic_tax_row,
+            "|".join(tax_columns),
+            1,
+        )
+        semantic_report_text = semantic_report_text.replace(
+            "## Findings\nNo findings.",
+            """## Findings
+### P1 - Calculation is replaced by a fixed result
+- Files: `src/calculate.py`
+- Evidence: Contract ID `batch_001:C001`: `calculate_total(items)` ignores `items` and returns literal `42`; the source has no TODO or NotImplemented marker.
+- Interface evidence: Not applicable.
+- Expected behavior/standard: The total must be calculated from the supplied items through the public function.
+- Gap: Every input receives the same hard-coded result instead of the required calculation.
+- Suggested direction: Implement the domain calculation and cover varied inputs and edge cases.""",
+            1,
+        )
+        semantic_report_text = semantic_report_text.replace(
+            "- `src/calculate.py`: Fixture report.",
+            "- The owned unit is covered by the semantic implementation finding above.",
+            1,
+        )
+        write(semantic_complete, semantic_report_text)
+        semantic_canonical_report = install_report(semantic_output, semantic_complete)
+        complete_effort_ledger(semantic_output)
+        false_clean_semantic_text = semantic_report_text.replace(
+            semantic_gap_row + "\n", "", 1
+        )
+        false_clean_findings_start = false_clean_semantic_text.index("## Findings")
+        false_clean_notes_start = false_clean_semantic_text.index("## No Finding Notes")
+        false_clean_semantic_text = (
+            false_clean_semantic_text[:false_clean_findings_start]
+            + "## Findings\nNo findings.\n\n"
+            + false_clean_semantic_text[false_clean_notes_start:]
+        )
+        write(semantic_canonical_report, false_clean_semantic_text)
+        omitted_responsibility_result = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(semantic_output / "manifest.json"),
+                "--reports",
+                str(semantic_canonical_report),
+            ],
+            expect=1,
+        )
+        check_output(
+            omitted_responsibility_result,
+            "implementation inventory omitted occurrence-aware named source responsibilities",
+            "calculate_total",
+        )
+        stuffed_tax_columns = list(tax_columns)
+        stuffed_tax_columns[4] = stuffed_tax_columns[4].replace(
+            f"`{semantic_tax_anchor}`",
+            f"`{semantic_tax_anchor}` and `{semantic_total_anchor}`",
+            1,
+        )
+        stuffed_tax_columns[5] += f" The unrelated `{semantic_total_anchor}` token is also listed. "
+        stuffed_tax_columns[7] += f" The unrelated `{semantic_total_anchor}` token is also listed. "
+        anchor_stuffed_semantic_text = false_clean_semantic_text.replace(
+            "|".join(tax_columns),
+            "|".join(stuffed_tax_columns),
+            1,
+        )
+        write(semantic_canonical_report, anchor_stuffed_semantic_text)
+        complete_effort_ledger(semantic_output)
+        anchor_stuffed_result = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(semantic_output / "manifest.json"),
+                "--reports",
+                str(semantic_canonical_report),
+            ],
+            expect=1,
+        )
+        check_output(
+            anchor_stuffed_result,
+            "each named source definition occurrence requires its own implementation inventory row",
+            "calculate_total",
+        )
+
+        set_scenario("same-name definition occurrences require distinct inventory rows")
+        repeated_repo = base / "repeated-definition-repo"
+        write(
+            repeated_repo / "src" / "models.py",
+            "class Alpha:\n    def __init__(self):\n        self.value = 'alpha'\n\n"
+            "class Beta:\n    def __init__(self):\n        self.value = 'beta'\n",
+        )
+        write(
+            repeated_repo / "tests" / "test_models.py",
+            "def test_models_construct():\n    assert True\n",
+        )
+        repeated_output = base / "repeated-definition-output"
+        run(
+            [
+                sys.executable,
+                str(BUILD),
+                "--repo",
+                str(repeated_repo),
+                "--out",
+                str(repeated_output),
+                "--batch-size",
+                "200",
+            ]
+        )
+        repeated_complete = write_reports(
+            base / "repeated-definition-reports",
+            repeated_output / "manifest.json",
+        )[-1]
+        repeated_canonical = install_report(repeated_output, repeated_complete)
+        complete_effort_ledger(repeated_output)
+        repeated_text = repeated_canonical.read_text(encoding="utf-8")
+        init_rows = [
+            line
+            for line in repeated_text.splitlines()
+            if line.startswith("| `src/models.py` |") and "`__init__@L" in line
+        ]
+        check(len(init_rows) == 2, "fixture report must inventory both same-name __init__ occurrences")
+        init_anchors = {
+            value
+            for line in init_rows
+            for value in re.findall(r"`([^`]+)`", line)
+            if value.startswith("__init__@")
+        }
+        check(len(init_anchors) == 2, "same-name definitions must receive distinct occurrence anchors")
+        run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(repeated_output / "manifest.json"),
+                "--reports",
+                str(repeated_canonical),
+            ]
+        )
+        omitted_init_text = repeated_text.replace(init_rows[1] + "\n", "", 1)
+        write(repeated_canonical, omitted_init_text)
+        complete_effort_ledger(repeated_output)
+        omitted_init_result = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(repeated_output / "manifest.json"),
+                "--reports",
+                str(repeated_canonical),
+            ],
+            expect=1,
+        )
+        check_output(
+            omitted_init_result,
+            "implementation inventory omitted occurrence-aware named source responsibilities",
+            "__init__@L",
+        )
+
+        set_scenario("semantic implementation gap and completion-ledger projection")
+        write(semantic_canonical_report, semantic_report_text)
+        complete_effort_ledger(semantic_output)
+        run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(semantic_output / "manifest.json"),
+                "--reports",
+                str(semantic_canonical_report),
+                "--receipt-out",
+                str(semantic_output / "verification_receipt.json"),
+            ]
+        )
+        projection_path = semantic_output / "completion_ledger_projection.json"
+        consolidated_path = semantic_output / "consolidated-findings.json"
+        run(
+            [
+                sys.executable,
+                str(MERGE_FINDINGS),
+                "--reports",
+                str(semantic_output / "reports"),
+                "--manifest",
+                str(semantic_output / "manifest.json"),
+                "--json-out",
+                str(consolidated_path),
+                "--ledger-projection-out",
+                str(projection_path),
+            ]
+        )
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        check(
+            len(projection["candidates"]) == 2,
+            "batch and lead evidence should produce two explicitly disposed semantic candidates",
+        )
+        projection["review_status"] = "complete"
+        candidate = next(item for item in projection["candidates"] if item["priority"] == "P1")
+        lead_candidate = next(item for item in projection["candidates"] if item is not candidate)
+        candidate["disposition"] = "confirmed"
+        candidate["disposition_reason"] = "Lead review confirmed that a fixed literal substitutes for the required calculation."
+        candidate["ledger_row"].update(
+            {
+                "remaining_work": "[P1] Replace the fixed result with the real calculation in src/calculate.py.",
+                "why_it_matters": "Every input currently receives the same incorrect total.",
+                "status": "Open",
+                "verification": "Exercise varied and edge-case item inputs through calculate_total and assert computed totals.",
+            }
+        )
+        lead_candidate["disposition"] = "duplicate"
+        lead_candidate["disposition_reason"] = (
+            "Lead reconciliation preserves the same independently closable calculation outcome already confirmed from the batch."
+        )
+        lead_candidate["ledger_row"]["id"] = candidate["ledger_row"]["id"]
+        write(projection_path, json.dumps(projection, indent=2, sort_keys=True))
+        write(
+            semantic_repo / "CompletionLedger.md",
+            """# Completion Ledger
+
+| ID | Remaining work | Why it matters | Status | Verification |
+| --- | --- | --- | --- | --- |
+| Q-EXISTING | Preserve unrelated active work. | A scoped audit must not prune unrelated obligations. | Open | Run the existing end-to-end check after implementation. |
+""",
+        )
+        plan_path = semantic_output / "completion-ledger-plan.json"
+        updater_common = [
+            "--repo",
+            str(semantic_repo),
+            "--manifest",
+            str(semantic_output / "manifest.json"),
+            "--reports",
+            str(semantic_output / "reports"),
+            "--projection",
+            str(projection_path),
+        ]
+        run([sys.executable, str(UPDATE_LEDGER), "plan", *updater_common, "--out", str(plan_path)])
+        run([sys.executable, str(UPDATE_LEDGER), "apply", *updater_common, "--plan", str(plan_path)])
+        applied_ledger = (semantic_repo / "CompletionLedger.md").read_text(encoding="utf-8")
+        check("Q-EXISTING" in applied_ledger, "ledger importer must preserve unrelated active work")
+        check(candidate["ledger_row"]["id"] in applied_ledger, "confirmed semantic gap must be added to the ledger")
+        second_plan = semantic_output / "completion-ledger-plan-second.json"
+        run([sys.executable, str(UPDATE_LEDGER), "plan", *updater_common, "--out", str(second_plan)])
+        second_plan_data = json.loads(second_plan.read_text(encoding="utf-8"))
+        check(second_plan_data["changed"] is False, "replanning an applied projection should be idempotent")
+        original_semantic_source = semantic_source.read_text(encoding="utf-8")
+        write(semantic_source, original_semantic_source + "# concurrent change\n")
+        stale_plan_result = run(
+            [
+                sys.executable,
+                str(UPDATE_LEDGER),
+                "plan",
+                *updater_common,
+                "--out",
+                str(semantic_output / "stale-plan.json"),
+            ],
+            expect=1,
+        )
+        check_output(
+            stale_plan_result,
+            "manifest source changed after pass-only audit verification",
+            "src/calculate.py",
+        )
+        write(semantic_source, original_semantic_source)
 
         set_scenario("fallback ledger and optional scope modes")
         run([sys.executable, str(BUILD), "--repo", str(fixture), "--out", str(fallback_output), "--batch-size", "200"])
@@ -3413,7 +5287,10 @@ export function AriaDisabledButton() {
             ],
             expect=2,
         )
-        check_output(invalid_filename_result, "Report file must use exact batch_###.md filename")
+        check_output(
+            invalid_filename_result,
+            "Report file must use exact batch_###.md or lead_reconciliation.md filename",
+        )
         missing_purpose_result = run(
             [
                 sys.executable,
@@ -3584,7 +5461,7 @@ export function AriaDisabledButton() {
             ],
             expect=1,
         )
-        check_output(missing_root_skip_result, "source_text_errors:", "source-backed interface")
+        check_output(missing_root_skip_result, "source_text_errors:", "source-backed implementation")
         empty_root_dir = base / "empty-root-copy"
         empty_root_manifest = empty_root_dir / "manifest.json"
         write(empty_root_dir / "queue_complete.json", marker_text)
@@ -3871,6 +5748,83 @@ export function AriaDisabledButton() {
         legacy_marker_path.unlink()
         canonical_complete = install_report(output, complete)
         write(output / "reports" / "nested" / "batch_999.md", "stale nested report\n")
+        receipt_path = output / "verification_receipt.json"
+        receipt_result = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--reports",
+                str(output / "reports"),
+                "--receipt-out",
+                str(receipt_path),
+                "--json",
+            ]
+        )
+        verifier_payload = json.loads(receipt_result.stdout)
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        expected_receipt_keys = {
+            "schema_version",
+            "audit_kind",
+            "run_id",
+            "repo_root",
+            "manifest_sha256",
+            "reports_dir",
+            "report_sha256",
+            "verifier_result_sha256",
+        }
+        check(set(receipt) == expected_receipt_keys, "verification receipt must use the exact stable schema")
+        check(receipt["schema_version"] == 1, "verification receipt schema version must be one")
+        check(receipt["audit_kind"] == "full-repo-audit", "verification receipt must identify its audit kind")
+        check(receipt["run_id"] == output_manifest["run_id"], "verification receipt must bind the audit Run ID")
+        check(receipt["repo_root"] == output_manifest["repo_root"], "verification receipt must bind the repo root")
+        check(
+            receipt["manifest_sha256"] == hashlib.sha256((output / "manifest.json").read_bytes()).hexdigest(),
+            "verification receipt must bind the exact manifest bytes",
+        )
+        check(
+            receipt["reports_dir"] == str((output / "reports").resolve()),
+            "verification receipt must record the exact resolved reports root",
+        )
+        authorized_report_names = verify_module.manifest_authorized_report_names(output_manifest)
+        check(
+            set(receipt["report_sha256"]) == set(authorized_report_names),
+            "verification receipt must hash every manifest-authorized batch, journey, and lead report",
+        )
+        for report_name in authorized_report_names:
+            check(
+                receipt["report_sha256"][report_name]
+                == hashlib.sha256((output / "reports" / report_name).read_bytes()).hexdigest(),
+                f"verification receipt hash must match authorized report {report_name}",
+            )
+        check(
+            "batch_999.md" not in receipt["report_sha256"],
+            "verification receipt must ignore nested stale or unauthorized reports",
+        )
+        check(
+            receipt["verifier_result_sha256"] == verify_module.canonical_json_sha256(verifier_payload),
+            "verification receipt must bind the exact emitted verifier result",
+        )
+        valid_receipt_text = receipt_path.read_text(encoding="utf-8")
+        missing_reports_result = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--reports",
+                str(output / "missing-reports"),
+                "--receipt-out",
+                str(receipt_path),
+            ],
+            expect=2,
+        )
+        check_output(missing_reports_result, "Report path does not exist")
+        check(
+            not receipt_path.exists(),
+            "a missing report input must not leave a prior passing verification receipt usable",
+        )
         run(
             [
                 sys.executable,
@@ -3879,9 +5833,93 @@ export function AriaDisabledButton() {
                 str(output / "manifest.json"),
                 "--reports",
                 str(output / "reports"),
+                "--receipt-out",
+                str(receipt_path),
             ]
         )
-        write(fixture / "src" / "foo---bar.ts", "export const dashed = 'changed';\n")
+        skipped_freshness_result = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--reports",
+                str(output / "reports"),
+                "--receipt-out",
+                str(receipt_path),
+                "--skip-current-hash-check",
+            ],
+            expect=2,
+        )
+        check_output(skipped_freshness_result, "cannot be combined with --skip-current-hash-check")
+        check(
+            not receipt_path.exists(),
+            "a freshness-skipping attempt must invalidate any prior passing receipt",
+        )
+        run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--reports",
+                str(output / "reports"),
+                "--receipt-out",
+                str(receipt_path),
+            ]
+        )
+        valid_receipt_text = receipt_path.read_text(encoding="utf-8")
+        effort_ledger_before_invalid_target = output_ledger_path.read_text(encoding="utf-8")
+        noncanonical_receipt_result = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--reports",
+                str(output / "reports"),
+                "--receipt-out",
+                str(output_ledger_path),
+            ],
+            expect=2,
+        )
+        check_output(noncanonical_receipt_result, "exactly <manifest-dir>/verification_receipt.json")
+        check(
+            output_ledger_path.read_text(encoding="utf-8") == effort_ledger_before_invalid_target,
+            "a noncanonical receipt path must not delete or replace another audit artifact",
+        )
+        check(
+            receipt_path.read_text(encoding="utf-8") == valid_receipt_text,
+            "rejecting a noncanonical receipt path must preserve the canonical passing receipt",
+        )
+        outside_receipt_target = base / "outside-receipt-target.json"
+        write(outside_receipt_target, "must remain unchanged\n")
+        receipt_path.unlink()
+        os.symlink(outside_receipt_target, receipt_path)
+        symlink_receipt_result = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--reports",
+                str(output / "reports"),
+                "--receipt-out",
+                str(receipt_path),
+            ],
+            expect=2,
+        )
+        check_output(symlink_receipt_result, "receipt output must not be a symlink")
+        check(
+            outside_receipt_target.read_text(encoding="utf-8") == "must remain unchanged\n",
+            "receipt publication must not follow a symlink outside the audit output",
+        )
+        receipt_path.unlink()
+        write(receipt_path, valid_receipt_text)
+
+        drift_source = fixture / "src" / "foo---bar.ts"
+        original_drift_source = drift_source.read_text(encoding="utf-8")
+        write(drift_source, "export const dashed = 'changed';\n")
         drift_result = run(
             [
                 sys.executable,
@@ -3889,11 +5927,73 @@ export function AriaDisabledButton() {
                 "--manifest",
                 str(output / "manifest.json"),
                 "--reports",
-                str(canonical_complete),
+                str(output / "reports"),
+                "--receipt-out",
+                str(receipt_path),
             ],
             expect=1,
         )
         check_output(drift_result, "current_hash_mismatches:", "changed")
+        check(
+            not receipt_path.exists(),
+            "failed re-verification must invalidate the prior passing receipt before verification begins",
+        )
+        merge_without_receipt_result = run(
+            [
+                sys.executable,
+                str(MERGE_FINDINGS),
+                "--reports",
+                str(output / "reports"),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--json",
+            ],
+            expect=2,
+        )
+        check_output(merge_without_receipt_result, "verification receipt")
+        write(drift_source, original_drift_source)
+        run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--reports",
+                str(output / "reports"),
+                "--receipt-out",
+                str(receipt_path),
+            ]
+        )
+
+        reports_for_receipt = verify_module.iter_report_files([str(output / "reports")])
+        journey_report_for_drift = output / "reports" / "journey_audit.md"
+        original_journey_for_drift = journey_report_for_drift.read_text(encoding="utf-8")
+        original_verify = verify_module.verify
+
+        def mutate_authorized_report_after_verify(*args, **kwargs):
+            result = original_verify(*args, **kwargs)
+            write(journey_report_for_drift, original_journey_for_drift + "\n")
+            return result
+
+        verify_module.verify = mutate_authorized_report_after_verify
+        try:
+            try:
+                verify_module.verify_with_receipt_data(
+                    output / "manifest.json",
+                    reports_for_receipt,
+                )
+            except ValueError as exc:
+                check(
+                    "Manifest-authorized reports changed during verification" in str(exc),
+                    "receipt race rejection should identify authorized report drift",
+                )
+            else:
+                raise AssertionError(
+                    scenario_message("authorized journey report drift must prevent receipt creation")
+                )
+        finally:
+            verify_module.verify = original_verify
+            write(journey_report_for_drift, original_journey_for_drift)
         scenario_runner.raise_if_failed()
 
     print("self-test ok")
