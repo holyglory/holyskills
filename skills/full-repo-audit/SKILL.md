@@ -32,7 +32,13 @@ Do not let source-inferred UI structure, audit-generated documentation, or an
 over-prescriptive handoff doc become confirmed product truth. When a UI-heavy
 repo has unclear journeys or screenshots show overloaded/default-detail-heavy
 surfaces, report the UI assumption status as `source-inferred` or `missing` and
-escalate to screenshot-based visual review or `ui-implementation-audit`.
+escalate to screenshot-based visual review. Invoke `ui-implementation-audit`
+only after manually confirming and naming a substantive repo-owned target UI
+source file and passing that skill's recognized-source preflight; UI-heavy
+dependencies, arbitrary source paths, mockups, screenshots, stories, tests,
+and planned screens alone do not qualify. Use its exceptional type-to-component
+source-anchor relationship only when manual inspection proves a real
+unrecognized UI toolkit.
 
 ## Required Execution Model
 
@@ -116,7 +122,7 @@ escalate to screenshot-based visual review or `ui-implementation-audit`.
    - For each `batch_###.md`, spawn one low-effort subagent and pass the entire prompt file content.
    - Require at least one `Implementation Inventory` row for every owned file or range unit and one separate row for every distinct responsibility found there. A unit may therefore appear in multiple rows. Each row has a unique stable `Contract ID` in deterministic `batch_###:C###` namespace, numbered within its owning batch, plus concrete source anchors, ordered implementation/data/side-effect flow, failure/permission/recovery handling, verification evidence, and `PASS`, `GAP`, or `BLOCKED`; marker searches, one catch-all file row, or a generic purpose summary are not substitutes. In the responsibility cell, require an enumerated `Basis: <kind> — <reference>` and `Discovery: parsed|manual — <assigned-unit anchor>`. Parsed discovery requires a recognized named definition; declarative, unsupported, and unparsed responsibilities require manual enumeration, and inability to enumerate is `BLOCKED`. Begin all three trace/evidence cells with `pass`, `gap`, `blocked`, or `not applicable`; derive the row result from them, and inventory every high-confidence named source definition in its own row so a working helper cannot hide an omitted entry point.
    - When generated, spawn a separate low-effort source journey worker with `journey_audit.md`. This worker checks journey documentation, drafts missing journeys, estimates UI element relevance, and traces navigation/decision information through UI source.
-   - When generated, spawn a separate visual journey worker with `visual_journey_audit.md`. If the repo is UI-heavy or screenshots are available, the lead must review the visual findings directly or rerun the dedicated `ui-implementation-audit`; do not let low-effort visual notes be the only basis for declaring a UI usable.
+   - When generated, spawn a separate visual journey worker with `visual_journey_audit.md`. If the repo is UI-heavy or screenshots are available, the lead must review the visual findings directly; do not let low-effort visual notes be the only basis for declaring a UI usable. Rerun the dedicated `ui-implementation-audit` only after manually confirming and naming a substantive repo-owned target UI source file and passing its recognized-source preflight. If no such implementation exists, keep the UI state planned or unimplemented and do not invoke that skill; reserve its type-to-component source-anchor relationship for a manually proven unrecognized UI toolkit.
    - Tell subagents not to edit files and to report file coverage plus implementation coverage for every listed unit. They may inspect adjacent callers/callees for context, but findings and ownership remain bound to their assigned files.
    - Run in waves if the repo is large; keep a ledger of batch id, agent id, status, and returned checked files.
    - If subagents are unavailable, use manual fallback mode: process each `batch_###.md` and generated journey prompt yourself, save the required reports under `<audit-output>/reports/`, and keep the reduced coverage label through the final report.

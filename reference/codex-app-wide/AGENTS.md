@@ -152,6 +152,73 @@
   state, respect dependencies and concurrent runs, and never delete shared
   records unconditionally.
 
+## Measure delivery efficiency truthfully
+
+- Efficiency telemetry is observational and subordinate to complete scope,
+  correctness, safety, maintainability, verification, and honest reporting.
+  Never omit required work, context, tests, or explanation to improve a metric.
+- When measurement is configured, use a runtime- or harness-owned recorder from
+  request receipt through terminal delivery, recording first model or tool
+  activity separately. Report request-to-delivery wall time and execution wall
+  time separately so queue or scheduling delay remains visible. Append durably
+  and concurrency-safely to a cold `EfficiencyLedger.jsonl` outside source
+  worktrees and routine context. This policy does not itself capture telemetry;
+  a missing recorder or unsupported counter is an explicit instrumentation gap,
+  never a reason to reconstruct or estimate an unknown value. Record zero only
+  when complete instrumentation proves no usage; otherwise record `unknown` or
+  `not-applicable`.
+- Record task start and a terminal status of complete, incomplete, blocked,
+  cancelled, superseded, or interrupted. Preserve prior events; append linked
+  continuations and corrections instead of rewriting history. Append later
+  defects, retries, rollback, and rework to the original lineage when known,
+  without double-counting an event. Classify linked later work on separate
+  dimensions: its kind is continuation, retry, rollback, defect repair, or
+  rework; its cause is agent-caused mistake, changed user intent, new scope,
+  external cause, or unknown.
+- Use only authoritative runtime or provider token counters and a monotonic
+  clock, with their provenance and instrumentation coverage. Preserve available
+  provider-native input, output, cached, reasoning, and other token categories.
+  Include the root and delegated agents, tool work, failed attempts, retries,
+  and rework; mark unobserved or self-reported fields explicitly rather than
+  implying precision.
+- Label every observed model, tool, and wait span on two independent dimensions.
+  Its phase is planning, implementation, testing, deployment, reporting, or
+  unattributed. Its activity state is model-active, tool-active, external-wait,
+  user-wait, or blocked-wait. A test or deployment operation remains in that
+  phase while waiting. Test authoring and a fix after a failed test are
+  implementation; test execution and post-deployment verification are testing.
+  Planning covers requirements, context, research, diagnosis, design, and
+  sequencing. Implementation covers changes to code, configuration,
+  documentation, data, and test artifacts. Testing covers executing and
+  reviewing verification. Deployment covers release or environment mutation;
+  reporting covers user-facing status and handoff. Ambiguous mixed work is
+  unattributed.
+- Keep measurement provenance separate from attribution provenance. Mark every
+  phase, activity state, scope, outcome, verification, task-type, scope-size,
+  and method classification as runtime-observed, agent-declared, inferred, or
+  unknown, with its classifier or schema version. Never present an inferred
+  allocation as measured.
+- For each phase, report authoritative token counters, phase-inclusive elapsed
+  interval unions, and activity-state duration. Deduplicate overlapping spans.
+  Report end-to-end wall time separately from summed per-agent active time;
+  concurrent phase unions may overlap and must not be summed as wall time.
+- A terminal event identifies task lineage, nonsensitive opaque project and
+  revision identifiers when known, schema, recorder, policy, model or runtime
+  configuration versions, outcome, counters, coverage, and measurement
+  overhead. Bind it to the agreed requested-scope and acceptance baseline plus
+  user-approved scope changes. Record each nonsensitive requirement ID or
+  evidence reference as satisfied, partial, blocked, or explicitly removed,
+  with delivered scope, verification, evidence provenance, and known defect and
+  rework links. A task cannot be complete while an in-scope requirement remains
+  unresolved.
+- Use stable, versioned, low-cardinality, nonsensitive task-type, scope-size, and
+  method tags so compatible approaches can be compared. Compare efficiency only
+  under compatible measurement semantics and alongside outcome, scope,
+  verification, defects, and rework. Keep collection passive and proportionate;
+  do not add material calls or delay solely to improve measurement precision.
+- Never retain prompts, source content, tool payloads, secrets, credentials, or
+  personal data in efficiency telemetry.
+
 ## Put requested interface content first
 
 - A destination's name or label is a content promise. When the user opens a

@@ -158,10 +158,24 @@ Honest description: an interface-source and rendered-evidence audit against
 mockups and journey requirements. It checks visual, responsive, interaction,
 accessibility, and journey gaps and traces visible actions through handlers,
 backend/API, permissions, persistence, and tests. It does not create design
-truth when requirements or render evidence are missing.
+truth when requirements or render evidence are missing, and it does not apply
+before a substantive repo-owned target UI surface has been implemented.
 
 Improvements present:
 
+- a lead-inspected implementation file and substantive visible UI construction
+  are required before artifacts or workers; an exact, verifier-bound imported,
+  inherited/conformed, or constructed UI type-to-component-definition fallback
+  covers manually confirmed unrecognized toolkits;
+- arbitrary backend paths, UI-looking backend strings, null/route/root-mount
+  scaffolds, imports, empty native shells, multi-tag/native placeholders,
+  evidence-only, style-only, story/test-only, and untouched scaffold fixtures
+  exit as inapplicable without artifacts;
+- manifest and verifier checks bind the qualification and applicability evidence
+  to source hashes, while genuinely partial web, native, custom-component, and
+  uncommon-toolkit surfaces remain eligible;
+- the lead records actual runtime effort provenance without a fixed high-effort
+  requirement;
 - screenshot filenames must resolve to real confined evidence;
 - evidence hashes bind route/state/viewport metadata and formal reports;
 - action traces require exact columns and existing `path#symbol` references;

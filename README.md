@@ -23,9 +23,9 @@ Holy Skills does not import, clone, pin, build, or test that repository.
 - `full-repo-test-coverage-audit`: a structural test-assurance audit with exact
   target decisions, validated test references, and optional empirical coverage
   ingestion.
-- `ui-implementation-audit`: a source- and evidence-bound UI implementation
-  audit covering rendered behavior, journeys, handlers, backend paths,
-  permissions, persistence, and tests.
+- `ui-implementation-audit`: a source- and evidence-bound audit used only once
+  a substantive product UI surface exists, covering rendered behavior,
+  journeys, handlers, backend paths, permissions, persistence, and tests.
 - `user-journey-docs-audit`: a lexical and structural documentation audit for
   product intent, users, journeys, feature/UI inventories, edge cases,
   implementation expectations, tests, and usability acceptance criteria.
@@ -58,6 +58,9 @@ vendored copy so its directory remains independently installable and testable.
   all five skills.
 - `DecisionHistory.md`: compact major-decision and project-direction index.
 - `DecisionDetails/`: one cold supporting record per indexed decision.
+- `EfficiencyLedger.jsonl` is deliberately absent from this layout; the name is
+  reserved for a runtime-owned cold stream outside this checkout and routine
+  context.
 
 `DecisionHistory.md` is routine context; `DecisionDetails/` is not. The index
 contains one evidence-linked `Direction:` paragraph, then entries with this
@@ -102,6 +105,20 @@ Every field is required and IDs are unique. Status begins with `Active`,
 `TODO`, `Unresolved`, or `Waiting`. Do not add prose, checklists, extra tables,
 or terminal rows outside the schema; history belongs in the sources named
 above.
+
+Delivery-efficiency measurement is a runtime boundary, not a project ledger.
+When configured, a runtime or harness recorder appends authoritative provider
+token counters and monotonic timing events to a concurrency-safe cold
+`EfficiencyLedger.jsonl` outside source worktrees. It records planning,
+implementation, testing, deployment, reporting, and unattributed phases
+independently from active and wait states, preserving provider-native token
+categories, request and execution wall time, attribution provenance, task
+lineage, concurrent intervals, agreed-scope coverage, approved changes,
+outcomes, later defects, and rework. The universal policy defines these
+semantics and the privacy and quality safeguards; it does not capture counters
+or provide a recorder. This repository therefore does not claim operational
+telemetry, and missing instrumentation must remain unknown rather than be
+manually estimated or recorded as zero.
 
 Every verified artifact-backed full-repo audit produces a reviewed ledger
 projection outside the audited repository, including an empty projection for a

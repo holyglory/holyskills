@@ -1,6 +1,6 @@
 ---
 name: ui-implementation-audit
-description: Audit implemented UI against mockups and journey requirements using deterministic interface-source batches, real hashed screenshot/native evidence, bound formal-verifier JSON, and source-backed action traces through handlers, backend/API, permissions, persistence, and tests. Use to plan visual, responsive, interaction, journey, implementation, accessibility, and test corrections.
+description: Audit an existing substantive product UI implementation against mockups and journeys with deterministic source batches, real hashed rendered evidence, formal-verifier JSON, and end-to-end action traces. Use only after manually confirming and naming at least one repo-owned executable screen, component, or native view. Do not use before UI implementation, or for plans, mockups, screenshots, design prototypes, assets/styles, Storybook/tests, untouched framework scaffolds, or backend-only repos. A partial implementation qualifies once one real target surface exists; audit its missing planned screens and behavior as gaps.
 ---
 
 # UI Implementation Audit
@@ -17,6 +17,39 @@ screenshots against the design target.
 This skill exists because UI implementations often drift from generated mockups:
 spacing, density, hierarchy, responsive fit, visible states, and asset use must
 be checked with actual screenshots, not only source reading.
+
+## Applicability Gate
+
+Use this audit only when the target product already contains at least one
+substantive, repo-owned UI surface in executable interface source. Before
+running self-tests, creating a queue or artifacts, or dispatching workers,
+manually inspect the repository and name the implementing source file with
+`--implemented-ui-file`. The preflight must recognize an executable UI
+surface with substantive visible content or controls in that file; imports,
+empty view shells, route/provider/root-mount plumbing, and naming an arbitrary
+source path are not enough.
+
+Plans, requirements, mockups, screenshots, exported designs, prototypes,
+Storybook stories, visual tests, fixtures, examples, styles, assets, message
+catalogs, route or package scaffolding, and untouched framework starters do not
+establish an implemented product UI. Neither does a backend-only repository. If
+none exists, stop: report that this audit is not applicable and route the work
+to UI design or implementation. Do not start an empty audit or call the absence
+of implementation an audit blocker.
+
+A genuinely partial implementation qualifies once one real target screen,
+component, or native view exists. Audit that implementation, and record absent
+planned screens, states, wiring, and journeys as gaps.
+
+For a legitimate UI toolkit the detector does not recognize, use the exceptional
+`--implemented-ui-override PATH UI-KIND SOURCE-ANCHOR` form only after manual
+inspection. `UI-KIND` must be the exact framework, view type, or UI construct
+written in executable source and used in an import, inheritance/conformance, or
+constructor relationship. `SOURCE-ANCHOR` must be a distinct exact named
+screen/component definition whose body uses that UI kind. The builder persists
+both strings and the verifier checks the relationship against the hash-bound
+source. This is a narrow human-attested fallback, not permission to relabel two
+backend symbols, route scaffolding, or planned UI as implementation.
 
 Actual means an artifact recorded in `<audit-output>/visual_evidence.json`, not a filename mentioned in prose. Each screenshot/native snapshot is verified by path confinement, SHA-256, MIME, dimensions, route, state, viewport, and capture tool. Web audits bind formal-verifier JSON with checked pages and visible scrollbar inventory. Reports cite these records as `evidence:<id>`.
 
@@ -42,9 +75,8 @@ and the documentation handoff conflict instead of marking the UI as compliant.
 
 ## Required Execution Model
 
-- Use high reasoning effort or higher for the lead audit. If the current lead
-  run cannot be confirmed as high effort or higher, tell the user before
-  starting.
+- Do not request a special lead reasoning level. Use the runtime default and
+  record the actual runtime value and provenance honestly in the effort ledger.
 - Use low-effort subagents for source batches when the runtime supports spawned
   workers. Treat the user's request to run this audit as authorization for the
   needed low-effort batch workers.
@@ -104,12 +136,35 @@ and the documentation handoff conflict instead of marking the UI as compliant.
 - Keep the audited repo read-only unless the user separately asks to implement
   the resulting plan. Generated audit artifacts are allowed and should live
   outside the audited repo by default.
-- Do not claim completion until the manifest, source-batch reports, visual
-  reports, effort ledger, and verifier agree.
+- Do not claim completion until the passed implementation gate, manifest,
+  source-batch reports, visual reports, effort ledger, and verifier agree.
 
 ## Workflow
 
-1. **Set scope**
+1. **Confirm the audit applies**
+   - Manually identify at least one repo-owned source file that implements a
+     real target product screen, component, or native view. Do not infer
+     eligibility from framework dependencies, routes, styles, assets, mockups,
+     stories, tests, prototypes, or planned screens.
+   - Resolve `UI_IMPLEMENTATION_AUDIT_SKILL_DIR` to the directory containing
+     this `SKILL.md`, then run a no-artifact preflight:
+
+     ```bash
+     REPO_ROOT="${REPO_ROOT:-$PWD}"
+     python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/build_ui_implementation_audit_batches.py" \
+       --repo "$REPO_ROOT" \
+       --implemented-ui-file <repo-relative-implemented-surface> \
+       --eligibility-only
+     ```
+
+   - Repeat `--implemented-ui-file` when several files are useful evidence.
+     If the only real surface uses an unrecognized toolkit, substitute the
+     exceptional `--implemented-ui-override` form described above; do not use
+     it merely because an ordinary file failed the gate.
+     Exit code `3` means the skill is not applicable, not that an audit ran and
+     became blocked. Stop before self-tests, artifacts, or workers.
+
+2. **Set scope**
    - Use the current working directory as the repo root unless the user names
      another path.
    - Identify interface source from pages, screens, components, templates,
@@ -119,7 +174,7 @@ and the documentation handoff conflict instead of marking the UI as compliant.
      outputs, brand assets, journey docs, route maps, product specs, Storybook
      stories, and visual tests as evidence, not source-batch ownership.
 
-2. **Generate the audit queue**
+3. **Generate the audit queue**
    - Resolve the audited repo to an absolute path.
    - Resolve `UI_IMPLEMENTATION_AUDIT_SKILL_DIR` to the directory containing
      this `SKILL.md`.
@@ -134,7 +189,9 @@ and the documentation handoff conflict instead of marking the UI as compliant.
 
      ```bash
      REPO_ROOT="${REPO_ROOT:-$PWD}"
-     python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/build_ui_implementation_audit_batches.py" --repo "$REPO_ROOT"
+     python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/build_ui_implementation_audit_batches.py" \
+       --repo "$REPO_ROOT" \
+       --implemented-ui-file <repo-relative-implemented-surface>
      ```
 
    - Use `--out <dir>` when the user wants a specific artifact location.
@@ -142,11 +199,12 @@ and the documentation handoff conflict instead of marking the UI as compliant.
      the visual evidence set, and `--journey-file <repo-relative-path>` to force
      a requirements/journey source into the evidence set.
    - Use `--include-file` or `--include-glob` only to force a source/manual file
-     that truly defines the interface.
+     that truly defines the interface. They do not substitute for the
+     implementation gate.
    - Inspect `audit_index.md`, `manifest.json`, and `excluded_files.json`.
      Resolve `scope_warning: true` rows before claiming full coverage.
 
-3. **Lead visual orientation**
+4. **Lead visual orientation**
    - Read the mockup/design assets listed in `manifest.json`.
    - Read journey requirement sources before deciding visual priorities.
    - Write the journey decision model before inspecting screenshots: primary
@@ -161,7 +219,7 @@ and the documentation handoff conflict instead of marking the UI as compliant.
      the decision path.
    - Identify the safest way to render each high-priority screen.
 
-4. **Dispatch workers**
+5. **Dispatch workers**
    - Dispatch one low-effort worker per `batch_###.md`; tell workers not to edit
      files and to cover every owned unit.
    - Dispatch `mockup_asset_audit.md` to extract expected screens, visual
@@ -177,7 +235,7 @@ and the documentation handoff conflict instead of marking the UI as compliant.
      each prompt yourself, save reports under `reports/`, update the ledger, and
      keep the final coverage label as manual fallback coverage.
 
-5. **Verify coverage**
+6. **Verify coverage**
    - Save one report per source batch under `reports/batch_###.md`.
    - Save visual reports under:
      - `reports/mockup_asset_audit.md`
@@ -194,7 +252,7 @@ and the documentation handoff conflict instead of marking the UI as compliant.
 
    - Treat verifier failures as blockers before final synthesis.
 
-6. **Synthesize the implementation plan**
+7. **Synthesize the implementation plan**
    - For large audits, consolidate findings across all reports first:
      ```bash
      python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/_vendor/full_repo_harness/merge_findings.py" \

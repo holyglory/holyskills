@@ -12,7 +12,7 @@ import sys
 import tempfile
 import uuid
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,6 +31,7 @@ for root in reversed([item for item in path_roots if item.is_dir()]):
         sys.path.insert(0, root_text)
 
 import full_repo_harness.queue as queue
+import ui_implementation_gate as ui_gate
 
 
 ARTIFACT_OWNER = "ui-implementation-audit"
@@ -97,6 +98,8 @@ REQUIREMENT_TEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
+INAPPLICABLE_EXIT = 3
+
 
 @dataclass(frozen=True)
 class VisualAsset:
@@ -138,6 +141,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-glob", action="append", default=[])
     parser.add_argument("--mockup", action="append", default=[], help="Repo-relative mockup/design asset to force into visual evidence.")
     parser.add_argument("--journey-file", action="append", default=[], help="Repo-relative journey/requirements file to force into evidence.")
+    parser.add_argument(
+        "--implemented-ui-file",
+        action="append",
+        default=[],
+        help=(
+            "Repo-relative executable product UI source inspected by the lead. "
+            "Repeat for additional evidence; at least one qualifying file is required."
+        ),
+    )
+    parser.add_argument(
+        "--implemented-ui-override",
+        action="append",
+        nargs=3,
+        default=[],
+        metavar=("PATH", "UI-KIND", "SOURCE-ANCHOR"),
+        help=(
+            "Exceptional evidence for an implemented UI framework the detector does not recognize. "
+            "UI-KIND must be an imported/inherited/constructed UI type and SOURCE-ANCHOR a named "
+            "screen/component definition whose body uses it."
+        ),
+    )
+    parser.add_argument(
+        "--eligibility-only",
+        action="store_true",
+        help="Check the implemented-UI gate, print JSON, and create no audit artifacts.",
+    )
     return parser.parse_args()
 
 
@@ -147,6 +176,73 @@ def utc_stamp() -> str:
 
 def table_cell(value: object) -> str:
     return str(value).replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+
+def is_evidence_only_interface_path(rel_path: str) -> bool:
+    return ui_gate.is_evidence_only_interface_path(rel_path)
+
+
+def parse_implemented_ui_override(repo: Path, raw: list[str]) -> tuple[str, dict]:
+    raw_path, ui_kind, source_anchor = raw
+    rel_path = queue.validate_repo_relative_include(repo, raw_path)
+    if not ui_kind.strip() or not source_anchor.strip():
+        raise ValueError("--implemented-ui-override UI-KIND and SOURCE-ANCHOR must be non-empty")
+    return rel_path, {"ui_kind": ui_kind, "source_anchor": source_anchor}
+
+
+def implemented_ui_evidence_qualification(
+    repo: Path,
+    rel_path: str,
+    entry: queue.FileEntry | None,
+    override: dict | None,
+) -> tuple[str | None, dict | None]:
+    if entry is None or entry.kind == "source/ui-asset":
+        return "not a collected executable source file", None
+    return ui_gate.qualify_implementation_source(repo, rel_path, override)
+
+
+def assess_implementation_gate(
+    repo: Path,
+    evidence_specs: dict[str, dict | None],
+    interface_entries: list[queue.FileEntry],
+) -> dict:
+    entries_by_path = {item.rel_path: item for item in interface_entries}
+    accepted: list[dict] = []
+    rejected: list[dict] = []
+    for rel_path in sorted(evidence_specs):
+        entry = entries_by_path.get(rel_path)
+        override = evidence_specs[rel_path]
+        issue, qualification = implemented_ui_evidence_qualification(repo, rel_path, entry, override)
+        if issue:
+            rejected.append({"rel_path": rel_path, "reason": issue})
+            continue
+        accepted.append(
+            {
+                "rel_path": rel_path,
+                "sha256": entry.sha256,
+                "evidence": (
+                    "lead-inspected via --implemented-ui-override"
+                    if override is not None
+                    else "lead-inspected via --implemented-ui-file"
+                ),
+                "qualification": qualification,
+            }
+        )
+    if not evidence_specs:
+        reason = "no repo-owned executable product UI implementation file was named"
+    elif rejected:
+        reason = "one or more named files do not prove an implemented target UI surface"
+    elif not accepted:
+        reason = "no named file proves an implemented target UI surface"
+    else:
+        reason = "at least one repo-owned substantive product UI surface is implemented"
+    return {
+        "schema_version": 2,
+        "status": "passed" if accepted and not rejected else "not-applicable",
+        "reason": reason,
+        "evidence_files": accepted,
+        "rejected_files": rejected,
+    }
 
 
 def is_visual_asset_candidate(rel_path: str) -> bool:
@@ -584,7 +680,7 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
             "notes": "",
         },
         "lead_effort": {
-            "required_reasoning_effort": "high-or-higher",
+            "required_reasoning_effort": "runtime-default",
             "actual_reasoning_effort": None,
             "status": "pending",
             "agent_id": None,
@@ -721,6 +817,7 @@ def write_outputs(
     visual_assets: list[VisualAsset],
     requirements: list[RequirementSource],
     non_interface_source_count: int,
+    implementation_gate: dict,
 ) -> None:
     queue.ARTIFACT_OWNER = ARTIFACT_OWNER
     queue.ARTIFACT_MARKER = ARTIFACT_MARKER
@@ -781,7 +878,7 @@ def write_outputs(
     extra_units = sorted(set(all_units) - set(unit_ids))
     scope_warnings = [item for item in excluded if item.get("scope_warning")]
     pruned_hints = [item for item in excluded if item.get("entry_type") == "directory" and item.get("contains_source_like_samples")]
-    visual_required = bool(entries)
+    visual_required = True
 
     if visual_required:
         (out_dir / "mockup_asset_audit.md").write_text(render_mockup_asset_prompt(repo, run_id, visual_assets, requirements), encoding="utf-8")
@@ -833,7 +930,8 @@ def write_outputs(
         "batches": batch_records,
         "ui_implementation_audit": {
             "visual_required": visual_required,
-            "source_selection": "Only interface-defining non-asset source files are queued in batches.",
+            "implementation_gate": implementation_gate,
+            "source_selection": "Interface-defining non-asset source plus explicit lead-confirmed implementation evidence is queued.",
             "visual_asset_count": len(visual_assets),
             "mockup_asset_count": sum(1 for item in visual_assets if item.role == "mockup"),
             "requirement_source_count": len(requirements),
@@ -897,6 +995,21 @@ def main() -> int:
         include_files = {queue.validate_repo_relative_include(repo, raw) for raw in args.include_file}
         forced_mockups = {queue.validate_repo_relative_include(repo, raw) for raw in args.mockup}
         forced_journey_files = {queue.validate_repo_relative_include(repo, raw) for raw in args.journey_file}
+        implemented_ui_files = {queue.validate_repo_relative_include(repo, raw) for raw in args.implemented_ui_file}
+        implemented_ui_overrides: dict[str, dict] = {}
+        for raw in args.implemented_ui_override:
+            rel_path, basis = parse_implemented_ui_override(repo, raw)
+            if rel_path in implemented_ui_overrides:
+                raise ValueError(f"duplicate --implemented-ui-override path: {rel_path}")
+            implemented_ui_overrides[rel_path] = basis
+        overlap = implemented_ui_files & set(implemented_ui_overrides)
+        if overlap:
+            raise ValueError(
+                "name each implementation path with only one evidence mode; duplicated: "
+                + ", ".join(sorted(overlap))
+            )
+        implementation_evidence = {rel_path: None for rel_path in implemented_ui_files}
+        implementation_evidence.update(implemented_ui_overrides)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -909,10 +1022,41 @@ def main() -> int:
         args.include_vendor,
         args.include_assets,
         args.exclude_glob,
-        include_files,
+        include_files | set(implementation_evidence),
         args.include_glob,
         output_rel_dirs,
     )
+    automatic_interface_entries = [
+        item
+        for item in entries
+        if item.interface_relevant
+        and item.kind != "source/ui-asset"
+        and not is_visual_asset_candidate(item.rel_path)
+        and not is_evidence_only_interface_path(item.rel_path)
+    ]
+    implementation_gate = assess_implementation_gate(repo, implementation_evidence, entries)
+    if args.eligibility_only:
+        print(json.dumps(implementation_gate, indent=2, sort_keys=True))
+    if implementation_gate["status"] != "passed":
+        if not args.eligibility_only:
+            print(
+                "UI implementation audit is not applicable: " + implementation_gate["reason"],
+                file=sys.stderr,
+            )
+            for item in implementation_gate["rejected_files"]:
+                print(f"- {item['rel_path']}: {item['reason']}", file=sys.stderr)
+        return INAPPLICABLE_EXIT
+    if args.eligibility_only:
+        return 0
+    evidence_paths = {item["rel_path"] for item in implementation_gate["evidence_files"]}
+    automatic_paths = {item.rel_path for item in automatic_interface_entries}
+    interface_entries = [
+        replace(item, interface_relevant=True)
+        if item.rel_path in evidence_paths and not item.interface_relevant
+        else item
+        for item in entries
+        if item.rel_path in automatic_paths or item.rel_path in evidence_paths
+    ]
     visual_assets = discover_visual_assets(
         repo,
         args.include_generated,
@@ -931,16 +1075,23 @@ def main() -> int:
         args.include_vendor,
         output_rel_dirs,
     )
-    interface_entries = [
-        item
-        for item in entries
-        if item.interface_relevant and item.kind != "source/ui-asset" and not is_visual_asset_candidate(item.rel_path)
-    ]
     non_interface_source_count = len(entries) - len(interface_entries)
     units = queue.audit_units_for(repo, interface_entries, args.max_batch_bytes)
     batches = queue.batch_files(units, args.batch_size, args.max_batch_bytes)
     try:
-        write_outputs(repo, out_dir, interface_entries, excluded, units, batches, run_id, visual_assets, requirements, non_interface_source_count)
+        write_outputs(
+            repo,
+            out_dir,
+            interface_entries,
+            excluded,
+            units,
+            batches,
+            run_id,
+            visual_assets,
+            requirements,
+            non_interface_source_count,
+            implementation_gate,
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

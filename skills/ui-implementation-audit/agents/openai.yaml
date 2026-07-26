@@ -1,4 +1,4 @@
 interface:
   display_name: "UI Implementation Audit"
-  short_description: "Audit UI with hashed visuals and action traces"
-  default_prompt: "Use $ui-implementation-audit to batch interface source, bind real hashed desktop/mobile/native screenshots and formal-verifier JSON through visual_evidence.json, compare them to mockups and journey decisions, trace each visible action through real handler/backend/permission/persistence/test path#symbol evidence, report missing or not-applicable layers honestly, and return a prioritized implementation and verification plan."
+  short_description: "Audit an existing implemented UI end to end"
+  default_prompt: "Use $ui-implementation-audit only after manually confirming and naming at least one repo-owned substantive product UI source file; an arbitrary path, import, empty view shell, route/provider/root mount, pre-implementation plan, mockup, prototype, style/asset, story/test, untouched scaffold, or backend-only repo does not qualify. Run the substantive recognized-source gate before artifacts or workers, using the exact type-to-component source-anchor relationship only for a manually verified unrecognized UI toolkit. If applicable, audit source, real hashed rendered evidence, journey decisions, and handler/backend/permission/persistence/test traces, then return a prioritized implementation and verification plan."

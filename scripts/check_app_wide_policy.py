@@ -303,6 +303,484 @@ def find_policy_violations(text: str) -> list[str]:
                 continue
             break
 
+    efficiency = section(text, "Measure delivery efficiency truthfully")
+    if not efficiency:
+        violations.append("delivery-efficiency section is missing")
+    else:
+        require_terms(
+            violations,
+            efficiency,
+            "delivery-efficiency contract",
+            (
+                "observational",
+                "complete scope",
+                "never omit",
+                "required work",
+                "tests",
+                "improve a metric",
+                "runtime",
+                "harness",
+                "recorder",
+                "request receipt",
+                "first model or tool activity",
+                "terminal delivery",
+                "request-to-delivery wall time",
+                "execution wall time",
+                "queue or scheduling delay",
+                "concurrency-safely",
+                "EfficiencyLedger.jsonl",
+                "outside source worktrees",
+                "routine context",
+                "does not itself capture telemetry",
+                "instrumentation gap",
+                "reconstruct",
+                "estimate",
+                "zero",
+                "complete instrumentation",
+                "proves no usage",
+                "not-applicable",
+                "task start",
+                "terminal status",
+                "complete",
+                "incomplete",
+                "blocked",
+                "cancelled",
+                "superseded",
+                "interrupted",
+                "preserve prior events",
+                "continuations",
+                "corrections",
+                "defects",
+                "retries",
+                "rollback",
+                "rework",
+                "original lineage",
+                "double-counting",
+                "separate dimensions",
+                "kind",
+                "continuation",
+                "defect repair",
+                "cause",
+                "agent-caused",
+                "changed user intent",
+                "new scope",
+                "external cause",
+                "authoritative runtime or provider token counters",
+                "monotonic clock",
+                "provider-native",
+                "input",
+                "output",
+                "cached",
+                "reasoning",
+                "provenance",
+                "instrumentation coverage",
+                "root",
+                "delegated agents",
+                "failed attempts",
+                "two independent dimensions",
+                "planning",
+                "implementation",
+                "testing",
+                "deployment",
+                "reporting",
+                "unattributed",
+                "model-active",
+                "tool-active",
+                "external-wait",
+                "user-wait",
+                "blocked-wait",
+                "test authoring",
+                "test execution",
+                "planning covers requirements",
+                "context",
+                "research",
+                "diagnosis",
+                "design",
+                "sequencing",
+                "implementation covers changes",
+                "configuration",
+                "documentation",
+                "data",
+                "test artifacts",
+                "testing covers executing and reviewing verification",
+                "deployment covers release or environment mutation",
+                "reporting covers user-facing status and handoff",
+                "ambiguous mixed work",
+                "measurement provenance",
+                "attribution provenance",
+                "agent-declared",
+                "classifier or schema version",
+                "inferred allocation",
+                "measured",
+                "phase-inclusive elapsed",
+                "interval unions",
+                "activity-state duration",
+                "deduplicate overlapping spans",
+                "end-to-end wall time",
+                "summed per-agent active time",
+                "concurrent phase unions",
+                "task lineage",
+                "opaque project and revision",
+                "schema",
+                "recorder",
+                "policy",
+                "model or runtime configuration versions",
+                "outcome",
+                "delivered scope",
+                "agreed requested-scope",
+                "acceptance baseline",
+                "user-approved scope changes",
+                "requirement ID",
+                "evidence reference",
+                "satisfied",
+                "partial",
+                "explicitly removed",
+                "in-scope requirement",
+                "unresolved",
+                "verification",
+                "evidence provenance",
+                "coverage",
+                "measurement overhead",
+                "runtime-observed",
+                "declared",
+                "inferred",
+                "unknown",
+                "task-type",
+                "scope-size",
+                "method tags",
+                "compatible measurement semantics",
+                "prompts",
+                "source content",
+                "tool payloads",
+                "secrets",
+                "credentials",
+                "personal data",
+            ),
+        )
+        efficiency = " ".join(efficiency.split())
+        if not re.search(
+            r"(?is)\buse a runtime-\s+or harness-owned recorder\b",
+            efficiency,
+        ) or not re.search(r"(?is)\brecorder\b.{0,500}`EfficiencyLedger\.jsonl`", efficiency):
+            violations.append("the cold efficiency ledger must be assigned to a runtime or harness recorder")
+        if not re.search(
+            r"(?is)`EfficiencyLedger\.jsonl`.{0,100}\boutside source worktrees\b"
+            r".{0,100}\broutine context\b",
+            efficiency,
+        ):
+            violations.append("efficiency telemetry must remain outside worktrees and routine context")
+        if not re.search(
+            r"(?is)\bpolicy\b.{0,60}\bdoes not itself capture telemetry\b.{0,140}"
+            r"\binstrumentation gap\b",
+            efficiency,
+        ):
+            violations.append("policy must distinguish its contract from an operational recorder")
+        if not re.search(
+            r"(?is)\brecorder\s+from\s+request receipt\s+through\s+terminal delivery\b"
+            r".{0,120}\bfirst model or tool activity\b.{0,40}\bseparately\b",
+            efficiency,
+        ) or not re.search(
+            r"(?is)\brequest-to-delivery wall time\b.{0,80}\bexecution wall time\b"
+            r".{0,40}\bseparately\b.{0,100}\b(?:queue|scheduling) delay\b",
+            efficiency,
+        ):
+            violations.append("efficiency timing must expose request delay separately from execution")
+        terminal_window = re.search(
+            r"(?is)\bterminal status of\s+(?P<statuses>.{0,180}?)(?:\.|\n\s*-)",
+            efficiency,
+        )
+        terminal_statuses = ("complete", "incomplete", "blocked", "cancelled", "superseded", "interrupted")
+        recorded_statuses = (
+            {
+                word.casefold()
+                for word in re.findall(r"\b[A-Za-z][A-Za-z-]*\b", terminal_window.group("statuses"))
+                if word.casefold() not in {"and", "or"}
+            }
+            if terminal_window
+            else set()
+        )
+        if recorded_statuses != set(terminal_statuses):
+            violations.append("efficiency telemetry must retain the exact terminal status set")
+        if not re.search(
+            r"(?is)\btask start\b.{0,100}\bterminal status\b.{0,220}"
+            r"\bpreserve prior events\b.{0,140}\bappend linked\b.{0,100}"
+            r"\b(?:continuations|corrections)\b",
+            efficiency,
+        ):
+            violations.append("efficiency events must preserve the complete append-only lifecycle")
+        if not re.search(
+            r"(?is)\bauthoritative\b.{0,80}\b(?:runtime|provider)\b.{0,80}"
+            r"\btoken counters\b.{0,100}\bmonotonic\s+clock\b",
+            efficiency,
+        ):
+            violations.append("token and time measurements must have authoritative provenance")
+        if not re.search(
+            r"(?is)\bprovider-native\b.{0,100}\binput\b.{0,40}\boutput\b.{0,40}"
+            r"\bcached\b.{0,40}\breasoning\b.{0,80}\btoken categories\b",
+            efficiency,
+        ):
+            violations.append("provider-native token categories must remain distinct when available")
+        if not re.search(
+            r"(?is)\brecord zero only\b.{0,80}\bcomplete instrumentation\b.{0,60}"
+            r"\bproves no usage\b.{0,80}\bunknown\b.{0,40}\bnot-applicable\b",
+            efficiency,
+        ):
+            violations.append("zero requires proven complete instrumentation; missing values remain unknown")
+        if not re.search(
+            r"(?is)\btwo independent dimensions\b.{0,180}\bphase\b.{0,240}"
+            r"\bactivity state\b",
+            efficiency,
+        ):
+            violations.append("phase and activity state must remain independent dimensions")
+        if not re.search(
+            r"(?is)\bmeasurement provenance\b.{0,80}\battribution provenance\b.{0,220}"
+            r"\bruntime-observed\b.{0,80}\bagent-declared\b.{0,80}\binferred\b.{0,80}"
+            r"\bunknown\b.{0,120}\bclassifier or schema version\b",
+            efficiency,
+        ) or not re.search(
+            r"(?is)\bnever present an inferred allocation as measured\b",
+            efficiency,
+        ):
+            violations.append("phase and classification attribution must carry separate provenance")
+        if not re.search(
+            r"(?is)\btest authoring\b.{0,100}\bimplementation\b.{0,100}"
+            r"\btest execution\b.{0,100}\btesting\b",
+            efficiency,
+        ):
+            violations.append("test authoring and execution must use stable phase boundaries")
+        if not re.search(
+            r"(?is)\bplanning covers requirements\b.{0,160}\bcontext\b.{0,80}\bresearch\b"
+            r".{0,80}\bdiagnosis\b.{0,80}\bdesign\b.{0,80}\bsequencing\b",
+            efficiency,
+        ) or not re.search(
+            r"(?is)\bimplementation covers changes\b.{0,80}\bcode\b.{0,80}"
+            r"\bconfiguration\b.{0,80}\bdocumentation\b.{0,80}\bdata\b.{0,80}"
+            r"\btest artifacts\b",
+            efficiency,
+        ) or not re.search(
+            r"(?is)\btesting covers executing and reviewing verification\b.{0,100}"
+            r"\bdeployment covers release or environment mutation\b.{0,120}"
+            r"\breporting covers user-facing status and handoff\b.{0,100}"
+            r"\bambiguous mixed work\b.{0,60}\bunattributed\b",
+            efficiency,
+        ):
+            violations.append("efficiency phases must have stable operational boundaries")
+        if not re.search(
+            r"(?is)\bphase-inclusive elapsed\b.{0,80}\binterval unions\b.{0,120}"
+            r"\bactivity-state duration\b",
+            efficiency,
+        ):
+            violations.append("phase-inclusive and activity-state timing must both be reported")
+        if not re.search(
+            r"(?is)\bend-to-end wall time\b.{0,80}\bseparately\b.{0,100}"
+            r"\bsummed per-agent active time\b.{0,140}\bconcurrent phase unions\b"
+            r".{0,100}\bmust not be summed as wall time\b",
+            efficiency,
+        ):
+            violations.append("concurrent agent time must not be confused with wall time")
+        if not re.search(
+            r"(?is)\bterminal event\b.{0,400}\boutcome\b",
+            efficiency,
+        ) or not re.search(
+            r"(?is)\bdelivered scope\b.{0,100}\bverification\b.{0,100}\bevidence provenance\b",
+            efficiency,
+        ):
+            violations.append("terminal telemetry must bind cost to outcome, scope, and verification")
+        if not re.search(
+            r"(?is)\bagreed requested-scope\b.{0,80}\bacceptance baseline\b.{0,80}"
+            r"\buser-approved scope changes\b.{0,220}\brequirement ID\b.{0,80}"
+            r"\bevidence reference\b.{0,120}\bsatisfied\b.{0,60}\bpartial\b.{0,60}"
+            r"\bblocked\b.{0,60}\bexplicitly removed\b",
+            efficiency,
+        ) or not re.search(
+            r"(?is)\bcannot be complete\b.{0,100}\bin-scope requirement\b.{0,80}\bunresolved\b",
+            efficiency,
+        ):
+            violations.append("terminal telemetry must prove agreed-scope and requirement coverage")
+        if not re.search(
+            r"(?is)\bwithout double-counting\b.{0,160}\bseparate dimensions\b.{0,80}"
+            r"\bkind\b.{0,80}\bcontinuation\b.{0,60}\bretry\b.{0,60}\brollback\b"
+            r".{0,60}\bdefect repair\b.{0,60}\brework\b.{0,100}\bcause\b.{0,80}"
+            r"\bagent-caused\b.{0,80}\bchanged user intent\b.{0,80}\bnew scope\b"
+            r".{0,80}\bexternal cause\b.{0,60}\bunknown\b",
+            efficiency,
+        ):
+            violations.append("linked work must separate kind from cause and avoid double-counting")
+        if not re.search(
+            r"(?is)\bnonsensitive opaque project and\s+revision identifiers\b",
+            efficiency,
+        ):
+            violations.append("project and revision identity must be nonsensitive and opaque")
+
+        contradictions = (
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
+                r"(?:store|keep|write|maintain)\b.{0,80}`EfficiencyLedger\.jsonl`"
+                r".{0,40}\b(?:in|inside|within|under)\b.{0,60}"
+                r"\b(?:project-root|source worktree|routine context)\b",
+                "EfficiencyLedger.jsonl must not become hot project context",
+            ),
+            (
+                r"(?is)\b(?:may|should|must|can|will)\s+(?:be\s+)?"
+                r"(?:estimate|estimated|reconstruct|reconstructed|infer|inferred)\b"
+                r".{0,120}\b(?:missing|unknown|unavailable|unsupported)\b",
+                "missing efficiency measurements must not be estimated",
+            ),
+            (
+                r"(?ims)^\s*(?:-\s+)?(?:use\s+(?:a\s+)?(?:heuristic\s+)?estimates?|"
+                r"estimate|reconstruct|infer)\b.{0,160}"
+                r"(?:missing|unknown|unavailable|unsupported|authoritative counters?)\b",
+                "missing efficiency measurements must not be estimated",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
+                r"(?:record|treat|fill|substitute|report)\b.{0,80}"
+                r"\b(?:missing|unknown|unavailable|unsupported|uninstrumented|unobserved)\b.{0,80}"
+                r"\b(?:as|with)\s+(?:a\s+)?zero\b",
+                "unknown efficiency measurements must not be zero-filled",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can)\s+)(?:omit|skip|reduce|narrow|drop)\b"
+                r".{0,120}\b(?:scope|required work|tests?|verification|quality|context|explanation)\b"
+                r".{0,120}\b(?:metric|efficien)",
+                "efficiency metrics must not reward reduced delivery quality or scope",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can)\s+)(?:rewrite|replace|delete|discard)\b"
+                r".{0,100}\b(?:prior|earlier|old)\s+(?:events?|history|records?)\b",
+                "efficiency history must be corrected append-only",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can)\s+)(?:combine|collapse|merge|treat)\b"
+                r".{0,100}\bphase\b.{0,100}\bactivity(?: state)?\b",
+                "phase and activity state must not be collapsed",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can)\s+)(?:omit|exclude|ignore|drop)\b"
+                r".{0,100}\b(?:failed attempts?|retries|rollback|rework|delegated agents?)\b",
+                "efficiency telemetry must include failed and delegated work",
+            ),
+            (
+                r"(?is)\b(?:do not|don't|never)\s+(?:include|record|count)\b"
+                r".{0,100}\b(?:failed attempts?|retries|rollback|rework|delegated agents?)\b",
+                "efficiency telemetry must include failed and delegated work",
+            ),
+            (
+                r"(?is)\b(?:begin|start|measure|record)\b.{0,80}\bafter\s+(?:the\s+)?"
+                r"first model or tool activity\b",
+                "efficiency timing must not omit pre-execution request delay",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
+                r"(?:report|present|treat|label|count|record)\b.{0,100}\binferred\b.{0,80}"
+                r"\ballocations?\b.{0,60}\b(?:as|like)\s+"
+                r"(?:measured(?:\s+values?)?|measurements?|observed values?)\b",
+                "inferred efficiency attribution must not be presented as measured",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?)(?:"
+                r"(?:a\s+)?task\b.{0,60}\b(?:may|can|should)\b.{0,40}"
+                r"(?:be\s+)?(?:(?:called|marked|reported|treated)\s+)?complete\b|"
+                r"complete\b.{0,40}\b(?:the\s+)?task\b|"
+                r"(?:declare|mark|report|treat|call)\b.{0,60}\bcomplete\b)"
+                r"(?=.{0,260}\bin-scope\b)(?=.{0,260}\b(?:unresolved|partial|blocked)\b)",
+                "completion telemetry must not ignore unresolved in-scope requirements",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
+                r"(?:use|add|allow|record|treat)\s+[a-z][a-z0-9_-]*\s+as\s+"
+                r"(?:an?\s+)?(?:additional|extra|new|another)\s+terminal\s+(?:status|outcome)\b",
+                "efficiency telemetry must retain the exact terminal status set",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
+                r"(?:combine|collapse|merge|aggregate|discard)\b.{0,120}"
+                r"\b(?:provider-native|input|output|cached|reasoning)\b.{0,100}\btoken categor",
+                "provider-native token categories must not be collapsed",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
+                r"report\b.{0,100}\b(?:one|single|combined|aggregate)\s+total\b"
+                r".{0,100}\b(?:instead of|rather than|for)\b.{0,100}"
+                r"\bprovider-native\b.{0,80}\btoken categor",
+                "provider-native token categories must not be collapsed",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
+                r"(?:combine|collapse|merge|sum)\b.{0,140}\b(?:request-to-delivery|request)\b"
+                r".{0,100}\bexecution wall time\b",
+                "request-to-delivery and execution wall time must remain separate",
+            ),
+            (
+                r"(?ims)^\s*(?:-\s+)?report\b.{0,100}\b(?:request-to-delivery|request)\b"
+                r".{0,100}\bexecution\b.{0,80}\b(?:one|single|combined)\b.{0,40}\bwall time\b",
+                "request-to-delivery and execution wall time must remain separate",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
+                r"(?:treat|classify|count|label)\b.{0,120}"
+                r"\b(?:changed user intent|new scope)\b.{0,100}\bas\s+agent-caused\b",
+                "changed intent and new scope must not be counted as agent-caused rework",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
+                r"(?:record|store|retain|use)\b.{0,100}\b(?:raw|private|confidential)\b"
+                r".{0,100}\b(?:project|revision)\b(?:.{0,40}\b(?:name|metadata|identity)\b)?",
+                "project and revision identity must remain nonsensitive and opaque",
+            ),
+            (
+                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
+                r"(?:treat|classify|label|count)\b.{0,120}"
+                r"\b(?:requirements?|context|research|diagnosis|design|sequencing)\b"
+                r".{0,120}\bas\s+implementation\b",
+                "planning work must not be reclassified as implementation",
+            ),
+            (
+                r"(?is)\b(?:only|just)\s+(?:record|write|keep)\b.{0,100}"
+                r"\bterminal\s+(?:event|record|status)\b",
+                "efficiency telemetry must include start and terminal lifecycle events",
+            ),
+        )
+        for pattern, message in contradictions:
+            if re.search(pattern, text):
+                violations.append(message)
+
+        for line in text.splitlines():
+            directive = line.strip().removeprefix("-").strip()
+            if (
+                re.match(r"(?i)^(?:use|record|report|treat|substitute)\b", directive)
+                and re.search(r"(?i)\bzero\b", directive)
+                and re.search(
+                    r"(?i)\b(?:missing|unknown|unavailable|unsupported|uninstrumented|unobserved)\b",
+                    directive,
+                )
+                and not (
+                    re.search(r"(?i)\bonly\b", directive)
+                    and re.search(r"(?i)\bcomplete instrumentation\b", directive)
+                    and re.search(r"(?i)\bproves no usage\b", directive)
+                )
+            ):
+                violations.append("unknown efficiency measurements must not be zero-filled")
+            sensitive = re.search(
+                r"(?i)\b(?:prompts?|source content|tool payloads?|secrets?|credentials?|personal data)\b",
+                directive,
+            )
+            if not sensitive:
+                continue
+            positive_retention = re.match(r"(?i)^(?:store|retain|record|include)\b", directive) or re.search(
+                r"(?i)\b(?:may|should|must|can|will)\s+(?:store|retain|record|include)\b",
+                directive,
+            )
+            if not positive_retention:
+                continue
+            if re.search(
+                r"(?i)\b(?:never|not|without|omit(?:ted|ting)?|exclud(?:e|ed|ing)|redact(?:ed|ing)?|safeguard)\b",
+                directive,
+            ):
+                continue
+            violations.append("efficiency telemetry must not retain sensitive content")
+            break
+
     mistakes = section(text, "Learn from agent-made mistakes")
     if not mistakes:
         violations.append("agent-mistake section is missing")

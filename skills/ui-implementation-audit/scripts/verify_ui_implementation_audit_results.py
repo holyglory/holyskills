@@ -25,6 +25,7 @@ for root in reversed([item for item in path_roots if item.is_dir()]):
 
 from full_repo_harness import evidence as audit_evidence
 from full_repo_harness import verify_common as common
+import ui_implementation_gate as ui_gate
 
 
 BATCH_SECTIONS = [
@@ -173,6 +174,10 @@ def load_manifest(path: Path) -> dict:
         raise ValueError("manifest batches must be a list.")
     if not isinstance(coverage_units, list):
         raise ValueError("manifest coverage_units must be a list.")
+    if not source_files or not batches or not coverage_units:
+        raise ValueError("UI implementation audit manifests must contain implemented interface source, batches, and coverage units.")
+    if manifest.get("source_file_count") != len(source_files) or manifest.get("interface_file_count") != len(source_files):
+        raise ValueError("manifest source/interface file counts must match the non-empty source_files list.")
 
     source_paths: list[str] = []
     source_hashes: dict[str, str] = {}
@@ -239,6 +244,53 @@ def load_manifest(path: Path) -> dict:
     audit = manifest.get("ui_implementation_audit")
     if not isinstance(audit, dict):
         raise ValueError("manifest ui_implementation_audit must be an object.")
+    if audit.get("visual_required") is not True:
+        raise ValueError("implemented UI audits must require visual review.")
+    gate = audit.get("implementation_gate")
+    gate_schema = gate.get("schema_version") if isinstance(gate, dict) else None
+    if not isinstance(gate, dict) or gate_schema not in {1, 2} or gate.get("status") != "passed":
+        raise ValueError("manifest implementation_gate must be a passed schema-version-1-or-2 gate.")
+    evidence_files = gate.get("evidence_files")
+    if not isinstance(evidence_files, list) or not evidence_files:
+        raise ValueError("manifest implementation_gate must name at least one evidence file.")
+    if gate.get("rejected_files") not in ([], None):
+        raise ValueError("manifest implementation_gate must not retain rejected evidence files in a passed gate.")
+    evidence_paths: set[str] = set()
+    for index, item in enumerate(evidence_files):
+        if not isinstance(item, dict) or not isinstance(item.get("rel_path"), str):
+            raise ValueError(f"implementation_gate.evidence_files[{index}] must contain rel_path.")
+        rel_path = item["rel_path"]
+        sha = item.get("sha256")
+        if rel_path not in source_hashes:
+            raise ValueError(f"implementation gate evidence is absent from source_files: {rel_path}")
+        if sha != source_hashes[rel_path]:
+            raise ValueError(f"implementation gate evidence hash does not match source_files: {rel_path}")
+        qualification = item.get("qualification")
+        if gate_schema == 1:
+            override = None
+        elif not isinstance(qualification, dict):
+            raise ValueError(f"implementation gate evidence lacks qualification metadata: {rel_path}")
+        elif qualification.get("method") == "recognized-ui-signal":
+            override = None
+        elif qualification.get("method") == "explicit-source-anchor":
+            override = {
+                "ui_kind": qualification.get("ui_kind"),
+                "source_anchor": qualification.get("source_anchor"),
+            }
+        else:
+            raise ValueError(f"implementation gate evidence uses an unknown qualification method: {rel_path}")
+        issue, current_qualification = ui_gate.qualify_implementation_source(
+            Path(manifest["repo_root"]),
+            rel_path,
+            override,
+        )
+        if issue:
+            raise ValueError(f"implementation gate evidence is not a qualifying product UI source: {rel_path}: {issue}")
+        if gate_schema == 2 and current_qualification != qualification:
+            raise ValueError(f"implementation gate qualification no longer matches executable source: {rel_path}")
+        evidence_paths.add(rel_path)
+    if len(evidence_paths) != len(evidence_files):
+        raise ValueError("manifest implementation_gate evidence paths must be unique.")
     asset_hashes: dict[str, str] = {}
     for index, item in enumerate(audit.get("visual_assets", [])):
         if not isinstance(item, dict) or not isinstance(item.get("rel_path"), str):
@@ -792,8 +844,8 @@ def verify_effort_ledger(manifest_path: Path, manifest: dict) -> list[dict]:
     lead = ledger.get("lead_effort", {})
     if not isinstance(lead, dict) or lead.get("status") not in {"completed", "confirmed", "manual-fallback-completed"}:
         issues.append({"path": str(ledger_path), "field": "lead_effort.status", "expected": "completed/confirmed", "actual": lead.get("status") if isinstance(lead, dict) else None})
-    elif lead.get("actual_reasoning_effort") not in {"high", "xhigh", "high-or-higher"}:
-        issues.append({"path": str(ledger_path), "field": "lead_effort.actual_reasoning_effort", "expected": "high or xhigh", "actual": lead.get("actual_reasoning_effort")})
+    elif not isinstance(lead.get("actual_reasoning_effort"), str) or not lead.get("actual_reasoning_effort", "").strip():
+        issues.append({"path": str(ledger_path), "field": "lead_effort.actual_reasoning_effort", "expected": "honest non-empty runtime value", "actual": lead.get("actual_reasoning_effort")})
     if isinstance(lead, dict) and not lead.get("runtime_provenance"):
         issues.append({"path": str(ledger_path), "field": "lead_effort.runtime_provenance", "expected": "non-empty string", "actual": lead.get("runtime_provenance")})
     workers = ledger.get("batch_workers")

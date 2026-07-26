@@ -1,13 +1,47 @@
 # Decision History
 
 Direction: Confirmed: user decisions favor concise rationale that preserves project direction,
-complete truthful end-to-end behavior, informed choices,
-production-grade foundations, canonical ownership, realistic verification, and interfaces whose
+complete truthful end-to-end behavior, informed choices, outcome-aware efficiency measurement that
+cannot reward reduced scope or verification,
+production-grade foundations, canonical ownership, realistic verification, audits that begin only
+after their target implementation exists, proportionate runtime effort, and interfaces whose
 visible hierarchy matches the task and promised content (D-20260714-03, D-20260713-03,
-D-20260713-04, D-20260714-04, D-20260710-03, D-20260710-05). Inferred: repeated choices indicate a taste for compact low-noise UI,
+D-20260713-04, D-20260714-04, D-20260720-01, D-20260726-01, D-20260710-03,
+D-20260710-05). Inferred: repeated choices indicate a taste for compact low-noise UI,
 stable ordering and grouping, visible exceptions, contextual actions, and durable state rather than
 volatile cleverness (D-20260707-01, D-20260707-02, D-20260707-07, D-20260707-08); apply these
 patterns by default while treating them as inference when a new context materially differs.
+
+## [D-20260726-01 — UI implementation audits require an implemented surface](DecisionDetails/D-20260726-01.md)
+
+Decision: Run the UI implementation audit only after a lead names a substantive repo-owned product
+UI source file and its hash-bound recognized-source gate passes, with an exact-source-anchor fallback
+for manually verified unrecognized UI toolkits; use the runtime's default lead effort.
+
+Why: The audit should inspect implementation, not substitute for design or implementation work.
+Options: selected manual applicability plus positive source signals and a verifier-bound exceptional
+anchor over trigger wording, trusting any named path, or automatic framework detection alone because
+it balances precision, recall, and testability. Prior attempts: the positive-only trigger and
+zero-source manifest accepted backend-only and pre-implementation repositories, and a path-only
+gate failed by admitting arbitrary backend code in a targeted reproduction. Intent:
+spend audit time only on real, including partial, UI implementations and use proportionate effort
+while preserving honest provenance. Revisit only if: another gate proves equal or better recall
+and precision across web and native implementations without admitting evidence-only repositories.
+
+## [D-20260720-01 — Delivery efficiency requires authoritative cold telemetry](DecisionDetails/D-20260720-01.md)
+
+Decision: When configured, measure delivery efficiency through runtime or harness events in a cold
+external `EfficiencyLedger.jsonl`, with authoritative counters, attribution provenance, scope and
+outcome coverage, task lineage, timing, defects, and rework; without a recorder, measurement is an
+instrumentation gap.
+
+Why: Efficiency must explain cost without rewarding an incomplete result. Options: selected
+runtime-owned cold events over a project-root ledger, manual phase logs, or estimated counters
+because authoritative provenance and concurrency-aware intervals support honest comparison without
+polluting routine context. Prior attempts: none known. Intent: continuously compare planning,
+implementation, testing, deployment, and reporting approaches while preserving full scope, quality,
+verification, and privacy. Revisit only if: another recorder provides more authoritative accounting
+while preserving the same outcome, lineage, context-isolation, and anti-gaming guarantees.
 
 ## [D-20260714-04 — Full-repo audits trace semantic implementation](DecisionDetails/D-20260714-04.md)
 
