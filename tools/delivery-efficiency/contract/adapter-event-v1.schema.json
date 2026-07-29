@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://holyskills.local/delivery-efficiency/adapter-event-v1.schema.json",
+  "title": "Holy Skills delivery-efficiency event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recorder_version",
+    "event_id",
+    "sequence",
+    "observed_at_utc",
+    "monotonic_ns",
+    "clock_domain",
+    "runtime",
+    "adapter",
+    "platform",
+    "identity",
+    "classification",
+    "measurement",
+    "coverage",
+    "event",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "recorder_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "event_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "sequence": {"$ref": "#/$defs/decimal"},
+    "observed_at_utc": {"type": "string", "format": "date-time", "maxLength": 40},
+    "monotonic_ns": {"$ref": "#/$defs/decimal"},
+    "clock_domain": {"type": "string", "pattern": "^clock_[0-9a-f]{32}$"},
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "surface", "version"],
+      "properties": {
+        "family": {"enum": ["codex", "claude"]},
+        "surface": {"enum": ["cli-interactive", "cli-exec", "desktop", "ide", "unknown"]},
+        "version": {"type": ["string", "null"], "maxLength": 64}
+      }
+    },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"enum": ["codex-hooks", "codex-otel", "codex-exec", "claude-runtime", "agent-declaration"]},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "environment"],
+      "properties": {
+        "os": {"enum": ["windows", "linux", "macos"]},
+        "environment": {"enum": ["native", "wsl"]}
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lineage_id", "task_id", "project_id", "revision_id", "session_id", "turn_id", "agent_id"],
+      "properties": {
+        "lineage_id": {"$ref": "#/$defs/opaqueOrNull"},
+        "task_id": {"$ref": "#/$defs/opaqueOrNull"},
+        "project_id": {"$ref": "#/$defs/opaqueOrNull"},
+        "revision_id": {"$ref": "#/$defs/opaqueOrNull"},
+        "session_id": {"$ref": "#/$defs/opaqueOrNull"},
+        "turn_id": {"$ref": "#/$defs/opaqueOrNull"},
+        "agent_id": {"$ref": "#/$defs/opaqueOrNull"}
+      }
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "phase_provenance", "activity_state", "activity_provenance", "classifier_version"],
+      "properties": {
+        "phase": {"enum": ["planning", "implementation", "testing", "deployment", "reporting", "unattributed"]},
+        "phase_provenance": {"$ref": "#/$defs/provenance"},
+        "activity_state": {"enum": ["model-active", "tool-active", "external-wait", "user-wait", "blocked-wait", "unattributed"]},
+        "activity_provenance": {"$ref": "#/$defs/provenance"},
+        "classifier_version": {"type": "string", "maxLength": 32}
+      }
+    },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provenance", "counter_source", "tokens", "recorder_overhead_ns"],
+      "properties": {
+        "provenance": {"$ref": "#/$defs/provenance"},
+        "counter_source": {"enum": ["provider-native", "runtime-native", "not-applicable", "unknown"]},
+        "tokens": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "cached_input", "output", "reasoning_output", "tool", "other"],
+          "properties": {
+            "input": {"$ref": "#/$defs/decimalOrNull"},
+            "cached_input": {"$ref": "#/$defs/decimalOrNull"},
+            "output": {"$ref": "#/$defs/decimalOrNull"},
+            "reasoning_output": {"$ref": "#/$defs/decimalOrNull"},
+            "tool": {"$ref": "#/$defs/decimalOrNull"},
+            "other": {"$ref": "#/$defs/decimalOrNull"}
+          }
+        },
+        "recorder_overhead_ns": {"$ref": "#/$defs/decimalOrNull"}
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_receipt", "first_activity", "tokens", "tools", "subagents", "terminal_delivery", "scope", "verification"],
+      "properties": {
+        "request_receipt": {"$ref": "#/$defs/coverage"},
+        "first_activity": {"$ref": "#/$defs/coverage"},
+        "tokens": {"$ref": "#/$defs/coverage"},
+        "tools": {"$ref": "#/$defs/coverage"},
+        "subagents": {"$ref": "#/$defs/coverage"},
+        "terminal_delivery": {"$ref": "#/$defs/coverage"},
+        "scope": {"$ref": "#/$defs/coverage"},
+        "verification": {"$ref": "#/$defs/coverage"}
+      }
+    },
+    "event": {
+      "enum": [
+        "task.start",
+        "task.first_activity",
+        "span.start",
+        "span.end",
+        "usage.observed",
+        "requirement.status",
+        "runtime.turn_stopped",
+        "task.terminal",
+        "lineage.link",
+        "coverage.gap",
+        "correction"
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_event",
+        "span_id",
+        "parent_span_id",
+        "duration_ns",
+        "success",
+        "tool_category",
+        "outcome",
+        "task_kind",
+        "cause",
+        "requirement_id",
+        "requirement_status",
+        "verification",
+        "gap_code"
+      ],
+      "properties": {
+        "source_event": {
+          "enum": [
+            "session_start", "session_end", "prompt_submit", "pre_tool", "post_tool",
+            "post_tool_failure", "subagent_start", "subagent_stop", "turn_stop",
+            "turn_failure", "message_display", "otel_response_completed", "otel_api",
+            "otel_api_error", "otel_tool", "otel_tool_decision", "exec_process",
+            "exec_turn", "agent_declaration", "unknown"
+          ]
+        },
+        "span_id": {"$ref": "#/$defs/opaqueOrNull"},
+        "parent_span_id": {"$ref": "#/$defs/opaqueOrNull"},
+        "duration_ns": {"$ref": "#/$defs/decimalOrNull"},
+        "success": {"type": ["boolean", "null"]},
+        "tool_category": {"enum": ["shell", "patch", "mcp", "web", "agent", "local", "other", "not-applicable", "unknown"]},
+        "outcome": {"enum": ["complete", "incomplete", "blocked", "cancelled", "superseded", "interrupted", "not-applicable", "unknown"]},
+        "task_kind": {"enum": ["primary", "continuation", "retry", "rollback", "defect-repair", "rework", "unknown"]},
+        "cause": {"enum": ["agent-caused-mistake", "changed-user-intent", "new-scope", "external-cause", "not-applicable", "unknown"]},
+        "requirement_id": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"},
+        "requirement_status": {"enum": ["satisfied", "partial", "blocked", "removed", "not-applicable", "unknown"]},
+        "verification": {"enum": ["verified", "partially-verified", "unverified", "not-applicable", "unknown"]},
+        "gap_code": {
+          "enum": [
+            "none", "hooks-untrusted", "hooks-disabled", "host-boundary-unavailable",
+            "hosted-tool-unobserved", "token-source-unavailable", "otel-conflict",
+            "receiver-unavailable", "clock-domain-changed", "storage-unavailable",
+            "malformed-source-event", "unsupported-runtime-event", "unknown"
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "decimal": {"type": "string", "pattern": "^(0|[1-9][0-9]*)$"},
+    "decimalOrNull": {"oneOf": [{"$ref": "#/$defs/decimal"}, {"type": "null"}]},
+    "opaqueOrNull": {"oneOf": [{"type": "string", "pattern": "^id_[0-9a-f]{32}$"}, {"type": "null"}]},
+    "provenance": {"enum": ["runtime-observed", "agent-declared", "inferred", "unknown", "not-applicable"]},
+    "coverage": {"enum": ["complete", "partial", "unknown", "not-applicable"]}
+  }
+}

@@ -18,6 +18,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Union
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -212,7 +213,7 @@ class DirectoryGuard:
         os.close(self.descriptor)
 
 
-EvidenceGuard = FileGuard | AbsentFileGuard | DirectoryGuard
+EvidenceGuard = Union[FileGuard, AbsentFileGuard, DirectoryGuard]
 
 
 @dataclass
@@ -652,12 +653,110 @@ def exchange_identity_matches(observed: dict[str, int], expected: dict[str, int]
     )
 
 
+def _darwin_xattr_call(function_name: str, argtypes: list, *args):
+    """Call a descriptor-based Darwin xattr function or fail closed."""
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    if not hasattr(libc, function_name):
+        raise OSError(errno.ENOTSUP, f"{function_name} is unavailable")
+    function = getattr(libc, function_name)
+    function.argtypes = argtypes
+    function.restype = ctypes.c_ssize_t if function_name in {"flistxattr", "fgetxattr"} else ctypes.c_int
+    ctypes.set_errno(0)
+    result = function(*args)
+    if result == -1:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return result
+
+
+def list_descriptor_xattrs(descriptor: int) -> list[str]:
+    """List xattrs without resolving a pathname after the file was opened."""
+
+    if hasattr(os, "listxattr"):
+        return sorted(os.listxattr(descriptor))
+    if platform.system() != "Darwin":
+        raise OSError(errno.ENOTSUP, "descriptor-based extended attributes are unavailable")
+    argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+    required = _darwin_xattr_call("flistxattr", argtypes, descriptor, None, 0, 0)
+    if required == 0:
+        return []
+    buffer = ctypes.create_string_buffer(required)
+    actual = _darwin_xattr_call("flistxattr", argtypes, descriptor, buffer, required, 0)
+    return sorted(os.fsdecode(name) for name in buffer.raw[:actual].split(b"\0") if name)
+
+
+def get_descriptor_xattr(descriptor: int, name: str) -> bytes:
+    """Read one xattr from an already-open file descriptor."""
+
+    if hasattr(os, "getxattr"):
+        return os.getxattr(descriptor, name)
+    if platform.system() != "Darwin":
+        raise OSError(errno.ENOTSUP, "descriptor-based extended attributes are unavailable")
+    argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_int,
+    ]
+    encoded_name = os.fsencode(name)
+    required = _darwin_xattr_call("fgetxattr", argtypes, descriptor, encoded_name, None, 0, 0, 0)
+    if required == 0:
+        return b""
+    buffer = ctypes.create_string_buffer(required)
+    actual = _darwin_xattr_call(
+        "fgetxattr", argtypes, descriptor, encoded_name, buffer, required, 0, 0
+    )
+    return buffer.raw[:actual]
+
+
+def set_descriptor_xattr(descriptor: int, name: str, value: bytes) -> None:
+    """Set one xattr on an already-open file descriptor."""
+
+    if hasattr(os, "setxattr"):
+        os.setxattr(descriptor, name, value)
+        return
+    if platform.system() != "Darwin":
+        raise OSError(errno.ENOTSUP, "descriptor-based extended attributes are unavailable")
+    argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_int,
+    ]
+    buffer = ctypes.create_string_buffer(value, len(value)) if value else None
+    _darwin_xattr_call(
+        "fsetxattr", argtypes, descriptor, os.fsencode(name), buffer, len(value), 0, 0
+    )
+
+
+def remove_descriptor_xattr(descriptor: int, name: str) -> None:
+    """Remove one xattr from an already-open file descriptor."""
+
+    if hasattr(os, "removexattr"):
+        os.removexattr(descriptor, name)
+        return
+    if platform.system() != "Darwin":
+        raise OSError(errno.ENOTSUP, "descriptor-based extended attributes are unavailable")
+    _darwin_xattr_call(
+        "fremovexattr",
+        [ctypes.c_int, ctypes.c_char_p, ctypes.c_int],
+        descriptor,
+        os.fsencode(name),
+        0,
+    )
+
+
 def descriptor_metadata(descriptor: int) -> dict:
     value = os.fstat(descriptor)
     try:
-        names = sorted(os.listxattr(descriptor))
+        names = list_descriptor_xattrs(descriptor)
         xattrs = {
-            name: base64.b64encode(os.getxattr(descriptor, name)).decode("ascii")
+            name: base64.b64encode(get_descriptor_xattr(descriptor, name)).decode("ascii")
             for name in names
         }
     except OSError as exc:
@@ -677,11 +776,11 @@ def apply_descriptor_metadata(descriptor: int, metadata: dict | None) -> None:
         os.fchown(descriptor, metadata["uid"], metadata["gid"])
         os.fchmod(descriptor, metadata["mode"])
         expected_xattrs = metadata["xattrs_base64"]
-        for name in os.listxattr(descriptor):
+        for name in list_descriptor_xattrs(descriptor):
             if name not in expected_xattrs:
-                os.removexattr(descriptor, name)
+                remove_descriptor_xattr(descriptor, name)
         for name, encoded in expected_xattrs.items():
-            os.setxattr(descriptor, name, base64.b64decode(encoded, validate=True))
+            set_descriptor_xattr(descriptor, name, base64.b64decode(encoded, validate=True))
     except (KeyError, TypeError, ValueError, OSError) as exc:
         raise UpdateError(f"could not preserve CompletionLedger.md ownership, mode, ACLs, or xattrs: {exc}") from exc
     if descriptor_metadata(descriptor) != metadata:

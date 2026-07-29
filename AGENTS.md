@@ -43,6 +43,21 @@ and short explanation are enough for a straightforward mistake; serious or
 explicitly requested postmortems can use a concise evidence-backed report
 without requiring a repository-owned workflow skill.
 
+## User Issue Ledger Enforcement
+
+- `UserIssueLedgers/` follows the scoped persistent prevention-ledger contract
+  in the universal policy. It is checked by
+  `scripts/check_user_issue_ledgers.py`; each file must remain one compact table
+  for one surface, domain, or business-logic perspective, not a mixed catch-all,
+  incident archive, or substitute completion ledger. Its relative path, title,
+  and ID namespace must identify the same single scope; generic catch-all leaf
+  names and an unsplit `BusinessLogic.md` are invalid.
+- When changing this contract or its checker, add realistic must-catch fixtures
+  for every advertised structural failure and false-positive guards for
+  distinct but related patterns, nested business perspectives, escaped table
+  characters, and safe filesystem traversal. Run the checker, its self-test,
+  and the complete repository validation.
+
 ## Skill Development
 
 - Before fixing errors, reproduce the issue or policy gap you are changing.
@@ -92,22 +107,88 @@ without requiring a repository-owned workflow skill.
   compare exact link text so source drift cannot prevent restoring the saved
   installation.
 
+## Delivery Efficiency Recorder
+
+- `tools/delivery-efficiency/` is the canonical source for the portable
+  delivery-efficiency runtime used by Codex and Claude Code. It is not a sixth
+  skill: keep one shared schema, privacy boundary, store, and installer, with
+  thin runtime adapters. Never create a runtime-specific ledger writer or edit
+  a generated installed copy.
+- Install and update the runtime only through its reviewed
+  plan/apply/verify/rollback workflow. Installation uses a versioned copy in
+  platform-native per-user state rather than a source-worktree path or skill
+  symlink. Keep native Windows and WSL stores separate; a WSL store must remain
+  on the Linux filesystem, not `/mnt/*` or a `\\wsl$` share.
+- When the recorder is configured, check its status before relying on a metric.
+  Let hooks and native runtime events record observed activity. Before terminal
+  delivery, use its declaration interface for outcome, requirement coverage,
+  verification, and any linked continuation or rework that the runtime cannot
+  infer; recorder-owned session context supplies the exact stable launcher.
+  A missing, disabled, untrusted, conflicting, or unhealthy source is an
+  instrumentation gap; never reconstruct it or report unknown counters as zero.
+- Recorder changes must pass the shared schema/privacy fixtures, crash and
+  concurrency tests, copied-install test, adapter conformance tests, and every
+  available native platform job. Distinguish implemented platform behavior
+  from native evidence; simulated Windows or WSL selection is not native proof.
+- Never expose a self-hosted runner to pull-request-controlled code. Keep native
+  self-hosted jobs restricted at the job level to trusted `push` and explicit
+  `workflow_dispatch` events, and enforce that boundary with
+  `scripts/check_ci_security.py` and its recall/precision self-test.
+
 ## Global Policy Source Of Truth
 
 - `reference/codex-app-wide/AGENTS.md` is the repository-owned canonical source
-  for app-wide Codex policy. Root `AGENTS.md` is repository policy and must not
-  be installed globally.
-- On a runtime intentionally managed from this checkout, make each discovered
-  Codex global `AGENTS.md` a direct absolute symlink to that canonical reference
-  rather than maintaining copied mirrors. Preserve and compare an existing file
-  before replacement, and verify both exact `readlink` text and canonical
-  `realpath` afterward.
+  for the universal policy consumed by Codex and Claude Code. Root `AGENTS.md`
+  is repository policy and must not be installed globally.
+- Deploy global policy only through `scripts/manage_global_policy.py` and its
+  digest-approved plan/apply/verify/rollback workflow. Name every Codex
+  `AGENTS.md`, Claude `CLAUDE.md`, and private transaction directory as an
+  explicit absolute path; never infer runtime homes or edit a live target
+  outside the reviewed plan. Keep this workflow separate from the recorder
+  installer and the skill-link manager.
+- Codex targets are direct absolute symlinks only. Claude targets on macOS,
+  Linux, and WSL are direct absolute symlinks. On native Windows, use a direct
+  Claude symlink when capability exists or explicitly select the one-line
+  absolute `@path` import-wrapper mode when it does not; never fall back from a
+  failed link to a wrapper, copy, mirror, or hard link. Reject UNC wrapper
+  sources, links or reparse points in the canonical path, unsafe targets,
+  source or target drift, and backup or temporary collisions.
+- Preserve an existing target by adjacent same-volume rename so rollback
+  restores its exact file/link object and metadata. Bind the immutable plan to
+  canonical identity and bytes, target and parent snapshots, and fixed adjacent
+  artifacts; require the printed plan digest for every operation. Hold and lock
+  the no-follow transaction directory for each operation, journal through that
+  held directory, and revalidate its identity at journal and target-mutation
+  boundaries. Use atomic no-replace moves, preflight all-target rollback before
+  mutation, and preserve external collision state rather than overwriting it.
+  After restoring a runtime target, retain the captured deployed artifact under
+  its unique reviewed temporary name; portable path APIs cannot atomically
+  compare-and-delete it without risking an external replacement.
+- Filesystem verification proves topology, not runtime activation. Restart both
+  runtimes after apply; inspect Codex's loaded global source and use Claude
+  `/memory` or `InstructionsLoaded` evidence for the canonical import. An
+  external-import approval, sign-in, hook trust, policy load, or telemetry
+  status is an operational fact and grants no authority beyond the user's
+  request.
+- Keep root `CLAUDE.md` as a thin import of the canonical universal policy first
+  and root repository policy second. Do not copy either policy into it; Claude
+  Code supports relative `@path` imports and reloads project memory after
+  compaction.
+- Changes to the deployment manager must prove exact file and link rollback,
+  source, parent, and mid-operation transaction swaps, target drift, plan
+  tampering, native atomic collision refusal, crash recovery at every durable
+  boundary, safe rollback-artifact retention, all-target rollback preflight,
+  concurrent stale plans, Windows path and PowerShell serialization,
+  unrelated-file preservation, and absence of positive authorization wording. Run every
+  available native Windows, WSL, Linux, and macOS job; simulations are not
+  native evidence.
 
 ## Repository Ownership Boundary
 
-- Holy Skills owns only the five skill directories listed above and the shared
-  audit harness. The coordinator, PostgreSQL protection skill, DevOps Board,
-  and DevOps Console are owned by the independent DevCoordinator repository.
+- Holy Skills owns only the five skill directories listed above, the shared
+  audit harness, and the portable delivery-efficiency runtime tool. The
+  coordinator, PostgreSQL protection skill, DevOps Board, and DevOps Console
+  are owned by the independent DevCoordinator repository.
 - Do not add source imports, relative checkout paths, submodules, build inputs,
   CI checkouts, commit pins, runtime declarations, deployment units, packaging,
   or application artifacts from DevCoordinator to this repository.

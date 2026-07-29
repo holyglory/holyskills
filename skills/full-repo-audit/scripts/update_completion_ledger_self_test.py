@@ -53,6 +53,41 @@ def expect_error(callback, needle: str) -> None:
         raise AssertionError(f"expected failure containing {needle!r}")
 
 
+def set_file_xattr(path: Path, name: str, value: bytes) -> None:
+    descriptor = os.open(path, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        MODULE.set_descriptor_xattr(descriptor, name, value)
+    finally:
+        os.close(descriptor)
+
+
+def get_file_xattr(path: Path, name: str) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        return MODULE.get_descriptor_xattr(descriptor, name)
+    finally:
+        os.close(descriptor)
+
+
+def remove_file_xattr(path: Path, name: str) -> None:
+    descriptor = os.open(path, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        MODULE.remove_descriptor_xattr(descriptor, name)
+    finally:
+        os.close(descriptor)
+
+
+def file_xattrs(path: Path) -> dict[str, bytes]:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        return {
+            name: MODULE.get_descriptor_xattr(descriptor, name)
+            for name in MODULE.list_descriptor_xattrs(descriptor)
+        }
+    finally:
+        os.close(descriptor)
+
+
 def finding(priority: str, summary: str, path: str) -> dict:
     item = {
         "priority": priority,
@@ -386,6 +421,22 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="full-repo-ledger-updater-") as temporary:
         repo = Path(temporary)
+        xattr_target = repo / "xattr-round-trip"
+        xattr_target.write_bytes(b"xattr fixture\n")
+        set_file_xattr(xattr_target, "user.audit-empty-test", b"")
+        set_file_xattr(xattr_target, "user.audit-binary-test", b"binary\x00value")
+        check(
+            get_file_xattr(xattr_target, "user.audit-empty-test") == b""
+            and get_file_xattr(xattr_target, "user.audit-binary-test") == b"binary\x00value",
+            "descriptor xattr helpers must round-trip empty and binary values",
+        )
+        remove_file_xattr(xattr_target, "user.audit-empty-test")
+        check(
+            "user.audit-empty-test" not in file_xattrs(xattr_target)
+            and "user.audit-binary-test" in file_xattrs(xattr_target),
+            "descriptor xattr removal must delete only the selected attribute",
+        )
+
         target = repo / "target.md"
         target.write_text(rendered, encoding="utf-8")
         (repo / "CompletionLedger.md").symlink_to(target)
@@ -607,7 +658,7 @@ def main() -> int:
         rollback_output = repo / "rollback-output.json"
         rollback_output.write_text('{"reviewed":true}\n', encoding="utf-8")
         os.chmod(rollback_output, 0o640)
-        os.setxattr(rollback_output, "user.audit-output-test", b"reviewed-prior")
+        set_file_xattr(rollback_output, "user.audit-output-test", b"reviewed-prior")
         original_sync_output_rollback = MODULE.sync_directory
         rollback_output_mutated = False
 
@@ -623,7 +674,7 @@ def main() -> int:
                 check(len(backup_names) == 1, "output rollback fixture requires one prior-output backup")
                 prior_backup = repo / backup_names[0]
                 os.chmod(prior_backup, 0o600)
-                os.setxattr(prior_backup, "user.audit-output-test", b"concurrent-change")
+                set_file_xattr(prior_backup, "user.audit-output-test", b"concurrent-change")
                 raise OSError("injected output directory sync failure")
             return original_sync_output_rollback(directory_fd)
 
@@ -637,7 +688,7 @@ def main() -> int:
             MODULE.sync_directory = original_sync_output_rollback
         check(
             rollback_output.stat().st_mode & 0o777 == 0o600
-            and os.getxattr(rollback_output, "user.audit-output-test") == b"concurrent-change",
+            and get_file_xattr(rollback_output, "user.audit-output-test") == b"concurrent-change",
             "output rollback must preserve but refuse to misreport a changed prior inode",
         )
         rollback_output_recovery = list(repo.glob(f".{rollback_output.name}.*"))
@@ -657,7 +708,7 @@ def main() -> int:
         rollback_ledger.write_text(LEDGER.render_ledger([escaped, spaced]), encoding="utf-8")
         rollback_backup.write_text(LEDGER.render_ledger([escaped]), encoding="utf-8")
         os.chmod(rollback_backup, 0o640)
-        os.setxattr(rollback_backup, "user.audit-ledger-test", b"reviewed-prior")
+        set_file_xattr(rollback_backup, "user.audit-ledger-test", b"reviewed-prior")
         prior_data, prior_identity, prior_metadata = MODULE.named_file_snapshot(
             rollback_metadata_fd,
             rollback_backup_name,
@@ -678,7 +729,7 @@ def main() -> int:
             if not metadata_changed:
                 metadata_changed = True
                 os.chmod(rollback_backup, 0o600)
-                os.setxattr(rollback_backup, "user.audit-ledger-test", b"concurrent-change")
+                set_file_xattr(rollback_backup, "user.audit-ledger-test", b"concurrent-change")
             return original_exchange_for_metadata(directory_fd, first, second)
 
         MODULE.exchange_paths = change_prior_metadata_before_rollback_exchange
@@ -702,7 +753,7 @@ def main() -> int:
             os.close(rollback_metadata_fd)
         check(
             rollback_ledger.stat().st_mode & 0o777 == 0o600
-            and os.getxattr(rollback_ledger, "user.audit-ledger-test") == b"concurrent-change",
+            and get_file_xattr(rollback_ledger, "user.audit-ledger-test") == b"concurrent-change",
             "rollback must preserve but refuse to misreport a concurrently changed prior inode",
         )
 
@@ -813,12 +864,10 @@ def main() -> int:
 
             ledger_path.write_text(rendered, encoding="utf-8")
             os.chmod(ledger_path, 0o640)
-            os.setxattr(ledger_path, "user.audit-ledger-test", b"preserve-me")
+            set_file_xattr(ledger_path, "user.audit-ledger-test", b"preserve-me")
             clean_existing_bytes = ledger_path.read_bytes()
             clean_existing_stat = ledger_path.stat()
-            clean_existing_xattrs = {
-                name: os.getxattr(ledger_path, name) for name in os.listxattr(ledger_path)
-            }
+            clean_existing_xattrs = file_xattrs(ledger_path)
             clean_existing_plan = MODULE.build_plan(repo, manifest_path, reports_dir, projection_path)
             check(not clean_existing_plan["changed"], "a clean audit must preserve an existing active ledger")
             clean_existing_plan_path = repo / "clean-existing-plan.json"
@@ -832,8 +881,7 @@ def main() -> int:
                 "clean plan/apply must preserve ledger ownership and mode",
             )
             check(
-                {name: os.getxattr(ledger_path, name) for name in os.listxattr(ledger_path)}
-                == clean_existing_xattrs,
+                file_xattrs(ledger_path) == clean_existing_xattrs,
                 "clean plan/apply must preserve ledger xattrs",
             )
         finally:
@@ -925,11 +973,9 @@ def main() -> int:
             ledger_path.unlink()
             ledger_path.write_text(rendered, encoding="utf-8")
             os.chmod(ledger_path, 0o640)
-            os.setxattr(ledger_path, "user.audit-ledger-test", b"preserve-through-replacement")
+            set_file_xattr(ledger_path, "user.audit-ledger-test", b"preserve-through-replacement")
             original_stat = ledger_path.stat()
-            original_xattrs = {
-                name: os.getxattr(ledger_path, name) for name in os.listxattr(ledger_path)
-            }
+            original_xattrs = file_xattrs(ledger_path)
             successful_plan, successful_plan_path = reviewed_plan("successful-plan")
             check(successful_plan["changed"], "a confirmed finding must produce a ledger append plan")
             MODULE.apply_plan(repo, manifest_path, reports_dir, projection_path, successful_plan_path)
@@ -945,8 +991,7 @@ def main() -> int:
                 "replacement must preserve ownership and mode",
             )
             check(
-                {name: os.getxattr(ledger_path, name) for name in os.listxattr(ledger_path)}
-                == original_xattrs,
+                file_xattrs(ledger_path) == original_xattrs,
                 "replacement must preserve ACL/xattr metadata",
             )
 

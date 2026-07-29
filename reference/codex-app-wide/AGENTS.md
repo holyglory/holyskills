@@ -136,6 +136,58 @@
 - If immediate mitigation is required to prevent security, safety, or data
   loss, preserve evidence and mitigate first, then complete the prevention loop
   before declaring the incident handled.
+- Keep project-root `UserIssueLedgers/` as concise routine context for confirmed
+  user-indicated agent mistakes and durable user corrections that future work
+  could repeat. Create the directory and its first scoped ledger on the first
+  qualifying correction; absence is valid before then. These persistent
+  prevention ledgers are distinct from the open-only `CompletionLedger.md`,
+  major decisions in `DecisionHistory.md`, and incident or implementation
+  history.
+- Use multiple narrowly scoped ledgers rather than one mixed catch-all. Separate
+  UI, automation, coding-style, math, data, security, operations, testing, and
+  documentation patterns when they exist. Split business logic by the actual
+  perspective or bounded domain—such as pricing, permissions, order lifecycle,
+  or another project-specific capability—rather than accumulating unrelated
+  rules in one broad business-logic file. Use nested directories when they make
+  the ownership clearer, such as `BusinessLogic/<Perspective>.md`.
+- Each ledger contains only a title `# User Issue Ledger: <scope>` and one
+  compact table with the columns `ID`, `Applies to`, `Mistake pattern`,
+  `Required behavior`, and `Prevention and verification`. Use globally unique,
+  stable `UIL-<SCOPE>-NNN` IDs. The relative file path owns the scope: its title
+  must name the same path components, and every row must use the ID namespace
+  derived from all of them. For example, `BusinessLogic/Pricing.md` uses the
+  title `Business logic / pricing` and IDs such as
+  `UIL-BUSINESS-LOGIC-PRICING-001`. Never mix another path's namespace into the
+  file. Normalize feedback into the reusable failure pattern, bounded
+  applicability, and required outcome, not a transcript, blame note,
+  chronology, status report, or implementation narrative. Place a pattern in
+  the narrowest owning ledger; do not duplicate it across ledgers.
+- Before planning or implementing any repository change, inventory
+  `UserIssueLedgers/` when it exists and read every ledger plausibly relevant to
+  the work. UI work always reads the UI ledger; code changes always read the
+  coding-style ledger; automation work always reads the automation ledger; and
+  business behavior reads every affected business-logic perspective. Read all
+  ledgers for repository-wide or cross-cutting work. Treat every relevant row
+  as a required negative acceptance criterion: the named mistake must not
+  recur. Before readiness, verify the changed behavior against those rows and
+  cite the relevant IDs in task evidence, tests, or the completion report
+  rather than expanding ledgers with execution detail.
+- Include every relevant ledger ID, required behavior, and verification in
+  delegated-agent tasks; delegation does not transfer context unless it is
+  passed explicitly. Review delegated results against the same rows before
+  accepting them.
+- When a user identifies a qualifying mistake, add or update its row before
+  fixing the product. Keep one row per distinct pattern and merge duplicates.
+  On recurrence, reuse the existing ID and strengthen its required behavior or
+  prevention and verification guardrail before fixing the implementation; a
+  repeated row is evidence that the prior guardrail was insufficient.
+- Ledger rows persist after the immediate fix because their purpose is to
+  prevent recurrence. Remove or supersede a row only when the user explicitly
+  retracts the correction or a recorded decision proves it no longer applies;
+  preserve that change in version control and delete a scoped ledger file only
+  when no rows remain. Do not add changed intent, new scope, external failures,
+  unconfirmed agent-found concerns, raw conversation, or one-off incident
+  detail.
 
 ## Verify real behavior
 
@@ -157,6 +209,16 @@
 - Efficiency telemetry is observational and subordinate to complete scope,
   correctness, safety, maintainability, verification, and honest reporting.
   Never omit required work, context, tests, or explanation to improve a metric.
+- At task start, when project or runtime instructions identify an approved
+  configured recorder, check its health and coverage without delaying the task
+  or making an extra model call. Let runtime-owned sources record observations.
+  Before terminal delivery, append the outcome, agreed-scope requirement
+  statuses, verification provenance, and linked-work classification through
+  its declaration interface when those facts cannot be observed by the host.
+  Use the exact stable launcher surfaced by recorder-owned session context;
+  never guess an installation path or run a mutable checkout copy from an
+  unrelated project.
+  Do not install or reconfigure telemetry without authority for that runtime.
 - When measurement is configured, use a runtime- or harness-owned recorder from
   request receipt through terminal delivery, recording first model or tool
   activity separately. Report request-to-delivery wall time and execution wall

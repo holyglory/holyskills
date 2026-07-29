@@ -791,6 +791,216 @@ def find_policy_violations(text: str) -> list[str]:
             "agent-mistake contract",
             ("user intent", "before fixing", "guardrail", "retest"),
         )
+        require_terms(
+            violations,
+            mistakes,
+            "user-issue-ledger contract",
+            (
+                "project-root",
+                "UserIssueLedgers/",
+                "concise routine context",
+                "confirmed user-indicated agent mistakes",
+                "durable user corrections",
+                "first qualifying correction",
+                "absence is valid",
+                "persistent prevention ledgers",
+                "CompletionLedger.md",
+                "DecisionHistory.md",
+                "multiple narrowly scoped ledgers",
+                "one mixed catch-all",
+                "automation",
+                "coding-style",
+                "split business logic",
+                "bounded domain",
+                "BusinessLogic/<Perspective>.md",
+                "# User Issue Ledger: <scope>",
+                "ID",
+                "Applies to",
+                "Mistake pattern",
+                "Required behavior",
+                "Prevention and verification",
+                "UIL-<SCOPE>-NNN",
+                "relative file path owns the scope",
+                "title must name the same path components",
+                "ID namespace derived from all of them",
+                "Never mix another path's namespace",
+                "narrowest owning ledger",
+                "do not duplicate it across ledgers",
+                "UI",
+                "math",
+                "business logic",
+                "before planning or implementing",
+                "inventory",
+                "plausibly relevant",
+                "UI work always reads",
+                "code changes always read",
+                "automation work always reads",
+                "business behavior reads every affected",
+                "read all ledgers",
+                "repository-wide or cross-cutting work",
+                "negative acceptance criterion",
+                "must not recur",
+                "delegated-agent tasks",
+                "before fixing",
+                "one row per distinct pattern",
+                "merge duplicates",
+                "on recurrence",
+                "reuse the existing ID",
+                "strengthen",
+                "persist after the immediate fix",
+                "explicitly retracts",
+                "recorded decision",
+                "version control",
+                "changed intent",
+                "new scope",
+                "external failures",
+                "unconfirmed agent-found concerns",
+                "raw conversation",
+            ),
+        )
+        if not re.search(
+            r"(?is)\b(?:keep|create|maintain|use)\b.{0,140}\bproject-root\b"
+            r".{0,80}`UserIssueLedgers/`",
+            mistakes,
+        ):
+            violations.append("UserIssueLedgers/ must be positively assigned as a project-root record")
+        if not re.search(
+            r"(?is)\bmultiple narrowly scoped ledgers\b.{0,120}\bone mixed catch-all\b"
+            r".{0,280}\bsplit business logic\b.{0,120}\bperspective or bounded domain\b"
+            r".{0,240}`BusinessLogic/<Perspective>\.md`",
+            mistakes,
+        ):
+            violations.append("user issues must be routed to narrow ledgers and business perspectives")
+        if not re.search(
+            r"(?is)\btitle\b.{0,80}`# User Issue Ledger: <scope>`.{0,120}"
+            r"\bcolumns\b.{0,80}`ID`.{0,60}`Applies\s+to`.{0,60}`Mistake\s+pattern`"
+            r".{0,60}`Required\s+behavior`.{0,80}`Prevention\s+and\s+verification`",
+            mistakes,
+        ):
+            violations.append("scoped user issue ledgers must define the exact compact prevention schema")
+        path_scope_binding = (
+            re.search(
+                r"(?is)\brelative file path owns the scope\b.{0,160}"
+                r"\btitle\s+must\s+name\s+the\s+same\s+path\s+components\b",
+                mistakes,
+            )
+            and re.search(
+                r"(?is)\btitle\s+must\s+name\s+the\s+same\s+path\s+components\b.{0,160}"
+                r"\bID\s+namespace\b.{0,40}\bderived\s+from\s+all\s+of\s+them\b",
+                mistakes,
+            )
+            and re.search(
+                r"(?is)`BusinessLogic/Pricing\.md`.{0,180}"
+                r"`UIL-BUSINESS-LOGIC-PRICING-001`",
+                mistakes,
+            )
+            and re.search(r"(?is)\bnever mix another path's namespace\b", mistakes)
+        )
+        if not path_scope_binding:
+            violations.append("each user issue ledger path, title, and ID namespace must identify one scope")
+        scoped_prework = (
+            re.search(
+                r"(?is)\bbefore planning or implementing\b.{0,160}\binventory\b"
+                r".{0,100}`UserIssueLedgers/`.{0,180}\bread every ledger\b"
+                r".{0,100}\bplausibly relevant\b",
+                mistakes,
+            )
+            and re.search(
+                r"(?is)\bread\s+all\s+ledgers\b.{0,120}"
+                r"\brepository-wide\s+or\s+cross-cutting\s+work\b",
+                mistakes,
+            )
+            and re.search(
+                r"(?is)\btreat\s+every\s+relevant\s+row\b.{0,100}"
+                r"\brequired\s+negative\s+acceptance\s+criterion\b"
+                r".{0,120}\bmust\s+not\s+recur\b",
+                mistakes,
+            )
+        )
+        if not scoped_prework:
+            violations.append("agents must route and apply relevant scoped issue rows before new implementation")
+        if not re.search(
+            r"(?is)\bUI work always reads\b.{0,100}\bUI ledger\b.{0,120}"
+            r"\bcode changes always read\b.{0,100}\bcoding-style ledger\b.{0,120}"
+            r"\bautomation work always reads\b.{0,100}\bautomation ledger\b.{0,140}"
+            r"\bbusiness behavior reads every affected business-logic perspective\b",
+            mistakes,
+        ):
+            violations.append("common work types must route to their mandatory scoped ledgers")
+        if not re.search(
+            r"(?is)\brelevant ledger ID\b.{0,120}\brequired behavior\b.{0,120}"
+            r"\bverification\b.{0,100}\bdelegated-agent tasks\b",
+            mistakes,
+        ):
+            violations.append("delegated work must receive applicable user issue constraints")
+        normalized_before_fix = re.search(
+            r"(?is)\bqualifying\s+mistake\b.{0,120}\badd\s+or\s+update\b"
+            r".{0,120}\brow\s+before\s+fixing\b",
+            mistakes,
+        ) and re.search(
+            r"(?is)\bone\s+row\s+per\s+distinct\s+pattern\b.{0,100}"
+            r"\bmerge\s+duplicates\b",
+            mistakes,
+        )
+        if not normalized_before_fix:
+            violations.append("qualifying corrections must be normalized before the product fix")
+        if not re.search(
+            r"(?is)\bon recurrence\b.{0,100}\breuse the existing ID\b.{0,120}"
+            r"\bstrengthen\b.{0,120}\bguardrail\b.{0,100}\bbefore fixing\b",
+            mistakes,
+        ):
+            violations.append("recurring mistakes must strengthen their existing ledger row")
+        persistent_rows = re.search(
+            r"(?is)\bledger rows persist after the immediate fix\b",
+            mistakes,
+        ) and re.search(
+            r"(?is)\bremove or supersede a row only\b.{0,120}\buser explicitly\b"
+            r".{0,40}\bretracts\b.{0,100}\brecorded decision\b",
+            mistakes,
+        )
+        if not persistent_rows:
+            violations.append("user issue rows must persist until explicitly invalidated")
+
+        contradictions = (
+            (
+                r"(?ims)^\s*(?:-\s+)?(?:delete|remove|clear|drop)\b.{0,120}"
+                r"`UserIssueLedgers/`|^\s*(?:-\s+)?`UserIssueLedgers/`"
+                r".{0,120}\b(?:delete|remove|clear|drop)\b.{0,80}\b(?:after|when)\b"
+                r".{0,60}\b(?:fix|resolved|complete)\b",
+                "UserIssueLedgers/ must not use completion-ledger delete-on-fix semantics",
+            ),
+            (
+                r"(?ims)^\s*(?:-\s+)?(?:add|create|append)\b.{0,100}\b(?:new|another)\b"
+                r".{0,80}\brow\b.{0,100}\b(?:recurrence|repeated|again)\b",
+                "a recurring issue must update its existing row rather than duplicate it",
+            ),
+            (
+                r"(?ims)^\s*(?:-\s+)?(?:skip|ignore|do not read|need not read)\b.{0,100}"
+                r"`UserIssueLedgers/`.{0,120}\b(?:new|implementation|feature|planning)\b",
+                "new work must not bypass scoped user issue ledgers",
+            ),
+            (
+                r"(?ims)^\s*(?:-\s+)?(?:record|store|retain|copy|include)\b.{0,120}"
+                r"\b(?:raw conversation|full prompt|source content|tool payload|secret|credential)\b"
+                r".{0,100}`?UserIssueLedgers/`?",
+                "UserIssueLedgers/ must not retain raw or sensitive incident content",
+            ),
+            (
+                r"(?ims)^\s*(?:-\s+)?(?:record|add|store)\b.{0,100}"
+                r"\b(?:changed intent|new scope|external failures?)\b.{0,100}"
+                r"`?UserIssueLedgers/`?",
+                "changed intent, new scope, and external failures are not recurring agent mistakes",
+            ),
+            (
+                r"(?ims)^\s*(?:-\s+)?(?:keep|put|store|record)\b.{0,120}"
+                r"\b(?:all|every|mixed|unrelated)\b.{0,80}\b(?:issue|mistake|pattern|rule)s?\b"
+                r".{0,100}\b(?:one|single|shared)\b.{0,80}\bledger\b",
+                "unrelated user issue perspectives must not be collapsed into one ledger",
+            ),
+        )
+        for pattern, message in contradictions:
+            if re.search(pattern, text):
+                violations.append(message)
 
     interface = section(text, "Put requested interface content first")
     if not interface:

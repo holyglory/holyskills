@@ -63,6 +63,16 @@ VALID_POLICY = """# Universal Agent Instructions
 - Efficiency telemetry is observational and subordinate to complete scope,
   correctness, safety, maintainability, verification, and honest reporting.
   Never omit required work, context, tests, or explanation to improve a metric.
+- At task start, when project or runtime instructions identify an approved
+  configured recorder, check its health and coverage without delaying the task
+  or making an extra model call. Let runtime-owned sources record observations.
+  Before terminal delivery, append the outcome, agreed-scope requirement
+  statuses, verification provenance, and linked-work classification through
+  its declaration interface when those facts cannot be observed by the host.
+  Use the exact stable launcher surfaced by recorder-owned session context;
+  never guess an installation path or run a mutable checkout copy from an
+  unrelated project.
+  Do not install or reconfigure telemetry without authority for that runtime.
 - When measurement is configured, use a runtime- or harness-owned recorder from
   request receipt through terminal delivery, recording first model or tool
   activity separately. Report request-to-delivery wall time and execution wall
@@ -165,13 +175,25 @@ def replace_section(text: str, heading: str, replacement: str) -> str:
 
 
 def main() -> int:
+    global VALID_POLICY
+    canonical_policy = CANONICAL_POLICY.read_text(encoding="utf-8")
+    canonical_mistakes = MODULE.section(canonical_policy, "Learn from agent-made mistakes")
+    VALID_POLICY = replace_section(
+        VALID_POLICY,
+        "Learn from agent-made mistakes",
+        "## Learn from agent-made mistakes\n\n" + canonical_mistakes,
+    )
     canonical_efficiency = MODULE.section(
-        CANONICAL_POLICY.read_text(encoding="utf-8"),
+        canonical_policy,
         "Measure delivery efficiency truthfully",
     )
     check(
         MODULE.section(VALID_POLICY, "Measure delivery efficiency truthfully") == canonical_efficiency,
         "self-test efficiency fixture must exactly match the canonical policy section",
+    )
+    check(
+        MODULE.section(VALID_POLICY, "Learn from agent-made mistakes") == canonical_mistakes,
+        "self-test mistake fixture must exactly match the canonical policy section",
     )
     check(not MODULE.find_policy_violations(VALID_POLICY), "complete universal policy should pass")
 
@@ -612,6 +634,101 @@ def main() -> int:
     check(
         "timing" in messages(collapsed_timing) or "wall time" in messages(collapsed_timing),
         "collapsed concurrent timing must fail",
+    )
+
+    no_mistake_section = replace_section(VALID_POLICY, "Learn from agent-made mistakes", "")
+    check("agent-mistake section is missing" in messages(no_mistake_section), "missing mistake policy must fail")
+
+    unnamed_issue_memory = VALID_POLICY.replace("`UserIssueLedgers/`", "the recurring issue memory")
+    check(
+        "user-issue-ledger contract" in messages(unnamed_issue_memory),
+        "an unnamed recurring-issue record must fail",
+    )
+
+    no_preimplementation_read = VALID_POLICY.replace(
+        "Before planning or implementing any repository change, inventory",
+        "After implementing a repository change, optionally inventory",
+    )
+    no_preimplementation_messages = messages(no_preimplementation_read)
+    check(
+        "before new implementation" in no_preimplementation_messages
+        or "user-issue-ledger contract" in no_preimplementation_messages,
+        "ledger review delayed until after implementation must fail",
+    )
+
+    no_delegation_context = VALID_POLICY.replace(
+        "Include every relevant ledger ID, required behavior, and verification in\n"
+        "  delegated-agent tasks; delegation does not transfer context unless it is\n"
+        "  passed explicitly. Review delegated results against the same rows before\n"
+        "  accepting them.",
+        "Delegated agents may infer any relevant prior corrections themselves.",
+    )
+    check(
+        "delegated work" in messages(no_delegation_context),
+        "delegated work without explicit ledger constraints must fail",
+    )
+
+    delete_after_fix = VALID_POLICY + (
+        "\n## Issue Ledger Override\n\n"
+        "- Delete `UserIssueLedgers/` after the reported issue is fixed.\n"
+    )
+    check(
+        "delete-on-fix" in messages(delete_after_fix),
+        "delete-on-fix semantics must fail",
+    )
+
+    duplicate_on_recurrence = VALID_POLICY + (
+        "\n## Issue Ledger Override\n\n"
+        "- Add another new row whenever the same mistake recurs again.\n"
+    )
+    check(
+        "rather than duplicate" in messages(duplicate_on_recurrence),
+        "duplicate recurrence rows must fail",
+    )
+
+    bypass_for_new_features = VALID_POLICY + (
+        "\n## Issue Ledger Override\n\n"
+        "- Ignore `UserIssueLedgers/` during new feature implementation.\n"
+    )
+    check(
+        "must not bypass" in messages(bypass_for_new_features),
+        "new feature work must not bypass learned constraints",
+    )
+
+    raw_incident_archive = VALID_POLICY + (
+        "\n## Issue Ledger Override\n\n"
+        "- Store the raw conversation in `UserIssueLedgers/`.\n"
+    )
+    check(
+        "raw or sensitive" in messages(raw_incident_archive),
+        "raw conversation retention must fail",
+    )
+
+    misclassified_external = VALID_POLICY + (
+        "\n## Issue Ledger Override\n\n"
+        "- Record external failures in `UserIssueLedgers/`.\n"
+    )
+    check(
+        "not recurring agent mistakes" in messages(misclassified_external),
+        "external failures must not be misclassified as learned agent mistakes",
+    )
+
+    mixed_catch_all = VALID_POLICY + (
+        "\n## Issue Ledger Override\n\n"
+        "- Keep all issue patterns in one shared ledger.\n"
+    )
+    check(
+        "must not be collapsed" in messages(mixed_catch_all),
+        "unrelated perspectives collapsed into one ledger must fail",
+    )
+
+    unbound_scope = VALID_POLICY.replace(
+        "The relative file path owns the scope:",
+        "A ledger may choose an unrelated display scope:",
+    )
+    check(
+        "path, title, and ID namespace" in messages(unbound_scope),
+        "a ledger contract without path-bound scope identity must fail",
     )
 
     buried_collection = VALID_POLICY.replace(

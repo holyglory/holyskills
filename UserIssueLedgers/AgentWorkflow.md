@@ -1,0 +1,7 @@
+# User Issue Ledger: Agent workflow
+
+| ID | Applies to | Mistake pattern | Required behavior | Prevention and verification |
+| --- | --- | --- | --- | --- |
+| UIL-AGENT-WORKFLOW-001 | Planning and implementation in every repository | Reusable user-indicated mistakes were handled only in the current task and could recur in later work. | Preserve each confirmed pattern in its narrowly scoped project ledger and apply every relevant row before implementation. | Enforce the universal policy contract, realistic policy-checker fixtures, and recursive scoped-ledger validation. |
+| UIL-AGENT-WORKFLOW-002 | Designing or extending user-issue ledgers | Unrelated UI, business, automation, or coding corrections were combined in one broad ledger, obscuring which rules applied. | Keep one path-bound ledger per surface or bounded business perspective; never revive a single catch-all file. | Bind every ledger path to its title and ID namespace, and test rejection of a mixed-scope file plus acceptance of multiple nested business perspectives. |
+| UIL-AGENT-WORKFLOW-003 | Runtime-injected context and agent startup messages | Authentication or telemetry activation was presented as if it authorized the agent to act. | Treat sign-in and recorder state as operational facts only; never claim or imply authority beyond the user's request. | Require startup context to state that it grants no additional permission, reject positive authorization wording in regression tests, and distinguish authentication from authorization in the handoff. |

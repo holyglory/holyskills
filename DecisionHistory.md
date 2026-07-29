@@ -3,14 +3,85 @@
 Direction: Confirmed: user decisions favor concise rationale that preserves project direction,
 complete truthful end-to-end behavior, informed choices, outcome-aware efficiency measurement that
 cannot reward reduced scope or verification,
-production-grade foundations, canonical ownership, realistic verification, audits that begin only
+production-grade foundations, canonical ownership, scoped persistent memory for user-indicated
+mistakes, realistic verification, audits that begin only
 after their target implementation exists, proportionate runtime effort, and interfaces whose
 visible hierarchy matches the task and promised content (D-20260714-03, D-20260713-03,
-D-20260713-04, D-20260714-04, D-20260720-01, D-20260726-01, D-20260710-03,
+D-20260713-04, D-20260714-04, D-20260720-01, D-20260729-01, D-20260728-02, D-20260728-01, D-20260726-01, D-20260710-03,
 D-20260710-05). Inferred: repeated choices indicate a taste for compact low-noise UI,
 stable ordering and grouping, visible exceptions, contextual actions, and durable state rather than
 volatile cleverness (D-20260707-01, D-20260707-02, D-20260707-07, D-20260707-08); apply these
 patterns by default while treating them as inference when a new context materially differs.
+
+## [D-20260729-01 — One canonical global policy serves Codex and Claude](DecisionDetails/D-20260729-01.md)
+
+Decision: Deploy `reference/codex-app-wide/AGENTS.md` to explicit Codex and Claude global-policy
+files through one digest-approved transactional manager: direct absolute links for Codex and
+POSIX/WSL Claude, with an explicitly selected absolute-import wrapper only for native Windows
+Claude when direct-link capability is unavailable.
+
+Why: Both runtimes need the same universal rules without an independently editable Claude mirror.
+Options: selected one source with thin runtime-specific topology over copied global files, a second
+canonical Claude file, or policy deployment inside the telemetry installer because direct links or
+one deterministic import preserve ownership while the separate reviewed transaction preserves
+runtime boundaries. Prior attempts: Claude's copied global file diverged while D-20260712-01 fixed
+only Codex; this supersedes D-20260712-01 only where it left Claude unchanged, not its Codex link
+decision. Intent: make cross-runtime policy updates universal, reversible, and operationally
+truthful without treating policy loading, authentication, or telemetry as permission to act.
+Revisit only if: a runtime stops supporting the verified link/import topology or exposes a stronger
+native centrally managed policy mechanism with equivalent source identity and rollback guarantees.
+
+## [D-20260728-03 — Claude telemetry uses prompt-correlated hooks and OTLP logs](DecisionDetails/D-20260728-03.md)
+
+Decision: The Claude Code adapter translates a latency-bounded lifecycle-hook subset and
+allowlisted OTLP/HTTP JSON prompt, API, error, and tool events into the shared recorder, using the
+host's UUID-v4 `prompt_id`/`prompt.id` as
+the exact transient task and turn correlation. The core scopes every runtime identity by family and
+session before HMAC persistence, issues signed opaque declaration handles, and retains deterministic
+per-session generations only as partial legacy fallback when prompt correlation is absent.
+
+Why: Claude sessions must produce the same comparable, privacy-safe events as Codex without
+inventing boundaries the host does not expose. Options: selected native prompt correlation over
+session-only generations, adapter-side state, and receiver-memory counters because it survives late
+OTLP flushes and process restarts without guessing; stateful translator alternatives violate the
+shared-core boundary. Prior attempts: the initial session-only design failed because documentation
+was read as exposing only `session_id`; current authoritative hook and telemetry references show
+the shared prompt UUID, making that premise false for supported hosts. Intent: exact
+cross-runtime attribution with raw identifiers excluded from durable state and model context.
+Revisit only if: the host changes its prompt-correlation or exposes a stronger post-render delivery
+boundary.
+
+## [D-20260728-02 — One portable recorder serves Codex and Claude](DecisionDetails/D-20260728-02.md)
+
+Decision: This repository owns one versioned delivery-efficiency runtime tool outside the skill
+lifecycle, with a shared privacy/schema/storage core, thin Codex and Claude adapters, copied
+per-user installations, and separate native Windows, WSL, Linux, and macOS state.
+
+Why: Recording must begin before a skill can activate and remain comparable across agent runtimes
+and operating systems. Options: selected one portable runtime tool over a sixth skill, manual logs,
+or separate runtime-specific recorders because one core can own authoritative append and privacy
+semantics while adapters preserve native event provenance. Prior attempts: policy alone exposed an
+instrumentation gap and the existing symlink installer could not run natively on Windows. Intent:
+measure real delivery cost without making users repeatedly configure divergent agents or weakening
+scope, correctness, or privacy. Revisit only if: host-owned telemetry exposes stronger exact
+request and delivery boundaries while retaining the shared contract, cold storage, and platform
+isolation guarantees.
+
+## [D-20260728-01 — User corrections persist in scoped prevention ledgers](DecisionDetails/D-20260728-01.md)
+
+Decision: Record confirmed user-indicated agent mistakes as persistent, narrowly scoped files under
+`UserIssueLedgers/`, separated by UI, automation, coding style, other domains, and bounded
+business-logic perspectives, with each path bound to the same title and ID namespace; apply relevant
+rows before implementation and strengthen the same row when a mistake recurs.
+
+Why: Repeated corrections need durable project context without becoming one noisy catch-all.
+Options: selected multiple scoped prevention ledgers over one broad ledger, the open-only completion
+ledger, the major-decision index, or tests alone because the selected structure keeps each lesson
+relevant and reusable across agents. Prior attempts: prevention-first policy had no project memory,
+and the first single-ledger design failed by mixing unrelated perspectives and was rejected as too
+broad. Intent: never make the user repeatedly
+teach the same UI, business, automation, or coding constraint. Revisit only if: another mechanism
+proves equivalent persistence, scoped routing, delegation, deduplication, and pre-delivery checks.
 
 ## [D-20260726-01 — UI implementation audits require an implemented surface](DecisionDetails/D-20260726-01.md)
 
@@ -148,15 +219,16 @@ partial claims. Revisit only if: a rule cannot be enforced or understood at its 
 
 ## [D-20260712-01 — Global policy uses direct canonical links](DecisionDetails/D-20260712-01.md)
 
-Decision: Every discovered global policy entry links directly to the canonical repository source,
-while repository-root policy remains repository-specific.
+Decision: Every discovered Codex global `AGENTS.md` links directly to the canonical repository
+source, while repository-root policy remains repository-specific.
 
-Why: Independent installed policy files diverged from their source. Options: selected direct
-canonical links over copied or mirrored files because ownership and updates remain unambiguous.
-Prior attempts: independent copies drifted and lost stricter owner rules. Intent: maintain one
-writable source of truth without erasing runtime-specific repository guidance. Revisit only if: a
-runtime cannot safely consume a direct link and provides an equally verifiable synchronization
-mechanism.
+Why: Independent installed Codex policy files diverged from their source. Options: selected direct
+canonical Codex links over copied or mirrored Codex files because ownership and updates remain
+unambiguous. Prior attempts: independent Codex copies drifted and lost stricter owner rules. Intent:
+maintain one writable source of truth without erasing runtime-specific repository guidance. Revisit
+only if: Codex cannot safely consume a direct link and provides an equally verifiable
+synchronization mechanism; D-20260729-01 separately supersedes only this decision's former
+Claude-unchanged topology.
 
 ## [D-20260711-01 — Routine bug fixing was made direct and proportionate](DecisionDetails/D-20260711-01.md)
 
