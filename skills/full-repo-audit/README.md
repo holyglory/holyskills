@@ -41,7 +41,8 @@ commits, pushes, or other source changes.
 
 ## How To Use
 
-From Codex, invoke:
+This exhaustive skill is explicit-only: ordinary review or gap-finding requests
+do not activate it. From Codex, invoke:
 
 ```text
 Use $full-repo-audit to audit this repo.
@@ -53,7 +54,7 @@ Or name a specific repository:
 Use $full-repo-audit to audit /path/to/repo.
 ```
 
-The skill requests an extra-high-effort lead audit. It calls that effort runtime-attested only when the runtime supplies immutable provenance; configured or self-reported effort remains `ledger-recorded-unverified`. File batches and journey checks use low-effort workers or disclosed fallback. The lead independently reopens every batch PASS anchor; it may work incrementally, but sampling cannot support full semantic coverage.
+The skill requests an extra-high-effort lead audit. It calls that effort runtime-attested only when the runtime supplies immutable provenance; configured or self-reported effort remains `ledger-recorded-unverified`. File batches and journey checks use Light workers (runtime value `low`) or disclosed manual fallback when that value is genuinely unavailable. Codex workers use `fork_turns="none"` and receive the complete generated prompt. The lead independently reopens every batch PASS anchor; it may work incrementally, but sampling cannot support full semantic coverage.
 
 ## What It Produces
 
@@ -71,6 +72,8 @@ The harness creates an audit output directory containing:
 - `excluded_files.json`: skipped files and scope-warning reasons.
 - `reports/`: required returned worker reports plus verified
   `lead_reconciliation.md`.
+- `logs/`: complete command stdout/stderr kept out of routine model context.
+- `final-report.md`: complete lead synthesis and trace tables.
 - `queue_complete.json`: queue-generation marker, not proof that the audit is finished.
 - `verification_receipt.json`: written only after a passing stable verifier run; binds the manifest, exact report root, and every authorized report hash used by consolidation.
 - `consolidated-findings.json` / `.md`: mechanically merged candidates.
@@ -81,10 +84,11 @@ The harness creates an audit output directory containing:
   files, effort/queue/exclusion records, prompts, and bound evidence artifacts
   and matches that canonical pass result to the receipt.
 
-The final response from the skill should include coverage, cross-cutting
-architecture findings, contract-to-outcome semantic implementation findings,
-interface and journey findings, file-level findings, completion-ledger
-disposition, an implementation plan, and a verification plan.
+Workers write full reports directly to their prompt-declared paths and return
+only compact filename/hash/byte/count receipts. The complete lead result belongs
+in `final-report.md`. The chat response is only a compact outcome, finding
+counts, verifier status, material caveats, and artifact index; it must not
+duplicate worker reports or the full trace table.
 If no explicit user journeys exist, the audit should ask for confirmation or
 label UI/journey coverage as assumption-based rather than claiming the interface
 is user-friendly.

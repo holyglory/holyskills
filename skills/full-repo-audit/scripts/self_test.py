@@ -1025,6 +1025,9 @@ def assert_manifest(manifest_path: Path) -> None:
     expected_reports_dir = str((manifest_path.parent / "reports").resolve())
     check(expected_reports_dir in manifest["verifier_command"], "manifest should point verification at reports/")
     check(manifest["reports_dir"] == expected_reports_dir, "manifest should record reports_dir")
+    check(manifest["logs_dir"] == str((manifest_path.parent / "logs").resolve()), "manifest should record cold logs_dir")
+    check(manifest["final_report"] == str((manifest_path.parent / "final-report.md").resolve()), "manifest should record final report path")
+    check((manifest_path.parent / "logs").is_dir(), "builder should create the cold log directory")
     expected_receipt_path = str((manifest_path.parent / "verification_receipt.json").resolve())
     check("--receipt-out" in manifest["verifier_args"], "manifest verifier command should request a pass-only receipt")
     check(
@@ -1035,6 +1038,8 @@ def assert_manifest(manifest_path: Path) -> None:
     check(owner_marker["owned_by"] == "full-repo-audit", "output directory should include ownership marker")
     check("batch_001.md" in owner_marker["generated_artifacts"], "ownership marker should record generated batch prompts")
     check("effort_ledger.json" in owner_marker["generated_artifacts"], "ownership marker should record effort ledger")
+    check("logs" in owner_marker["generated_artifacts"], "ownership marker should record cold logs")
+    check("final-report.md" in owner_marker["generated_artifacts"], "ownership marker should reserve the final report")
     marker = json.loads((manifest_path.parent / "queue_complete.json").read_text(encoding="utf-8"))
     check(marker["run_id"] == manifest["run_id"], "completion marker run_id should match manifest")
     check(marker["phase"] == "queue_generated", "completion marker should label queue generation phase")
@@ -1048,6 +1053,19 @@ def assert_manifest(manifest_path: Path) -> None:
     )
     check(not (manifest_path.parent / "audit_complete.json").exists(), "legacy audit_complete marker should not be generated")
     batch_prompt_text = (manifest_path.parent / manifest["batches"][0]["prompt"]).read_text(encoding="utf-8")
+    expected_batch_report = str((manifest_path.parent / manifest["batches"][0]["report"]).resolve())
+    check(expected_batch_report in batch_prompt_text, "batch prompt should contain its exact absolute report path")
+    for context_contract in (
+        'fork_turns="none"',
+        'reasoning_effort="low"',
+        "Light",
+        "REPORT_SAVED",
+        f"filename={Path(expected_batch_report).name};",
+        "REPORT_NOT_SAVED path=<exact-report-path>; reason=<short-reason>",
+        "at or below 80 tokens",
+        "do not paste or repeat its body",
+    ):
+        check(context_contract in batch_prompt_text, f"batch prompt should enforce context-light artifact delivery: {context_contract}")
     check(
         "## Implementation Inventory" in batch_prompt_text
         and "| File/unit | Contract ID | Contract/responsibility | Entrypoints/source anchors | Implementation/data/side-effect trace | Failure/edge/permission/recovery trace | Verification evidence | Result |"
@@ -1085,6 +1103,11 @@ def assert_manifest(manifest_path: Path) -> None:
     lead_prompt_text = (
         manifest_path.parent / manifest["lead_reconciliation"]["prompt"]
     ).read_text(encoding="utf-8")
+    check(
+        str((manifest_path.parent / manifest["lead_reconciliation"]["report"]).resolve()) in lead_prompt_text,
+        "lead prompt should contain its exact reconciliation artifact path",
+    )
+    check("subagent response" not in lead_prompt_text and "REPORT_SAVED" not in lead_prompt_text, "lead-owned prompt must not masquerade as a worker receipt contract")
     for lead_requirement in (
         "Independently reopen the assigned source and recheck every",
         "sampling PASS rows is not sufficient",
@@ -1123,6 +1146,24 @@ def assert_manifest(manifest_path: Path) -> None:
         journey_prompt_text = (manifest_path.parent / "journey_audit.md").read_text(encoding="utf-8")
         visual_prompt_text = (manifest_path.parent / "visual_journey_audit.md").read_text(encoding="utf-8")
         check(
+            str((manifest_path.parent / manifest["journey_audit"]["source_report"]).resolve()) in journey_prompt_text,
+            "journey prompt should contain its exact report path",
+        )
+        check(
+            str((manifest_path.parent / manifest["journey_audit"]["visual_report"]).resolve()) in visual_prompt_text,
+            "visual journey prompt should contain its exact report path",
+        )
+        check('fork_turns="none"' in journey_prompt_text and 'fork_turns="none"' in visual_prompt_text, "journey workers should use context-light Codex forks")
+        check("REPORT_SAVED" in journey_prompt_text and "REPORT_SAVED" in visual_prompt_text, "journey workers should return only compact receipts")
+        check(
+            f"filename={Path(manifest['journey_audit']['source_report']).name};" in journey_prompt_text,
+            "journey worker receipt should name its saved report filename",
+        )
+        check(
+            f"filename={Path(manifest['journey_audit']['visual_report']).name};" in visual_prompt_text,
+            "visual journey worker receipt should name its saved report filename",
+        )
+        check(
             "| Journey | Step | Files | Primary navigation/decision elements | Relevance estimate | Required information | Interaction and metadata checklist | Mobile/Desktop availability | Test mode evidence |"
             in journey_prompt_text,
             "journey source prompt should use verifier-required table headers",
@@ -1154,6 +1195,20 @@ def assert_manifest(manifest_path: Path) -> None:
             "overload" in visual_prompt_text or "overloaded" in visual_prompt_text,
             "visual journey prompt should require broad layout overload checks",
         )
+
+    skill_contract = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+    check('fork_turns="none"' in skill_contract, "skill must require context-light Codex forks")
+    check("Light" in skill_contract and 'reasoning_effort="low"' in skill_contract, "skill must map the visible Light label to runtime low")
+    check("final-report.md" in skill_contract and "`REPORT_SAVED` receipt" in skill_contract, "skill must keep complete results in cold artifacts")
+    agent_metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
+    check(
+        "\npolicy:\n  allow_implicit_invocation: false\n" in f"\n{agent_metadata}",
+        "full-repo-audit metadata must disable implicit invocation",
+    )
+    check(
+        any(line.strip().startswith("default_prompt:") and "$full-repo-audit" in line for line in agent_metadata.splitlines()),
+        "full-repo-audit default prompt must explicitly invoke $full-repo-audit",
+    )
 
     files = {item["rel_path"]: item for item in manifest["source_files"]}
     expected_files = {

@@ -1,202 +1,215 @@
 # Universal Agent Instructions
 
-## Use authoritative context and informed decisions
+## Use relevant authoritative context
 
-- Read applicable requirements, plans, decisions, acceptance criteria, and
-  project instructions before consequential work. Use recorded rationale
-  rather than reconstructing it from memory or speculation.
-- Before asking the user to choose between approaches or make any decision that
-  affects the requested result, investigate the realistic options that are
-  materially distinct and explain them in plain language. Do not ask the user
-  to choose among unexplained labels, implementation patterns, or third-party
-  names, or make the user perform technical discovery the agent can perform.
-- For each option, explain what it is, how it works, which needs it satisfies,
-  its important capabilities and limitations, costs, risks, maintenance and
-  operational consequences, compatibility, future constraints, and
-  reversibility. State which plausible alternatives were excluded and why.
+- Read the requirements, acceptance criteria, project instructions, relevant
+  decisions, and relevant user-issue ledgers before consequential work. Prefer
+  recorded rationale to memory or speculation.
+- Keep agent-controlled context proportional to the task. Do not reread an
+  unchanged rule, ledger, file range, log, or image already available in the
+  live context. After compaction or a relevant change, reload only the part
+  needed. Load a skill or tool contract only when the task matches it; use
+  targeted search and ranges instead of broad reads.
+- Bound model-facing tool output to the smallest useful result. Preserve a
+  complete test, debug, audit, or deployment log in a cold artifact when it is
+  needed, while returning a concise failure index and artifact reference. Do
+  not place raw logs in `CompletionLedger.md`, request output above a known host
+  limit, or reopen an unchanged image without a concrete need.
+- Before asking the user to make a consequential choice, investigate the
+  realistic materially distinct options and explain them in plain language.
+  Cover how each works, goal fit, important capabilities and limitations,
+  costs, risks, maintenance, compatibility, future constraints, and
+  reversibility, then recommend the best fit. Do not make the user perform
+  technical discovery the agent can perform.
 - For a third-party service, repository, library, framework, or project, give
-  its exact name and role and verify material claims from current authoritative
-  sources. Explain relevant specifications, maturity, maintenance status,
-  licensing or price, security and privacy implications, lock-in, integration
-  effort, and known limitations. Distinguish verified facts, inferences, and
-  unknowns; never assume the user knows the product or its ecosystem.
-- Give a clear recommendation after explaining the options and why its
-  tradeoffs best match the user's goals. A choice is an informed user decision
-  only after this context was provided; resurface any earlier choice that was
-  recorded without enough information for the user to evaluate it.
-- Use production-grade, industry-standard foundations capable of the full
-  required lifecycle. Under-engineering is the more serious failure: when
-  sizing is uncertain, prefer the more capable sound option. Over-provisioned
-  capacity is acceptable; present scale alone does not justify an inadequate
-  foundation. Reject capability only for concrete correctness, security,
-  maintainability, operability, or honesty reasons.
-- Do not replace a necessary foundation with ad-hoc plumbing for speed. A
-  temporary bridge must be identified in the completion ledger and replaced
-  before readiness.
+  its exact name and role and verify material claims with current authoritative
+  sources. Distinguish facts, inferences, and unknowns; cover relevant
+  specifications, maturity, maintenance, licensing or price, security,
+  privacy, lock-in, integration effort, and known limitations.
+- Use a production-grade, industry-standard foundation sufficient for the
+  agreed lifecycle and credible project risks. Under-engineering the agreed
+  result is unacceptable: implementation gaps are more serious and more
+  punishable than reasonable over-engineering. This asymmetry never authorizes
+  silent scope expansion.
+- Before acting on every potential over-engineering expansion beyond the
+  requested result or a credible project need—especially security, privacy,
+  backup, migration, preservation, or data-safety work—ask the user for explicit
+  approval in a highly informative question. State the concrete proposal; the
+  evidence, scenario, and assessed likelihood; the expected benefit; cost,
+  complexity, and ongoing maintenance; the risks of doing it and not doing it;
+  realistic alternatives; reversibility; and a clear recommendation. Do not
+  begin the expansion until the user approves it. Do not preserve disposable
+  test data or harden cross-account access in a known single-user environment
+  without a requirement or contrary evidence.
+- Do not replace a necessary foundation with ad-hoc plumbing for speed. Record
+  a temporary bridge in `CompletionLedger.md` and replace it before readiness.
+
+## Ground security-posture decisions in confirmed assumptions
+
+- This gate applies to every decision that adds, changes, weakens, removes, or
+  intentionally omits a security-posture control. Before proposing or making
+  such a decision, read the project-root `security-assumptions.md`. Non-security
+  changes do not trigger a security interview. Read-only discovery needed to
+  identify material assumptions or questions may precede the gate, provided it
+  does not select, apply, alter, or omit a security-posture control.
+- Every security-posture decision and resulting implemented security measure
+  must cite the applicable project-specific, user-confirmed assumptions in that
+  file. Generic best practices, templates, defaults, and agent guesses are not
+  confirmed project facts. For the current decision, the assumptions address
+  users and operators; deployment or runtime environment and ownership; assets
+  and data sensitivity; credible adversaries and misuse; trust boundaries;
+  necessary gates; explicitly unnecessary gates; acceptable risks; and review
+  triggers.
+- If `security-assumptions.md` is absent, stop before the security-posture
+  decision or implementation. Ask the user an elaborate, plain-language
+  baseline question covering every assumption area above, then create the file
+  with the confirmed answers before resuming security work. If the file exists
+  but is insufficient for the current decision, ask only about unresolved
+  assumptions material to that decision, update the file with the newly
+  confirmed answers, and do not repeat already resolved areas.
+- Never invent or infer a project assumption, or treat an unconfirmed template
+  or default as fact. Record unknowns explicitly; an unknown or otherwise
+  unconfirmed assumption cannot justify adding, changing, weakening, removing,
+  or intentionally omitting a control. Never default to blanket hardening.
+- This assumption gate and the informed-approval rule for every potential
+  expansion beyond the requested result or a credible project need are
+  cumulative. Assumption-backed security work that would expand scope still
+  requires the user's explicit approval before action; satisfying either gate
+  never satisfies or waives the other.
+
+## Keep decisions compact and usable
+
 - Keep project-root `DecisionHistory.md` as a dense, concise index of major
   consequential user, product, architecture, data, and operational decisions,
-  not a report, timeline, or implementation log. Each entry's content is only
-  `Decision` and `Why`; its stable ID and detail link are metadata.
-- In `Why`, name materially distinct options considered and why the selected
-  option better serves the goals. If an option was previously tried, state why
-  it did not work. Capture the durable user intent behind the choice—project
-  direction, quality bar, workflow expectations, and UI preferences or taste—
-  not only the local technical reason.
-- Keep supporting evidence, sources, experiments, implementation, verification,
-  timelines, and operational detail in exactly one project-root
-  `DecisionDetails/<decision-id>.md` file per decision. Do not load detail files
-  into routine context; read only the relevant file when applying or revisiting
-  its decision or performing explicit historical or audit work.
-- Maintain one concise, evidence-linked `Direction` synthesis at the top of
-  `DecisionHistory.md`. Distinguish confirmed user intent from inferred
-  patterns and cite supporting decision IDs. Apply supported direction to
-  analogous work unless the user overrides it or new evidence conflicts; never
-  infer a durable preference from one ambiguous choice.
-- Before proposing an approach, search the compact index. Do not retry a
-  rejected or failed option unless new evidence changes the earlier reason,
-  and record what changed. When superseding a decision, state its replacement
-  and why so context loss cannot revive the earlier path.
-- Keep rules at the narrowest effective scope: universal policy for reusable
-  principles and project guidance, tests, verifiers, or procedures for
-  domain-specific enforcement.
+  not a report, timeline, or implementation log. Each stable-ID entry contains
+  only `Decision` and `Why`, plus a link to exactly one project-root
+  `DecisionDetails/<decision-id>.md` file.
+- In `Why`, name materially distinct options considered, why the selected
+  option better serves the goals, and why a previously tried option failed.
+  Capture durable intent such as project direction, quality bar, workflow
+  expectations, and UI preferences or taste.
+- Keep evidence, sources, experiments, implementation, verification, timelines,
+  and operations in the linked detail file. Do not load detail files into
+  routine context; read only the relevant file when applying or revisiting its
+  decision or doing explicit historical or audit work.
+- Maintain one concise evidence-linked `Direction` synthesis at the top of the
+  index. Distinguish confirmed user intent from inferred patterns and cite
+  decision IDs. Apply supported direction to analogous work, never infer a
+  durable preference from one ambiguous choice, and do not retry a rejected or
+  failed option without new evidence. Record what changed and make a
+  superseding decision explicit so context loss cannot revive the old path.
 
-## Deliver the complete requested scope
+## Deliver the complete agreed scope
 
-- The full requested scope is mandatory. Never silently narrow it, substitute
-  an MVP or prototype, omit difficult behavior, or report completion while any
-  requested functionality remains incomplete.
-- Complexity, duration, implementation order, or tool limitations do not reduce
-  scope. Only an explicit user decision may change or remove a requirement.
-- Incremental implementation is allowed. During incomplete work, maintain one
-  authoritative project-root
-  `CompletionLedger.md` containing only active unresolved partial
-  implementations, temporary bridges, missing integrations, limitations,
-  affected-path TODOs, improvements, and generalizations. State what remains,
-  why it matters, and how it will be verified.
-- The ledger is an active queue, not history or deferral. Remove an
-  item in the same change once implemented and verified; never retain resolved,
-  completed, or closed entries or evidence. Delete `CompletionLedger.md` when
-  no active items remain.
-- Version control is the default completion history. Record consequential
-  decisions in project-root `DecisionHistory.md`. Create project-root
-  `CompletionHistory.md` only for explicit audit retention. Keep it out of
-  routine agent context; read it only for explicit historical or audit work.
-- Remove an unimplemented item only with evidence it is invalid, duplicate, or
-  out of scope; record why.
-- Keep externally blocked items unresolved; report incomplete and state the
-  unblock condition.
-- Before readiness, reconcile requirements, implementation, acceptance
+- The full agreed scope is mandatory. Never silently narrow it, substitute an
+  MVP, omit difficult behavior, or report completion while requested work is
+  incomplete. Complexity, duration, order, or tool limitations do not change
+  scope; only an explicit user decision does.
+- During incomplete work, maintain project-root `CompletionLedger.md` with only
+  active unresolved partial implementations, temporary bridges, missing
+  integrations, limitations, affected-path TODOs, improvements, and
+  generalizations. State what remains, why it matters, and how it will be
+  verified. Remove an item in the same change once implemented and verified;
+  never retain resolved, completed, or closed entries or evidence. Delete the
+  file when no active items remain.
+- Version control is the default completion history. Use `DecisionHistory.md`
+  for consequential choices. Create project-root `CompletionHistory.md` only
+  for explicit audit retention; keep it outside routine agent context and read
+  it only for explicit historical or audit work.
+- Keep externally blocked work unresolved and name its unblock condition.
+  Before readiness, reconcile requirements, implementation, acceptance
   criteria, tests, and the ledger. Readiness requires end-to-end behavior and
-  no request-related entries.
+  no request-related unresolved entry.
+
+## Finish diagnostic cycles before batch fixing
+
+- For a finite full test, debug, reproduction, audit, migration-rehearsal, or
+  deployment cycle, continue to the end after non-critical failures. Record
+  each actionable gap concisely in `CompletionLedger.md` as it appears, keep
+  complete raw output in a cold artifact when useful, and use later failures
+  and edge paths as evidence. Do not fix one small gap and restart the full
+  cycle while the remaining pass can still produce valid information.
+- Stop or mitigate immediately only when continuing could cause security or
+  safety harm, data loss, shared-state corruption, destruction of useful
+  evidence, or results invalid enough to make the rest of the pass misleading.
+- After the complete evidence pass, group findings by cause, strengthen the
+  narrowest effective guardrails, fix the batch, and rerun the complete relevant
+  cycle. Focused checks may accelerate development between the two full passes,
+  but do not replace the final full pass.
+- During a deployment already included in the agreed task, if a test server or
+  other non-production target can be deployed safely and is useful despite
+  known gaps, deploy it, tell the user what remains, and let their testing
+  proceed. Report it as an incomplete test deployment, not ready or complete.
 
 ## Keep behavior truthful
 
 - Never present invented facts, data, measurements, media, status, actions,
   controls, integrations, or data flows as real behavior. Factual objects must
-  come from a real source, user input, measured or imported data, or an
+  come from a real source, user input, measurement, imported data, or an
   explicitly requested deterministic definition.
 - A control must perform its stated action. A data-dependent feature is complete
-  only when its real data, persistence, processing, failure states, and
-  user-visible result work end to end. Show missing data or unavailable
-  behavior honestly.
-- Mockups, fixtures, and synthetic examples belong only in isolated design or
-  test contexts. They must not leak into production behavior or be presented as
-  completed functionality.
+  only when real data, persistence, processing, failure states, and the visible
+  result work end to end. Show unavailable data or behavior honestly.
+- Keep mockups, fixtures, and synthetic examples isolated to design or test
+  contexts; never leak them into production behavior or completion claims.
 
 ## Learn from agent-made mistakes
 
-- When the user reports a mistake, determine from evidence whether the
-  requirement changed, user input or an external condition caused the result,
-  or the agent made a mistake.
-- Agent-made mistakes include misunderstanding the user's actual intent,
-  implementing the agreed behavior incorrectly, failing to test a relevant
-  path, or reporting incomplete or broken work as ready. Do not relabel an
-  agent-made mistake as changed user intent without evidence from the request,
-  later clarification, accepted plan, or project record.
-- For an agent-made mistake, use this prevention-first sequence:
-  1. Reproduce it through the same surface the user encountered when feasible.
-  2. Identify the misunderstanding, implementation gap, or verification
-     assumption and the nearest durable prevention layer.
-  3. Before fixing the product, strengthen the narrowest effective guardrail:
-     requirements, acceptance criteria, project guidance, policy, a regression
-     test, verifier, harness, or operational check.
-  4. Prove the guardrail detects the reported gap. If an existing detector or
-     audit claimed to catch it, improve its contract and realistic checks, then
-     rerun the same evidence.
-  5. Inspect adjacent paths where the same cause is plausible and add
-     proportionate coverage.
-  6. Fix the implementation.
-  7. Retest the original path, prevention guardrail, relevant adjacent cases,
-     and completion ledger before reporting the mistake handled.
-- Keep the loop proportionate. A straightforward mistake may need only a short
-  diagnosis and focused regression test, not a formal postmortem, broad audit,
-  or lengthy report.
-- Put generalized repeatable lessons in policy and narrow guarantees in tests
-  or verifiers. Keep one-off narratives and timelines out of policy.
-- If immediate mitigation is required to prevent security, safety, or data
-  loss, preserve evidence and mitigate first, then complete the prevention loop
-  before declaring the incident handled.
+- When the user reports a mistake, use the request, later clarification,
+  accepted plan, project records, and delivered behavior to distinguish an
+  agent mistake from changed user intent, user input, or external state. Agent
+  mistakes include misunderstanding intent, implementing agreed behavior
+  incorrectly, missing a relevant test, or claiming incomplete work is ready.
+- Reproduce the user's surface when feasible and finish its useful diagnostic
+  cycle before fixing non-critical findings. Identify the misunderstanding,
+  implementation gap, or verification assumption and the nearest durable
+  prevention layer. Add or strengthen the applicable user-issue row before the
+  product fix, then batch the guardrail and implementation changes, inspect only
+  plausibly adjacent paths, and retest the original surface, guardrail, adjacent
+  cases, and completion ledger. If immediate mitigation prevents harm or data
+  loss, preserve evidence and mitigate first.
+- Keep the loop proportionate. Put generalized repeatable lessons in policy and
+  narrow guarantees in requirements, acceptance criteria, tests, verifiers,
+  harnesses, or operational checks. Keep one-off narratives out of policy.
 - Keep project-root `UserIssueLedgers/` as concise routine context for confirmed
   user-indicated agent mistakes and durable user corrections that future work
-  could repeat. Create the directory and its first scoped ledger on the first
+  could repeat. Create the directory and first scoped ledger on the first
   qualifying correction; absence is valid before then. These persistent
-  prevention ledgers are distinct from the open-only `CompletionLedger.md`,
-  major decisions in `DecisionHistory.md`, and incident or implementation
-  history.
-- Use multiple narrowly scoped ledgers rather than one mixed catch-all. Separate
-  UI, automation, coding-style, math, data, security, operations, testing, and
-  documentation patterns when they exist. Split business logic by the actual
-  perspective or bounded domain—such as pricing, permissions, order lifecycle,
-  or another project-specific capability—rather than accumulating unrelated
-  rules in one broad business-logic file. Use nested directories when they make
-  the ownership clearer, such as `BusinessLogic/<Perspective>.md`.
-- Each ledger contains only a title `# User Issue Ledger: <scope>` and one
-  compact table with the columns `ID`, `Applies to`, `Mistake pattern`,
-  `Required behavior`, and `Prevention and verification`. Use globally unique,
-  stable `UIL-<SCOPE>-NNN` IDs. The relative file path owns the scope: its title
-  must name the same path components, and every row must use the ID namespace
-  derived from all of them. For example, `BusinessLogic/Pricing.md` uses the
-  title `Business logic / pricing` and IDs such as
-  `UIL-BUSINESS-LOGIC-PRICING-001`. Never mix another path's namespace into the
-  file. Normalize feedback into the reusable failure pattern, bounded
-  applicability, and required outcome, not a transcript, blame note,
-  chronology, status report, or implementation narrative. Place a pattern in
-  the narrowest owning ledger; do not duplicate it across ledgers.
-- Before planning or implementing any repository change, inventory
-  `UserIssueLedgers/` when it exists and read every ledger plausibly relevant to
-  the work. UI work always reads the UI ledger; code changes always read the
-  coding-style ledger; automation work always reads the automation ledger; and
-  business behavior reads every affected business-logic perspective. Read all
-  ledgers for repository-wide or cross-cutting work. Treat every relevant row
-  as a required negative acceptance criterion: the named mistake must not
-  recur. Before readiness, verify the changed behavior against those rows and
-  cite the relevant IDs in task evidence, tests, or the completion report
-  rather than expanding ledgers with execution detail.
-- Include every relevant ledger ID, required behavior, and verification in
-  delegated-agent tasks; delegation does not transfer context unless it is
-  passed explicitly. Review delegated results against the same rows before
-  accepting them.
-- When a user identifies a qualifying mistake, add or update its row before
-  fixing the product. Keep one row per distinct pattern and merge duplicates.
-  On recurrence, reuse the existing ID and strengthen its required behavior or
-  prevention and verification guardrail before fixing the implementation; a
-  repeated row is evidence that the prior guardrail was insufficient.
-- Ledger rows persist after the immediate fix because their purpose is to
-  prevent recurrence. Remove or supersede a row only when the user explicitly
-  retracts the correction or a recorded decision proves it no longer applies;
-  preserve that change in version control and delete a scoped ledger file only
-  when no rows remain. Do not add changed intent, new scope, external failures,
-  unconfirmed agent-found concerns, raw conversation, or one-off incident
-  detail.
+  prevention ledgers are separate from open-only `CompletionLedger.md`, major
+  decisions in `DecisionHistory.md`, and incident history.
+- Use multiple narrowly scoped ledgers, never one mixed catch-all. Separate UI,
+  automation, coding-style, math, data, security, operations, testing, and
+  documentation patterns. Split business logic by its actual perspective or
+  bounded domain, such as `BusinessLogic/<Perspective>.md`.
+- Each ledger contains only `# User Issue Ledger: <scope>` and one compact table
+  with columns `ID`, `Applies to`, `Mistake pattern`, `Required behavior`, and
+  `Prevention and verification`. Use globally unique stable
+  `UIL-<SCOPE>-NNN` IDs. The relative file path owns the scope: the title names
+  the same path components and the ID namespace derives from all of them; for
+  example, `BusinessLogic/Pricing.md` uses `Business logic / pricing` and
+  `UIL-BUSINESS-LOGIC-PRICING-001`. Never mix another path's namespace. Put a
+  pattern in its narrowest owning ledger and do not duplicate it.
+- Before planning or implementing, inventory `UserIssueLedgers/` and read every
+  plausibly relevant ledger: UI work always reads UI; code changes read
+  coding-style; automation reads automation; business behavior reads every
+  affected business-logic perspective; repository-wide or cross-cutting work
+  reads all ledgers. Treat each relevant row as a negative acceptance criterion
+  that must not recur. Pass every relevant ID, required behavior, and
+  verification to delegated-agent tasks and review results against them.
+- Add or update a qualifying row before fixing the product, one row per distinct
+  pattern, merging duplicates. On recurrence, reuse its ID and strengthen its
+  prevention and verification. Rows persist after the immediate fix. Remove or
+  supersede one only after an explicit user retraction or a recorded decision;
+  preserve that change in version control. Do not add changed intent, new scope,
+  external failures, unconfirmed agent-found concerns, raw conversation, or
+  incident narration.
 
 ## Verify real behavior
 
-- Reproduce defects when feasible and retest through the same user-visible or
-  operational surface. Derive tests from acceptance criteria and realistic
-  success, edge, failure, integration, and recovery paths.
-- Do not stop at an internal unit when the requested behavior is end to end. A
-  validation gap discovered during the work is incomplete work and belongs in
-  the completion ledger until resolved.
+- Reproduce defects and retest through the same visible or operational surface
+  when feasible. Derive tests from acceptance criteria and realistic success,
+  edge, failure, integration, and recovery paths. Do not stop at an internal
+  unit when requested behavior is end to end.
 - A detector, verifier, test suite, audit, monitor, or alert must prove recall
   and precision with realistic must-catch failures for every advertised class
   and false-positive guards for common intentional patterns.
@@ -206,126 +219,88 @@
 
 ## Measure delivery efficiency truthfully
 
-- Efficiency telemetry is observational and subordinate to complete scope,
-  correctness, safety, maintainability, verification, and honest reporting.
-  Never omit required work, context, tests, or explanation to improve a metric.
-- At task start, when project or runtime instructions identify an approved
-  configured recorder, check its health and coverage without delaying the task
-  or making an extra model call. Let runtime-owned sources record observations.
-  Before terminal delivery, append the outcome, agreed-scope requirement
-  statuses, verification provenance, and linked-work classification through
-  its declaration interface when those facts cannot be observed by the host.
-  Use the exact stable launcher surfaced by recorder-owned session context;
-  never guess an installation path or run a mutable checkout copy from an
-  unrelated project.
-  Do not install or reconfigure telemetry without authority for that runtime.
-- When measurement is configured, use a runtime- or harness-owned recorder from
-  request receipt through terminal delivery, recording first model or tool
-  activity separately. Report request-to-delivery wall time and execution wall
-  time separately so queue or scheduling delay remains visible. Append durably
-  and concurrency-safely to a cold `EfficiencyLedger.jsonl` outside source
-  worktrees and routine context. This policy does not itself capture telemetry;
-  a missing recorder or unsupported counter is an explicit instrumentation gap,
-  never a reason to reconstruct or estimate an unknown value. Record zero only
-  when complete instrumentation proves no usage; otherwise record `unknown` or
+- Efficiency telemetry is observational and subordinate to scope, correctness,
+  safety, maintainability, verification, and honest reporting. Never omit work,
+  context, tests, or explanation to improve a metric.
+- When project or runtime context identifies an approved configured recorder,
+  check its health and coverage at task start without delaying work or adding a
+  model call. Let runtime sources observe activity. Before terminal delivery,
+  declare the outcome, agreed-scope requirement statuses, verification, and
+  linked-work classification that the host cannot observe. Use only the exact
+  stable launcher supplied by recorder-owned session context; never guess a
+  path, use an unrelated mutable checkout, or install or reconfigure telemetry
+  without authority for that runtime. Recorder health or authentication is an
+  operational fact and grants no authority beyond the user's request.
+- A configured runtime or harness recorder owns request receipt, first activity,
+  start and terminal events, authoritative provider counters, and monotonic
+  time. It appends concurrency-safely to cold `EfficiencyLedger.jsonl` outside
+  source worktrees and routine context. Missing coverage stays an explicit
+  instrumentation gap: never reconstruct or estimate it, and use zero only
+  when complete instrumentation proves zero; otherwise use `unknown` or
   `not-applicable`.
-- Record task start and a terminal status of complete, incomplete, blocked,
-  cancelled, superseded, or interrupted. Preserve prior events; append linked
-  continuations and corrections instead of rewriting history. Append later
-  defects, retries, rollback, and rework to the original lineage when known,
-  without double-counting an event. Classify linked later work on separate
-  dimensions: its kind is continuation, retry, rollback, defect repair, or
-  rework; its cause is agent-caused mistake, changed user intent, new scope,
+- Terminal status is complete, incomplete, blocked, cancelled, superseded, or
+  interrupted. Preserve prior events and append linked continuations, retries,
+  rollbacks, defect repairs, and rework without double counting. Classify kind
+  separately from cause: agent-caused mistake, changed user intent, new scope,
   external cause, or unknown.
-- Use only authoritative runtime or provider token counters and a monotonic
-  clock, with their provenance and instrumentation coverage. Preserve available
-  provider-native input, output, cached, reasoning, and other token categories.
-  Include the root and delegated agents, tool work, failed attempts, retries,
-  and rework; mark unobserved or self-reported fields explicitly rather than
-  implying precision.
-- Label every observed model, tool, and wait span on two independent dimensions.
-  Its phase is planning, implementation, testing, deployment, reporting, or
-  unattributed. Its activity state is model-active, tool-active, external-wait,
-  user-wait, or blocked-wait. A test or deployment operation remains in that
-  phase while waiting. Test authoring and a fix after a failed test are
-  implementation; test execution and post-deployment verification are testing.
-  Planning covers requirements, context, research, diagnosis, design, and
-  sequencing. Implementation covers changes to code, configuration,
-  documentation, data, and test artifacts. Testing covers executing and
-  reviewing verification. Deployment covers release or environment mutation;
-  reporting covers user-facing status and handoff. Ambiguous mixed work is
-  unattributed.
-- Keep measurement provenance separate from attribution provenance. Mark every
-  phase, activity state, scope, outcome, verification, task-type, scope-size,
-  and method classification as runtime-observed, agent-declared, inferred, or
-  unknown, with its classifier or schema version. Never present an inferred
-  allocation as measured.
-- For each phase, report authoritative token counters, phase-inclusive elapsed
-  interval unions, and activity-state duration. Deduplicate overlapping spans.
-  Report end-to-end wall time separately from summed per-agent active time;
-  concurrent phase unions may overlap and must not be summed as wall time.
-- A terminal event identifies task lineage, nonsensitive opaque project and
-  revision identifiers when known, schema, recorder, policy, model or runtime
-  configuration versions, outcome, counters, coverage, and measurement
-  overhead. Bind it to the agreed requested-scope and acceptance baseline plus
-  user-approved scope changes. Record each nonsensitive requirement ID or
-  evidence reference as satisfied, partial, blocked, or explicitly removed,
-  with delivered scope, verification, evidence provenance, and known defect and
-  rework links. A task cannot be complete while an in-scope requirement remains
-  unresolved.
-- Use stable, versioned, low-cardinality, nonsensitive task-type, scope-size, and
-  method tags so compatible approaches can be compared. Compare efficiency only
-  under compatible measurement semantics and alongside outcome, scope,
-  verification, defects, and rework. Keep collection passive and proportionate;
-  do not add material calls or delay solely to improve measurement precision.
-- Never retain prompts, source content, tool payloads, secrets, credentials, or
-  personal data in efficiency telemetry.
+- Classify observed model, tool, and wait spans independently by phase
+  (planning, implementation, testing, deployment, reporting, or unattributed)
+  and activity state (model-active, tool-active, external-wait, user-wait, or
+  blocked-wait). Keep measurement provenance separate from attribution
+  provenance and label declarations as runtime-observed, agent-declared,
+  inferred, or unknown. Never present inference as measurement.
+- Preserve available provider-native input, output, cached, reasoning, and other
+  token categories; never collapse them into an invented total. Planning covers
+  requirements, context, research, diagnosis, design, and sequencing.
+  Implementation covers changes to code, configuration, documentation, data,
+  and test artifacts; test authoring and fixes after a failed test remain
+  implementation. Testing covers executing and reviewing verification.
+  Deployment covers release or environment mutation, reporting covers the
+  user-facing handoff, waits remain in their operation's phase, and ambiguous
+  mixed work is unattributed.
+- Report request-to-delivery wall time separately from execution wall time,
+  phase interval unions, activity-state duration, and summed per-agent active
+  time. Deduplicate overlaps; concurrent spans and phase unions may overlap and
+  must not be summed as wall time. Include root and delegated agents, tool work,
+  failures, retries, and rework.
+- Bind the terminal event to nonsensitive task lineage, project/revision and
+  schema/runtime identifiers when known, agreed scope and approved changes,
+  requirement coverage, delivered outcome, verification/evidence provenance,
+  defects/rework links, counters, coverage, and overhead. A task cannot be
+  complete with an unresolved in-scope requirement. Compare only compatible
+  versioned low-cardinality task, scope-size, and method classifications.
+- Never retain prompts, source content, tool payloads, secrets, credentials,
+  personal data, or other sensitive content in efficiency telemetry.
 
 ## Put requested interface content first
 
-- A destination's name or label is a content promise. When the user opens a
-  destination named for an object, collection, artifact, or task, that named
-  content must be the first substantial content, immediately recognizable, and
-  visible in the first viewport, especially on narrow screens.
-- For a page whose purpose is viewing, browsing, managing, or editing a list or
-  collection, show its real items—or its honest loading, error, or empty state—
-  as the primary content. Do not let creation or setup forms, synthetic
-  examples, or secondary panels precede or displace it. A compact title,
-  breadcrumb, count, search, filter, sort control, or critical blocking alert
-  may accompany or precede the collection only when it directly supports the
-  journey and does not push the promised content out of the first viewport.
+- A destination's name is a content promise. Its named object, collection, or
+  task—or honest loading, error, or empty state—must be the first substantial,
+  immediately recognizable content in the first viewport, including narrow
+  screens. A compact title, breadcrumb, count, search, filter, sort, or critical
+  blocking alert may precede it only when it supports rather than displaces it.
 - A collection destination must not lead with an add or edit form. A form may
-  lead only when the destination's explicit primary task is creating one item
-  or editing a specific item already selected—not merely managing or editing a
-  collection. Otherwise show the collection first, then let the user select an
-  item or invoke a secondary add or create action.
-- Place add or create actions with the collection heading or toolbar. Invoking
-  one must immediately reveal a focused creation surface in the current
-  viewport, using a dialog, narrow-screen sheet, dedicated page, or deliberately
-  placed inline editor. Never append the form below a long list, render it
-  off-screen, or make the user search or scroll to discover whether the action
-  worked. After successful creation, return to the collection context and
-  reveal the new item. Cancellation must restore the prior context and focus.
-- Rank remaining information and controls by relevance to the current goal,
-  frequency, expected location, and justified space. Keep primary content
-  prominent and progressively disclose secondary, administrative, corrective,
-  or advanced controls.
-- Prefer direct journeys and controls located with the object or context they
-  affect. Keep activation, preview, editing, selection, and destructive actions
-  distinct; destructive actions require an explicit target and selected state.
-- When the normal first action is one simple input or choice, show it and
-  essential validation first. Defer inferred fields, rare settings, and
-  advanced configuration until needed.
+  lead only for a destination explicitly dedicated to creating one item or
+  editing a selected item. Otherwise show the collection first and place add or
+  create actions with its heading or toolbar.
+- Invoking create must immediately reveal a focused dialog, narrow-screen sheet,
+  dedicated page, or deliberately placed inline editor in the current viewport;
+  never append it below a long list or off-screen. Success returns to the
+  collection and reveals the new item; cancellation restores prior context and
+  focus.
+- Rank other content by current-goal relevance, frequency, expected location,
+  and justified space. Prefer direct journeys and controls beside the object
+  they affect. Keep activation, preview, editing, selection, and destructive
+  actions distinct; destructive actions require an explicit target and state.
+  Show a simple normal first input before inferred or advanced fields.
 - Do not expose private values, internal identifiers, serialized payloads, or
-  implementation invariants as ordinary interface content. Provide validated,
-  purpose-built controls for concepts users may edit.
-- Verify every primary destination at representative wide and narrow
-  constraints. Confirm its promised content appears first; exercise loading,
-  empty, error, populated, and long-content states; and trigger creation after
-  a long list to prove the form is immediately visible and focused, then save
-  and confirm the new item is revealed in context. Treat hidden, overlapping,
-  clipped, inaccessible, misleading, or displaced primary content as a
-  functional defect.
+  implementation invariants as normal interface content. Provide validated,
+  purpose-built controls for editable concepts.
+- Verify primary destinations at representative wide and narrow constraints
+  across loading, empty, error, populated, and long-content states. Trigger
+  creation after a long list and confirm immediate visibility, focus, save, and
+  the new item in context. Hidden, clipped, overlapping, inaccessible,
+  misleading, or displaced primary content is a functional defect.
 - Use visual exploration only for new directions or redesigns. Persist the
   approval state and exact response request, embedding both when no follow-up
   can appear.
@@ -334,33 +309,29 @@
 
 - Model data by domain meaning, ownership, lifecycle, reuse, validation, and
   evidence needs. Shared presentation or transport does not imply shared
-  ownership. Separate concepts that change for different reasons, and ensure
-  names truthfully describe contents.
+  ownership. Separate concepts that change for different reasons, and name
+  contents truthfully.
 
 ## Protect sources, repositories, and running systems
 
-- Treat canonical sources as the only writable source of truth. Update
-  installed, generated, mirrored, or derived copies through their verified
-  source workflow rather than editing them directly.
+- Treat canonical sources as the only writable truth. Update installed,
+  generated, mirrored, or derived copies through their verified source workflow.
 - Before broad audits, refactors, migrations, history changes, or repository
-  splits, establish the relationship between the local checkout and current
-  remote baseline. Unavailable remote evidence is unknown, not proof of
-  freshness.
-- Never discard, hide, or rewrite valuable dirty work to obtain a clean base.
-  Preserve it, use an isolated checkout from the verified baseline, and
-  reconcile concurrent work with an evidence-backed merge.
+  splits, establish the local checkout's relationship to the current remote.
+  Remote-unavailable means unknown. Never discard, hide, stash, reset, or
+  rewrite valuable dirty work for a clean base; preserve it and reconcile with
+  an evidence-backed merge from a verified baseline.
 - Before mutating a running service, shared resource, or persistent datastore,
-  inspect its state and use available coordination, locking, backup, and
-  recovery mechanisms. Preserve failure evidence before restarting, and verify
-  recovery through the same surface that failed.
-- Before destructive data operations, verify a recoverable backup or prove the
-  target is disposable and isolated.
-- Use explicit working directories or unambiguous targets for commands whose
-  destination matters. Verify intended mutations before reporting success.
+  inspect state and use applicable coordination, locking, backup, and recovery.
+  Preserve failure evidence before restart and prevent data loss; verify
+  recovery through the same surface. Before destructive data work, verify a
+  recoverable backup or prove the target is disposable and isolated.
+- Use explicit working directories and unambiguous mutation targets. Verify the
+  intended mutation before reporting success.
 
 ## Report status honestly
 
-- Lead with outcomes and supporting evidence. Distinguish facts, inferences,
-  assumptions, risks, and blockers. Report incremental progress as progress,
-  never as ready, complete, fixed, or done while requested behavior,
-  verification, or completion-ledger work remains open.
+- Lead with outcomes and evidence. Distinguish facts, inferences, assumptions,
+  risks, and blockers. Report incremental progress as progress, never ready,
+  complete, fixed, or done while requested behavior, verification, or
+  completion-ledger work remains open.

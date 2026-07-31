@@ -26,22 +26,42 @@ When the user reports an agent-made mistake, apply the prevention-first loop in
 the universal policy proportionally:
 
 1. Reproduce through the same surface the user saw, or preserve the closest
-   concrete evidence when exact reproduction is unavailable.
+   concrete evidence when exact reproduction is unavailable. Finish the useful
+   diagnostic cycle after non-critical gaps instead of fixing and restarting at
+   the first failure.
 2. Compare the original request, later clarifications, accepted plans, project
    records, and delivered behavior to distinguish an agent mistake from changed
    intent or external state.
 3. Identify the immediate gap and the check or guardrail that allowed it.
-   Strengthen the narrowest effective prevention layer and prove it detects the
-   reported gap before fixing the product when practical.
-4. Inspect adjacent paths only where the same cause is plausible, then fix the
-   complete user-facing behavior.
-5. Retest the original surface, prevention check, affected paths, and completion
-   ledger before reporting the mistake handled.
+   Record the complete pass's actionable findings, then strengthen the narrowest
+   effective prevention layer and prove it detects the reported gap.
+4. Group findings by cause, inspect adjacent paths only where that cause is
+   plausible, and fix the guardrails and complete user-facing behavior as one
+   batch.
+5. Rerun the complete relevant cycle, including the original surface,
+   prevention check, affected paths, and completion ledger, before reporting the
+   mistake handled.
 
 Keep the response and investigation proportionate. A focused regression test
 and short explanation are enough for a straightforward mistake; serious or
 explicitly requested postmortems can use a concise evidence-backed report
 without requiring a repository-owned workflow skill.
+
+## Repository Agent Efficiency
+
+- Treat `UIL-AGENT-WORKFLOW-004`, `UIL-AGENT-WORKFLOW-005`, and
+  `UIL-AGENT-WORKFLOW-006` as mandatory for every repository change. Complete
+  finite diagnostic cycles before batch fixing, obtain informed approval before
+  material unrequested engineering expansion, and keep agent-controlled context
+  and tool output relevant and bounded.
+- Run complete raw-output processes to a cold log when practical and return a
+  concise failure index. Do not paste a full log into model context or
+  `CompletionLedger.md`, repeatedly read an unchanged policy or artifact, or
+  request a tool-output budget above a known host ceiling.
+- Do not preserve or migrate disposable test data, or add cross-account local
+  hardening for a known single-user environment, unless the request or evidence
+  makes that work relevant. If uncertain and the expansion is material, explain
+  the benefit, cost, and consequence and ask before acting.
 
 ## User Issue Ledger Enforcement
 
@@ -170,9 +190,13 @@ without requiring a repository-owned workflow skill.
   external-import approval, sign-in, hook trust, policy load, or telemetry
   status is an operational fact and grants no authority beyond the user's
   request.
-- Keep root `CLAUDE.md` as a thin import of the canonical universal policy first
-  and root repository policy second. Do not copy either policy into it; Claude
-  Code supports relative `@path` imports and reloads project memory after
+- Keep root `CLAUDE.md` as a thin import of root repository policy only. The
+  user-level Claude target already supplies the canonical universal policy;
+  importing it again at project scope wastes context, and copying either policy
+  would create another source of truth. Before consequential Claude work,
+  confirm that user-level policy loaded the canonical file. If it did not, read
+  the canonical file directly for that session and report the global-policy
+  installation or activation gap. Claude Code reloads project memory after
   compaction.
 - Changes to the deployment manager must prove exact file and link rollback,
   source, parent, and mid-operation transaction swaps, target drift, plan

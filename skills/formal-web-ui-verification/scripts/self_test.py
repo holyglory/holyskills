@@ -171,22 +171,89 @@ def verifier_env() -> dict[str, str]:
     return env
 
 
-def run_verifier_command(cmd: list[str], json_out: Path, *, expect: int) -> dict:
+def receipt_artifact_paths(receipt: dict) -> tuple[Path, Path]:
+    artifacts = receipt.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise AssertionError(f"Receipt must name report artifacts: {receipt}")
+    if isinstance(artifacts.get("directory"), str):
+        directory = Path(artifacts["directory"])
+        return directory / artifacts.get("json", ""), directory / artifacts.get("markdown", "")
+    if isinstance(artifacts.get("json"), str) and isinstance(artifacts.get("markdown"), str):
+        return Path(artifacts["json"]), Path(artifacts["markdown"])
+    raise AssertionError(f"Receipt artifact paths are incomplete: {receipt}")
+
+
+def parse_bounded_receipt(stdout: str, *, expect: int) -> dict:
+    value = stdout.strip()
+    if not value or "\n" in value or len(value.encode("utf-8")) > 2048:
+        raise AssertionError("Default stdout must be exactly one bounded receipt line")
+    if "# Formal Web UI Verification" in value or "## Findings" in value:
+        raise AssertionError("Default stdout leaked the Markdown report body")
+    try:
+        receipt = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(f"Default stdout must be JSON, got: {value[:400]}") from exc
+    if receipt.get("exitCode") != expect:
+        raise AssertionError(f"Receipt exitCode mismatch: {receipt}")
+    receipt_artifact_paths(receipt)
+    return receipt
+
+
+def assert_complete_artifacts(json_out: Path, markdown_out: Path, *, expect: int) -> dict:
+    if not json_out.is_file() or not markdown_out.is_file():
+        raise AssertionError(f"Verifier did not write both report artifacts: {json_out}, {markdown_out}")
+    report = json.loads(json_out.read_text(encoding="utf-8"))
+    markdown = markdown_out.read_text(encoding="utf-8")
+    expected_heading = (
+        "# Formal Web UI Verification Setup Failure"
+        if expect == 2
+        else "# Formal Web UI Verification Report"
+    )
+    if expected_heading not in markdown:
+        raise AssertionError(f"Markdown artifact is not the complete expected report: {markdown_out}")
+    if report.get("runId") is None or (expect == 2 and report.get("status") != "setup-failure"):
+        raise AssertionError(f"JSON artifact is not the complete expected report: {json_out}")
+    if expect == 2:
+        if not report.get("error", {}).get("message") or "## Diagnostic" not in markdown:
+            raise AssertionError(f"Setup-failure artifacts omitted diagnostic evidence: {json_out}")
+    elif (
+        not isinstance(report.get("pages"), list)
+        or not isinstance(report.get("findings"), list)
+        or not isinstance(report.get("coverage"), dict)
+        or "## Target Coverage" not in markdown
+        or "## Findings" not in markdown
+    ):
+        raise AssertionError(f"Verification artifacts omitted full report evidence: {json_out}")
+    return report
+
+
+def run_verifier_command(
+    cmd: list[str],
+    json_out: Path,
+    markdown_out: Path,
+    *,
+    expect: int,
+    env: dict[str, str] | None = None,
+) -> dict:
     result = subprocess.run(
         cmd,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=TIMEOUT_SECONDS,
-        env=verifier_env(),
+        env=env or verifier_env(),
     )
     if result.returncode != expect:
         print(result.stdout)
         print(result.stderr, file=sys.stderr)
         raise AssertionError(f"Expected exit {expect}, got {result.returncode}: {' '.join(cmd)}")
-    if not json_out.exists():
-        raise AssertionError("Verifier did not write JSON report")
-    return json.loads(json_out.read_text(encoding="utf-8"))
+    if result.stderr.strip():
+        raise AssertionError(f"Default invocation emitted non-receipt stderr: {result.stderr[:400]}")
+    receipt = parse_bounded_receipt(result.stdout, expect=expect)
+    receipt_json, receipt_markdown = receipt_artifact_paths(receipt)
+    if receipt_json.resolve() != json_out.resolve() or receipt_markdown.resolve() != markdown_out.resolve():
+        raise AssertionError(f"Receipt must point to the exact report artifacts: {receipt}")
+    return assert_complete_artifacts(json_out, markdown_out, expect=expect)
 
 
 def run_verify(url: str, out: Path, *, expect: int, extra: list[str] | None = None) -> dict:
@@ -208,7 +275,7 @@ def run_verify(url: str, out: Path, *, expect: int, extra: list[str] | None = No
     ]
     if extra:
         cmd.extend(extra)
-    return run_verifier_command(cmd, json_out, expect=expect)
+    return run_verifier_command(cmd, json_out, md_out, expect=expect)
 
 
 def run_verify_config(config: dict, out: Path, *, expect: int) -> dict:
@@ -229,7 +296,7 @@ def run_verify_config(config: dict, out: Path, *, expect: int) -> dict:
         "--fail-on",
         "critical",
     ]
-    return run_verifier_command(cmd, json_out, expect=expect)
+    return run_verifier_command(cmd, json_out, md_out, expect=expect)
 
 
 def finding_rules(report: dict) -> set[str]:
@@ -285,6 +352,16 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="formal-web-ui-self-test-"))
     server = None
     try:
+        skill_contract = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        if (
+            "--human-readable-stdout" not in skill_contract
+            or "--receipt-only" not in skill_contract
+            or "deprecated" not in skill_contract.lower()
+            or "human-only" not in skill_contract
+            or "default" not in skill_contract
+            or "bounded" not in skill_contract
+        ):
+            raise AssertionError("Skill contract must make artifact-first bounded output the software-owned default")
         fixtures = tmp / "site"
         write(fixtures / "clean.html", page("<h1>Dashboard</h1><p>Everything fits.</p><button>Save changes</button>"))
         write(
@@ -647,6 +724,162 @@ def main() -> int:
         )
         server = Server(fixtures)
 
+        # The normal no-output-path invocation must create both complete
+        # artifacts outside the audited working tree and print only a receipt.
+        audited_worktree = tmp / "audited-worktree"
+        audited_worktree.mkdir()
+        default_root = tmp / "auto-artifacts"
+        default_root.mkdir()
+        default_env = verifier_env()
+        default_env["TMPDIR"] = str(default_root)
+        automatic = subprocess.run(
+            [
+                node_binary(),
+                str(VERIFY),
+                "--url",
+                f"{server.base_url}/clean.html",
+                "--viewport",
+                "desktop=1280x800",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=TIMEOUT_SECONDS,
+            env=default_env,
+            cwd=audited_worktree,
+        )
+        if automatic.returncode != 0 or automatic.stderr.strip():
+            raise AssertionError(f"Automatic artifact run failed: {automatic.stderr}")
+        automatic_receipt = parse_bounded_receipt(automatic.stdout, expect=0)
+        automatic_json, automatic_markdown = receipt_artifact_paths(automatic_receipt)
+        assert_complete_artifacts(automatic_json, automatic_markdown, expect=0)
+        if not automatic_json.resolve().is_relative_to(default_root.resolve()):
+            raise AssertionError(f"Default artifacts were not allocated under the external temp root: {automatic_receipt}")
+        if automatic_json.parent.name == default_root.name or not automatic_json.parent.name.startswith("formal-web-ui-verification-"):
+            raise AssertionError(f"Default artifacts must use a unique per-run directory: {automatic_receipt}")
+        if automatic_json.resolve().is_relative_to(audited_worktree.resolve()):
+            raise AssertionError("Default artifacts must stay outside the audited repository")
+
+        # Commands published while receipt mode was opt-in remain safe: the
+        # old CLI flag is accepted as a no-op, never as an output-mode switch.
+        alias_dir = tmp / "deprecated-receipt-alias"
+        alias_json = alias_dir / "report.json"
+        alias_markdown = alias_dir / "report.md"
+        alias_report = run_verifier_command(
+            [
+                node_binary(),
+                str(VERIFY),
+                "--url",
+                f"{server.base_url}/clean.html",
+                "--viewport",
+                "desktop=1280x800",
+                "--json-out",
+                str(alias_json),
+                "--markdown-out",
+                str(alias_markdown),
+                "--receipt-only",
+            ],
+            alias_json,
+            alias_markdown,
+            expect=0,
+        )
+        assert_no_critical(alias_report)
+
+        # Both legacy config booleans are accepted as compatibility no-ops.
+        # In particular, false cannot revive full Markdown stdout.
+        for receipt_only in (True, False):
+            compatibility_report = run_verify_config(
+                {
+                    "targets": [{"url": f"{server.base_url}/clean.html"}],
+                    "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+                    "receiptOnly": receipt_only,
+                },
+                tmp / f"receipt-config-{str(receipt_only).lower()}",
+                expect=0,
+            )
+            assert_no_critical(compatibility_report)
+
+        # Full Markdown stdout is compatibility behavior for an attended human
+        # terminal and must require the explicit human-only flag.
+        human_dir = tmp / "human-readable-stdout"
+        human_json = human_dir / "report.json"
+        human_markdown = human_dir / "report.md"
+        human = subprocess.run(
+            [
+                node_binary(),
+                str(VERIFY),
+                "--url",
+                f"{server.base_url}/clean.html",
+                "--viewport",
+                "desktop=1280x800",
+                "--json-out",
+                str(human_json),
+                "--markdown-out",
+                str(human_markdown),
+                "--human-readable-stdout",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=TIMEOUT_SECONDS,
+            env=verifier_env(),
+        )
+        if human.returncode != 0 or human.stderr.strip() or "# Formal Web UI Verification Report" not in human.stdout:
+            raise AssertionError("Explicit human-readable stdout mode must print the full Markdown report")
+        assert_complete_artifacts(human_json, human_markdown, expect=0)
+
+        # Configuration/setup exit 2 remains artifact-first. Explicit output
+        # paths are honored when they are valid and the receipt stays bounded.
+        setup_dir = tmp / "setup-failure"
+        setup_json = setup_dir / "report.json"
+        setup_markdown = setup_dir / "report.md"
+        setup_report = run_verifier_command(
+            [
+                node_binary(),
+                str(VERIFY),
+                "--url",
+                f"{server.base_url}/clean.html",
+                "--json-out",
+                str(setup_json),
+                "--markdown-out",
+                str(setup_markdown),
+                "--fail-on",
+                "not-a-severity",
+            ],
+            setup_json,
+            setup_markdown,
+            expect=2,
+        )
+        if "Invalid failOn severity" not in setup_report.get("error", {}).get("message", ""):
+            raise AssertionError("Setup-failure JSON artifact must preserve the actionable configuration error")
+
+        bad_receipt_config = run_verify_config(
+            {
+                "targets": [{"url": f"{server.base_url}/clean.html"}],
+                "receiptOnly": "yes",
+            },
+            tmp / "receipt-config-invalid",
+            expect=2,
+        )
+        if "receiptOnly must be a boolean" not in bad_receipt_config.get("error", {}).get("message", ""):
+            raise AssertionError("Non-boolean receiptOnly config must fail through the artifact-first setup contract")
+
+        # Even a parse failure with no caller paths gets a machine-readable
+        # failure artifact in the software-owned external directory.
+        no_path_failure = subprocess.run(
+            [node_binary(), str(VERIFY), "--unknown-option"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=TIMEOUT_SECONDS,
+            env=default_env,
+        )
+        if no_path_failure.returncode != 2 or no_path_failure.stderr.strip():
+            raise AssertionError(f"No-path setup failure was not bounded: {no_path_failure.stderr}")
+        no_path_receipt = parse_bounded_receipt(no_path_failure.stdout, expect=2)
+        no_path_json, no_path_markdown = receipt_artifact_paths(no_path_receipt)
+        assert_complete_artifacts(no_path_json, no_path_markdown, expect=2)
+
         # Coverage recall: an explicit target that cannot be checked must fail
         # the run instead of producing a successful zero-page report.
         dead_target = run_verify("http://127.0.0.1:9/", tmp / "dead-target", expect=3)
@@ -995,8 +1228,8 @@ def main() -> int:
                 raise AssertionError("Config-scoped cookie page was skipped")
 
             # Malformed scoping fields must fail fast with the validator's
-            # message, not a downstream Playwright error. (Raw invocation:
-            # config validation aborts before any report is written.)
+            # message in the cold setup artifact, not a downstream Playwright
+            # error or a verbose process payload.
             bad_out = tmp / "cookie-config-bad"
             bad_out.mkdir(parents=True, exist_ok=True)
             bad_config = bad_out / "formal-web-ui.json"
@@ -1017,11 +1250,13 @@ def main() -> int:
                 timeout=TIMEOUT_SECONDS,
                 env=verifier_env(),
             )
-            if bad_result.returncode == 0:
-                raise AssertionError("Malformed cookie domain should fail config validation")
-            bad_text = f"{bad_result.stdout}\n{bad_result.stderr}"
-            if "domain must be a non-empty string" not in bad_text:
-                raise AssertionError(f"Malformed cookie domain should surface the validator message, got: {bad_text[:400]}")
+            if bad_result.returncode != 2 or bad_result.stderr.strip():
+                raise AssertionError("Malformed cookie domain should fail with one bounded setup receipt")
+            bad_receipt = parse_bounded_receipt(bad_result.stdout, expect=2)
+            bad_json, bad_markdown = receipt_artifact_paths(bad_receipt)
+            bad_report = assert_complete_artifacts(bad_json, bad_markdown, expect=2)
+            if "domain must be a non-empty string" not in bad_report.get("error", {}).get("message", ""):
+                raise AssertionError("Malformed cookie domain should preserve the validator message in the JSON artifact")
         finally:
             cookie_server.close()
 

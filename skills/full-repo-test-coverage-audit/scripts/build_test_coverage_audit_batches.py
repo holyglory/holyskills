@@ -100,6 +100,7 @@ def render_batch_prompt(
     total_batches: int,
     entries: list[queue.AuditUnit],
     target_records: list[dict],
+    report_path: Path,
 ) -> str:
     target_rows = "\n".join(
         f"| {item['target_id']} | {item['unit_id']} | {item['rel_path']} | {item['symbol']} | {item['kind']} | {item['line']} | {item['structural_basis']} |"
@@ -111,7 +112,10 @@ Run ID: `{run_id}`
 Repo root: `{repo}`
 Batch ID: `batch_{batch_id:03d}`
 
-You are a low-effort worker auditing test coverage. Do not edit files. Inspect every owned unit below and report whether reasonable behavior targets, intended features, UI elements, states, handlers, and journeys have meaningful tests.
+{queue.artifact_delivery_contract(report_path)}
+{queue.isolated_light_worker_contract()}
+
+You are a low-effort worker auditing test coverage. Do not edit the audited repository; write only the exact audit artifact authorized above. Inspect every owned unit below and report whether reasonable behavior targets, intended features, UI elements, states, handlers, and journeys have meaningful tests.
 
 ## Files You Own
 
@@ -134,9 +138,9 @@ Every target id above needs exactly one inventory row. The structural scanner is
 - For each target, look for existing test files, test names, fixtures, snapshots, stories, e2e specs, or explicit absence.
 - Assess happy path, invalid input, empty/null/boundary values, failure paths, async/concurrency, permissions, persistence, navigation, rollback, integration boundaries, required UI states, and feature completion when applicable.
 
-## Required Report
+## Required Report File
 
-Return exactly these top-level headings in order:
+Write exactly these top-level headings in order to the report path above:
 
 ## Run ID
 {run_id}
@@ -176,7 +180,12 @@ List unresolved ambiguity for the lead, or `None.`
 """
 
 
-def render_ui_prompt(repo: Path, run_id: str, entries: list[queue.FileEntry]) -> str:
+def render_ui_prompt(
+    repo: Path,
+    run_id: str,
+    entries: list[queue.FileEntry],
+    report_path: Path,
+) -> str:
     files = "\n".join(f"- `{item.rel_path}` ({item.kind}, sha256=`{item.sha256}`)" for item in entries)
     return f"""# UI And User Journey Test Coverage Audit
 
@@ -184,13 +193,16 @@ Run ID: `{run_id}`
 Repo root: `{repo}`
 Worker: `ui_test_coverage`
 
-Do not edit files. Audit whether intended UI routes, controls, forms, states, UI elements, feature paths, and user journeys have meaningful component, integration, e2e, or visual coverage.
+{queue.artifact_delivery_contract(report_path)}
+{queue.isolated_light_worker_contract()}
+
+Do not edit the audited repository; write only the exact audit artifact authorized above. Audit whether intended UI routes, controls, forms, states, UI elements, feature paths, and user journeys have meaningful component, integration, e2e, or visual coverage.
 
 ## Interface-Relevant Files
 
 {files}
 
-Return exactly:
+Write exactly these sections to the report path above:
 
 ## Run ID
 {run_id}
@@ -212,7 +224,12 @@ List user-journey ambiguity or `None.`
 """
 
 
-def render_visual_prompt(repo: Path, run_id: str, entries: list[queue.FileEntry]) -> str:
+def render_visual_prompt(
+    repo: Path,
+    run_id: str,
+    entries: list[queue.FileEntry],
+    report_path: Path,
+) -> str:
     files = "\n".join(f"- `{item.rel_path}` ({item.kind}, sha256=`{item.sha256}`)" for item in entries)
     return f"""# Visual And E2E Test Coverage Audit
 
@@ -220,7 +237,10 @@ Run ID: `{run_id}`
 Repo root: `{repo}`
 Worker: `visual_e2e_coverage`
 
-Do not edit files. Identify visual/e2e tooling and assess whether high-frequency UI journeys, required screens, UI elements, and states can be checked safely in test or fixture mode.
+{queue.artifact_delivery_contract(report_path)}
+{queue.isolated_light_worker_contract()}
+
+Do not edit the audited repository; write only the exact audit artifact authorized above. Identify visual/e2e tooling and assess whether high-frequency UI journeys, required screens, UI elements, and states can be checked safely in test or fixture mode.
 
 ## Interface-Relevant Files
 
@@ -228,7 +248,7 @@ Do not edit files. Identify visual/e2e tooling and assess whether high-frequency
 
 For CLI, library, plugin, or skill packages with no repo-owned rendered UI, mark visual/e2e checks as `not applicable` with evidence.
 
-Return exactly:
+Write exactly these sections to the report path above:
 
 ## Run ID
 {run_id}
@@ -326,6 +346,8 @@ def write_completion_marker(out_dir: Path, manifest: dict) -> None:
         "effort_ledger": "effort_ledger.json",
         "excluded_files": "excluded_files.json",
         "reports_dir": "reports",
+        "logs_dir": "logs",
+        "final_report": "final-report.md",
         "ownership_marker": ARTIFACT_MARKER,
         "batch_count": manifest["batch_count"],
         "source_file_count": manifest["source_file_count"],
@@ -361,10 +383,11 @@ Scope warnings: **{manifest['scope_warning_count']}**
 ## Dispatch
 
 1. Fill `effort_ledger.json` as workers are assigned.
-2. Dispatch one low-effort worker per batch prompt.
-3. Save returned reports under `reports/batch_###.md`.
+2. Dispatch one Light-effort (`reasoning_effort="low"`) worker per batch prompt. In Codex set `fork_turns="none"` and pass the entire prompt plus applicable project-ledger requirements.
+3. Workers write complete reports to their prompt-declared `reports/` paths and return only bounded filename-bearing `REPORT_SAVED` receipts; never request the report body through the worker response.
 4. Dispatch UI/visual workers when listed below.
 5. Run verifier: `{manifest['verifier_command']}`
+6. Redirect verbose command output to `logs/`, write the complete synthesis to `final-report.md`, and return only a compact outcome/counts/verifier/artifact summary to chat.
 
 {extras}
 
@@ -408,6 +431,8 @@ def write_outputs(
         archived_reports_name = archive.name
         archived_reports_dir = str(archive)
     reports_dir.mkdir(exist_ok=True)
+    logs_dir = out_dir / "logs"
+    logs_dir.mkdir(exist_ok=True)
 
     target_inventory = test_targets.discover_targets(repo, units)
     targets_by_unit: dict[str, list[dict]] = {}
@@ -421,7 +446,15 @@ def write_outputs(
         prompt = f"batch_{index:03d}.md"
         batch_targets = [target for item in batch for target in targets_by_unit.get(item.unit_id, [])]
         (out_dir / prompt).write_text(
-            render_batch_prompt(repo, run_id, index, len(batches), batch, batch_targets),
+            render_batch_prompt(
+                repo,
+                run_id,
+                index,
+                len(batches),
+                batch,
+                batch_targets,
+                reports_dir / prompt,
+            ),
             encoding="utf-8",
         )
         paths = sorted({item.rel_path for item in batch})
@@ -432,6 +465,7 @@ def write_outputs(
             {
                 "id": f"batch_{index:03d}",
                 "prompt": prompt,
+                "report": f"reports/{prompt}",
                 "file_count": len(paths),
                 "coverage_unit_count": len(batch),
                 "interface_file_count": sum(1 for item in batch if item.interface_relevant),
@@ -454,8 +488,24 @@ def write_outputs(
     interface_entries = [item for item in entries if item.interface_relevant]
     ui_required = bool(interface_entries)
     if ui_required:
-        (out_dir / "ui_test_coverage_audit.md").write_text(render_ui_prompt(repo, run_id, interface_entries), encoding="utf-8")
-        (out_dir / "visual_e2e_coverage_audit.md").write_text(render_visual_prompt(repo, run_id, interface_entries), encoding="utf-8")
+        (out_dir / "ui_test_coverage_audit.md").write_text(
+            render_ui_prompt(
+                repo,
+                run_id,
+                interface_entries,
+                reports_dir / "ui_test_coverage_audit.md",
+            ),
+            encoding="utf-8",
+        )
+        (out_dir / "visual_e2e_coverage_audit.md").write_text(
+            render_visual_prompt(
+                repo,
+                run_id,
+                interface_entries,
+                reports_dir / "visual_e2e_coverage_audit.md",
+            ),
+            encoding="utf-8",
+        )
 
     verifier_args = [
         sys.executable,
@@ -471,6 +521,8 @@ def write_outputs(
         "excluded_files.json",
         "manifest.json",
         "queue_complete.json",
+        "final-report.md",
+        "logs",
         *(["ui_test_coverage_audit.md", "visual_e2e_coverage_audit.md"] if ui_required else []),
         *([archived_reports_name] if archived_reports_name else []),
         *[batch["prompt"] for batch in batch_records],
@@ -481,6 +533,8 @@ def write_outputs(
         "audit_kind": "test-coverage",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "reports_dir": str(reports_dir),
+        "logs_dir": str(logs_dir),
+        "final_report": str(out_dir / "final-report.md"),
         "archived_reports_dir": archived_reports_dir,
         "artifact_marker": str(out_dir / ARTIFACT_MARKER),
         "effort_ledger": str(out_dir / "effort_ledger.json"),

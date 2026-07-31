@@ -77,9 +77,15 @@ and the documentation handoff conflict instead of marking the UI as compliant.
 
 - Do not request a special lead reasoning level. Use the runtime default and
   record the actual runtime value and provenance honestly in the effort ledger.
-- Use low-effort subagents for source batches when the runtime supports spawned
-  workers. Treat the user's request to run this audit as authorization for the
-  needed low-effort batch workers.
+- Use Light-effort subagents for source and visual batches when the runtime
+  supports spawned workers. **Light** is the Codex selector label for runtime
+  `reasoning_effort="low"`. In Codex, every worker spawn must set
+  `fork_turns="none"` and receive the entire generated prompt plus applicable
+  project-ledger requirements. Other runtimes use the equivalent fresh worker
+  context. If runtime `low` is genuinely unavailable, use disclosed manual
+  fallback rather than an invalid effort request or inherited lead context.
+  Treat the user's request to
+  run this audit as authorization for the needed workers.
 - Queue only interface-defining source files in `batch_###.md` prompts. Do not
   batch unrelated backend, scripts, build files, or non-UI source.
 - Always run the visual work when interface source files are queued:
@@ -136,6 +142,12 @@ and the documentation handoff conflict instead of marking the UI as compliant.
 - Keep the audited repo read-only unless the user separately asks to implement
   the resulting plan. Generated audit artifacts are allowed and should live
   outside the audited repo by default.
+- Workers write complete reports directly to their prompt-declared paths and
+  return only bounded filename-bearing `REPORT_SAVED` receipts. Visual workers
+  may additionally write only the explicitly named audit-output screenshots,
+  formal-verifier reports, and `visual_evidence.json`. Keep full command output
+  under `<audit-output>/logs/`; never route full reports or logs through worker
+  responses.
 - Do not claim completion until the passed implementation gate, manifest,
   source-batch reports, visual reports, effort ledger, and verifier agree.
 
@@ -220,8 +232,10 @@ and the documentation handoff conflict instead of marking the UI as compliant.
    - Identify the safest way to render each high-priority screen.
 
 5. **Dispatch workers**
-   - Dispatch one low-effort worker per `batch_###.md`; tell workers not to edit
-     files and to cover every owned unit.
+   - Dispatch one Light/runtime-low worker per `batch_###.md`; in Codex set
+     `fork_turns="none"`. Pass the complete prompt, accept only its compact
+     filename-bearing receipt, and confirm the exact report artifact on disk.
+     Workers do not edit the audited repository and must cover every owned unit.
    - Dispatch `mockup_asset_audit.md` to extract expected screens, visual
      hierarchy, typography, spacing, density, colors, assets, and state
      requirements from mockups and journey docs.
@@ -236,7 +250,8 @@ and the documentation handoff conflict instead of marking the UI as compliant.
      keep the final coverage label as manual fallback coverage.
 
 6. **Verify coverage**
-   - Save one report per source batch under `reports/batch_###.md`.
+   - Confirm one report per source batch was written under
+     `reports/batch_###.md`.
    - Save visual reports under:
      - `reports/mockup_asset_audit.md`
      - `reports/visual_tooling_audit.md`
@@ -414,9 +429,10 @@ For each rendered screen, check:
 - Accessibility: labels, focus order, keyboard access, contrast risk, semantic
   controls, text fitting, and state not conveyed only by color.
 
-## Final Output
+## Final Audit Artifact And Chat Output
 
-Return exactly these top-level headings:
+Write the complete audit to `<audit-output>/final-report.md` with exactly these
+top-level headings:
 
 ```markdown
 ## Coverage
@@ -430,6 +446,12 @@ Return exactly these top-level headings:
 ## Implementation Plan
 ## Verification Plan
 ```
+
+Do not paste `final-report.md`, worker reports, screenshot inventories, formal
+verifier JSON/Markdown, consolidated findings, or raw command logs into chat.
+Return only the overall outcome, incomplete/blocking status, critical and total
+finding counts, verifier result, material visual-coverage caveats, and paths to
+the final report and audit directory.
 
 The `Accessibility And Interaction Findings` section must include a short
 checklist before or after findings with all ten exact labels: `badge-detail`,

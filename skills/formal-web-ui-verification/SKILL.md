@@ -52,10 +52,31 @@ node "$FORMAL_WEB_UI_SKILL_DIR/scripts/formal_web_ui_verify.mjs" \
   --url "http://127.0.0.1:3000/" \
   --viewport mobile=390x844 \
   --viewport desktop=1440x900 \
-  --json-out /tmp/formal-web-ui-report.json \
-  --markdown-out /tmp/formal-web-ui-report.md \
   --fail-on critical
 ```
+
+Artifact-first output is the software-owned default. With no output paths, the
+verifier creates a unique directory under a safe external runtime root
+(normally the system temporary directory) outside the current audited worktree,
+writes complete `report.json` and `report.md`
+artifacts, and emits one bounded JSON receipt naming that directory and both
+filenames. Exit codes `0`/`1`/`2`/`3` are preserved. `--json-out` and
+`--markdown-out` override those paths when a caller needs a known cold artifact
+location; if only one is supplied, the verifier derives its companion path.
+Store verbose wrapper, browser, or self-test output under the task's cold log
+directory and inspect only the receipt and targeted report sections in routine
+context.
+
+Full Markdown stdout is compatibility behavior for an attended human terminal
+only. It requires the explicit `--human-readable-stdout` opt-in and still writes
+both artifacts. Never use that human-only flag for an agent-driven invocation.
+Setup/configuration failures also emit a bounded receipt and write a
+machine-readable failure artifact whenever a safe artifact destination can be
+created.
+
+Previously published callers may still pass `--receipt-only` or boolean config
+`receiptOnly`. Both are accepted as deprecated compatibility no-ops: receipt
+output remains the default, and `receiptOnly: false` never enables full stdout.
 
 Auth-gated pages and local TLS: pass `--cookie name=value` (repeatable; scoped
 to the target URL) to verify pages behind a session cookie, and
@@ -141,8 +162,12 @@ skill; callers can always provide explicit `--url` targets instead.
      allowances must name a selector and a reason.
 
 4. **Report evidence**
-   - Include the command, output paths, checked URLs, viewports, skipped URLs,
-     and critical findings count.
+   - Keep the complete JSON and Markdown results at the receipt-named artifact
+     paths. Do not paste either full report into chat or a parent-agent result.
+     Return only the outcome, exit code, checked/skipped page counts, critical
+     and warning counts, coverage status, and artifact paths.
+   - Read only the specific finding rows or metrics needed for diagnosis; keep
+     raw command output in a cold log file.
    - If no safe render path exists, report that formal verification is blocked
      and add the missing Playwright, Storybook, fixture route, or preview path
      to the implementation plan.
@@ -266,3 +291,6 @@ pass when a page must not scroll during inspection.
   off-canvas controls, or invisible text when this verifier can run.
 - Keep generated reports outside the product repo unless the user asks to save
   them there.
+- For agent-driven runs, keep the default bounded receipt output. A full
+  Markdown stdout payload is a context-budget failure even when the report is
+  otherwise valid; `--human-readable-stdout` is human-only compatibility.

@@ -1225,6 +1225,46 @@ def main() -> int:
         out = tmp / "out"
         manifest = build(ui_fixture, out)
         check(manifest["audit_kind"] == "ui-implementation", "manifest should record ui-implementation audit kind")
+        check(manifest["logs_dir"] == str((out / "logs").resolve()), "manifest should record cold logs_dir")
+        check(manifest["final_report"] == str((out / "final-report.md").resolve()), "manifest should record final report path")
+        check((out / "logs").is_dir(), "builder should create cold logs directory")
+        marker = json.loads((out / ".ui-implementation-audit-artifacts.json").read_text(encoding="utf-8"))
+        check("logs" in marker["generated_artifacts"] and "final-report.md" in marker["generated_artifacts"], "ownership marker should reserve cold logs and final report")
+        for batch in manifest["batches"]:
+            prompt_text = (out / batch["prompt"]).read_text(encoding="utf-8")
+            check(str((out / batch["report"]).resolve()) in prompt_text, "batch prompt should contain exact report path")
+            for token in (
+                'fork_turns="none"',
+                'reasoning_effort="low"',
+                "Light",
+                "REPORT_SAVED",
+                f"filename={Path(batch['report']).name};",
+                "REPORT_NOT_SAVED path=<exact-report-path>; reason=<short-reason>",
+                "at or below 80 tokens",
+            ):
+                check(token in prompt_text, f"batch prompt should enforce context-light artifact delivery: {token}")
+        audit_meta = manifest["ui_implementation_audit"]
+        for prompt_key, report_key in (
+            ("mockup_asset_prompt", "mockup_asset_report"),
+            ("visual_tooling_prompt", "visual_tooling_report"),
+            ("visual_comparison_prompt", "visual_comparison_report"),
+        ):
+            prompt_text = (out / audit_meta[prompt_key]).read_text(encoding="utf-8")
+            check(str((out / audit_meta[report_key]).resolve()) in prompt_text, f"{prompt_key} should contain exact report path")
+            check('fork_turns="none"' in prompt_text and "REPORT_SAVED" in prompt_text, f"{prompt_key} should use a compact context-light worker contract")
+            check(
+                f"filename={Path(audit_meta[report_key]).name};" in prompt_text,
+                f"{prompt_key} receipt should name its saved report filename",
+            )
+        visual_prompt_text = (out / audit_meta["visual_comparison_prompt"]).read_text(encoding="utf-8")
+        check(str((out / "visual_evidence.json").resolve()) in visual_prompt_text, "visual worker should receive exact evidence-manifest path")
+        skill_contract = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        check('fork_turns="none"' in skill_contract, "skill must require context-light Codex forks")
+        check("Light" in skill_contract and 'reasoning_effort="low"' in skill_contract, "skill must map visible Light to runtime low")
+        check(
+            "final-report.md" in skill_contract and "filename-bearing `REPORT_SAVED`" in skill_contract,
+            "skill must keep complete results in cold artifacts with filename-bearing receipts",
+        )
         check(manifest["source_file_count"] == 2, "only interface source files should be queued")
         queued = {item["rel_path"] for item in manifest["source_files"]}
         check(queued == {"src/App.tsx", "src/styles.css"}, f"unexpected source queue: {queued}")

@@ -1,4 +1,6 @@
 interface:
   display_name: "Full Repo Test Coverage Audit"
   short_description: "Map exact test targets and empirical evidence"
-  default_prompt: "Use $full-repo-test-coverage-audit to map every deterministic source target exactly once as TESTED, UNTESTED, or NOT_REASONABLE; validate real test paths and symbols; label evidence EMPIRICAL, STRUCTURAL, MANUAL, or NONE; ingest supplied LCOV/Cobertura/coverage.py/Istanbul artifacts; audit UI journeys and failure paths; and return a prioritized test plan without overstating structural review as runtime coverage."
+  default_prompt: "Use $full-repo-test-coverage-audit to map repository test targets with honest empirical/structural evidence, dispatch Codex workers with fork_turns=none and Light/runtime-low effort, save complete results to cold artifacts, and return only a compact outcome and artifact index."
+policy:
+  allow_implicit_invocation: false

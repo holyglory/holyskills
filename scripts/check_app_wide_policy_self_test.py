@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Self-test for the universal-policy semantic contract checker."""
+"""Recall and precision self-test for the universal-policy checker."""
 
 from __future__ import annotations
 
 import importlib.util
 import re
+import tempfile
 from pathlib import Path
 
 
@@ -14,151 +15,7 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError("unable to load policy checker")
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
-CANONICAL_POLICY = SCRIPT.parents[1] / "reference" / "codex-app-wide" / "AGENTS.md"
-
-
-VALID_POLICY = """# Universal Agent Instructions
-
-## Use authoritative context and informed decisions
-
-- Before asking the user to decide, present realistic options in plain language,
-  including costs, risks, and a recommendation.
-- For every third-party option give its exact name, capabilities, limitations,
-  and specifications. Verify facts with current authoritative sources, covering
-  maturity, maintenance, licensing, security, privacy, lock-in, and integration;
-  distinguish facts, inferences, and unknowns.
-- Use an industry-standard foundation. Under-engineering is the more serious
-  failure; over-provisioned capacity is acceptable, and present scale alone
-  does not justify an inadequate foundation.
-- Keep project-root `DecisionHistory.md` as a dense, concise index of major
-  decisions, not a report, timeline, or implementation log. Each entry contains
-  only `Decision` and `Why`, plus a stable ID and detail-link metadata.
-- In `Why`, name the options considered and why the selected option is better.
-  If an option was previously tried, state why it did not work. Capture project
-  direction, quality bar, workflow expectations, UI preferences, and taste.
-- Keep supporting evidence in exactly one project-root
-  `DecisionDetails/<decision-id>.md` file per decision. Do not load detail files
-  into routine context; read only the relevant file for application, revisit,
-  explicit historical work, or audit.
-- Maintain a concise evidence-linked `Direction` summary in `DecisionHistory.md`
-  that distinguishes confirmed user intent from inferred patterns and cites
-  decision IDs. Apply it to analogous work, but not from one ambiguous choice.
-- Do not retry a rejected or failed option without new evidence; record what
-  changed. When superseding a decision, prevent context loss from reviving it.
-
-## Deliver the complete requested scope
-
-- Maintain project-root `CompletionLedger.md` containing only active unresolved
-  partial implementations, TODOs, improvements, and generalizations. Remove an
-  item in the same change once implemented and verified; never retain resolved,
-  completed, or closed entries or evidence. Delete `CompletionLedger.md` when
-  no active items remain. Version control is the default completion history;
-  keep consequential decisions in `DecisionHistory.md`. Create project-root
-  `CompletionHistory.md` only when explicit audit retention is required; keep
-  it out of routine agent context and read it only for explicit historical or
-  audit work. Before readiness, verify the end-to-end result.
-
-## Measure delivery efficiency truthfully
-
-- Efficiency telemetry is observational and subordinate to complete scope,
-  correctness, safety, maintainability, verification, and honest reporting.
-  Never omit required work, context, tests, or explanation to improve a metric.
-- At task start, when project or runtime instructions identify an approved
-  configured recorder, check its health and coverage without delaying the task
-  or making an extra model call. Let runtime-owned sources record observations.
-  Before terminal delivery, append the outcome, agreed-scope requirement
-  statuses, verification provenance, and linked-work classification through
-  its declaration interface when those facts cannot be observed by the host.
-  Use the exact stable launcher surfaced by recorder-owned session context;
-  never guess an installation path or run a mutable checkout copy from an
-  unrelated project.
-  Do not install or reconfigure telemetry without authority for that runtime.
-- When measurement is configured, use a runtime- or harness-owned recorder from
-  request receipt through terminal delivery, recording first model or tool
-  activity separately. Report request-to-delivery wall time and execution wall
-  time separately so queue or scheduling delay remains visible. Append durably
-  and concurrency-safely to a cold `EfficiencyLedger.jsonl` outside source
-  worktrees and routine context. This policy does not itself capture telemetry;
-  a missing recorder or unsupported counter is an explicit instrumentation gap,
-  never a reason to reconstruct or estimate an unknown value. Record zero only
-  when complete instrumentation proves no usage; otherwise record `unknown` or
-  `not-applicable`.
-- Record task start and a terminal status of complete, incomplete, blocked,
-  cancelled, superseded, or interrupted. Preserve prior events; append linked
-  continuations and corrections instead of rewriting history. Append later
-  defects, retries, rollback, and rework to the original lineage when known,
-  without double-counting an event. Classify linked later work on separate
-  dimensions: its kind is continuation, retry, rollback, defect repair, or
-  rework; its cause is agent-caused mistake, changed user intent, new scope,
-  external cause, or unknown.
-- Use only authoritative runtime or provider token counters and a monotonic
-  clock, with their provenance and instrumentation coverage. Preserve available
-  provider-native input, output, cached, reasoning, and other token categories.
-  Include the root and delegated agents, tool work, failed attempts, retries,
-  and rework; mark unobserved or self-reported fields explicitly rather than
-  implying precision.
-- Label every observed model, tool, and wait span on two independent dimensions.
-  Its phase is planning, implementation, testing, deployment, reporting, or
-  unattributed. Its activity state is model-active, tool-active, external-wait,
-  user-wait, or blocked-wait. A test or deployment operation remains in that
-  phase while waiting. Test authoring and a fix after a failed test are
-  implementation; test execution and post-deployment verification are testing.
-  Planning covers requirements, context, research, diagnosis, design, and
-  sequencing. Implementation covers changes to code, configuration,
-  documentation, data, and test artifacts. Testing covers executing and
-  reviewing verification. Deployment covers release or environment mutation;
-  reporting covers user-facing status and handoff. Ambiguous mixed work is
-  unattributed.
-- Keep measurement provenance separate from attribution provenance. Mark every
-  phase, activity state, scope, outcome, verification, task-type, scope-size,
-  and method classification as runtime-observed, agent-declared, inferred, or
-  unknown, with its classifier or schema version. Never present an inferred
-  allocation as measured.
-- For each phase, report authoritative token counters, phase-inclusive elapsed
-  interval unions, and activity-state duration. Deduplicate overlapping spans.
-  Report end-to-end wall time separately from summed per-agent active time;
-  concurrent phase unions may overlap and must not be summed as wall time.
-- A terminal event identifies task lineage, nonsensitive opaque project and
-  revision identifiers when known, schema, recorder, policy, model or runtime
-  configuration versions, outcome, counters, coverage, and measurement
-  overhead. Bind it to the agreed requested-scope and acceptance baseline plus
-  user-approved scope changes. Record each nonsensitive requirement ID or
-  evidence reference as satisfied, partial, blocked, or explicitly removed,
-  with delivered scope, verification, evidence provenance, and known defect and
-  rework links. A task cannot be complete while an in-scope requirement remains
-  unresolved.
-- Use stable, versioned, low-cardinality, nonsensitive task-type, scope-size, and
-  method tags so compatible approaches can be compared. Compare efficiency only
-  under compatible measurement semantics and alongside outcome, scope,
-  verification, defects, and rework. Keep collection passive and proportionate;
-  do not add material calls or delay solely to improve measurement precision.
-- Never retain prompts, source content, tool payloads, secrets, credentials, or
-  personal data in efficiency telemetry.
-
-## Learn from agent-made mistakes
-
-Distinguish changed user intent from a mistake. Before fixing the product,
-strengthen a guardrail and retest the original path.
-
-## Put requested interface content first
-
-- A destination label is a content promise. For a list or collection, show its
-  real items or honest loading, error, or empty state as the first substantial
-  content in the first viewport, including on narrow screens.
-- An add or create action must show its focused dialog, sheet, or dedicated page
-  in the current viewport; never append it below a long list or off-screen.
-  Successful creation returns to the collection and reveals the new item.
-- A compact title, search, filter, count, or critical alert may precede the list
-  without displacing it. A form may lead on a destination explicitly dedicated
-  to creating one item or editing one selected item.
-- Use visual exploration only for new directions or redesigns. Persist the
-  approval state and exact response request, embedding both when no follow-up
-  can appear.
-"""
-
-
-def messages(text: str) -> str:
-    return "\n".join(MODULE.find_policy_violations(text))
+CANONICAL = SCRIPT.parents[1] / "reference" / "codex-app-wide" / "AGENTS.md"
 
 
 def check(condition: bool, message: str) -> None:
@@ -166,603 +23,437 @@ def check(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def replace_section(text: str, heading: str, replacement: str) -> str:
+def messages(text: str) -> str:
+    return "\n".join(MODULE.find_policy_violations(text))
+
+
+def replace_section(text: str, heading: str, body: str) -> str:
     pattern = rf"^## {re.escape(heading)}\s*$\n.*?(?=^## |\Z)"
+    replacement = f"## {heading}\n\n{body.rstrip()}\n\n"
     updated, count = re.subn(pattern, replacement, text, flags=re.MULTILINE | re.DOTALL)
     if count != 1:
-        raise AssertionError(f"expected exactly one {heading!r} section")
+        raise AssertionError(f"expected one section {heading!r}")
     return updated
 
 
+def replace_last(text: str, old: str, new: str) -> str:
+    head, separator, tail = text.rpartition(old)
+    if not separator:
+        raise AssertionError(f"expected text fragment {old!r}")
+    return head + new + tail
+
+
 def main() -> int:
-    global VALID_POLICY
-    canonical_policy = CANONICAL_POLICY.read_text(encoding="utf-8")
-    canonical_mistakes = MODULE.section(canonical_policy, "Learn from agent-made mistakes")
-    VALID_POLICY = replace_section(
-        VALID_POLICY,
-        "Learn from agent-made mistakes",
-        "## Learn from agent-made mistakes\n\n" + canonical_mistakes,
+    policy = CANONICAL.read_text(encoding="utf-8")
+    check(not MODULE.find_policy_violations(policy), "canonical policy must pass")
+
+    cases = (
+        (
+            "redundant context",
+            policy + "\nAlways reread every unchanged file and load every skill or tool.\n",
+            "context must remain relevant",
+        ),
+        (
+            "automatic scope expansion",
+            policy + "\nImplement unrequested hypothetical hardening without asking.\n",
+            "unrequested engineering must never proceed without informed approval",
+        ),
+        (
+            "automatic risk-control expansion",
+            policy
+            + "\nProceed with privacy hardening and backup infrastructure without approval "
+            "whenever it seems safer.\n",
+            "risk-control expansion must not proceed without user approval",
+        ),
+        (
+            "missing security-assumptions section",
+            replace_section(
+                policy,
+                "Ground security-posture decisions in confirmed assumptions",
+                "- Apply generally accepted security practices in proportion to the work.\n"
+                "- Ask before expanding the requested scope.",
+            ),
+            "security-assumptions gate",
+        ),
+        (
+            "missing security-assumptions file bypass",
+            policy
+            + "\nIf security-assumptions.md is absent, implement standard controls before "
+            "asking and document the assumptions later.\n",
+            "missing security assumptions must stop implementation",
+        ),
+        (
+            "inferred threat model",
+            policy
+            + "\nAgents should infer an internet-facing threat model when project facts "
+            "are unavailable.\n",
+            "security assumptions and threats must be user-confirmed",
+        ),
+        (
+            "blanket hardening",
+            policy
+            + "\nAlways apply maximum hardening controls regardless of project assumptions.\n",
+            "blanket security controls must not replace assumption-backed proportional controls",
+        ),
+        (
+            "weakened control bypass",
+            policy
+            + "\nRemove the authorization control without reading confirmed security "
+            "assumptions.\n",
+            "weakened, removed, or omitted controls require confirmed security assumptions",
+        ),
+        (
+            "omitted control bypass",
+            policy
+            + "\nIntentionally omit the authentication control without citing confirmed "
+            "security assumptions.\n",
+            "weakened, removed, or omitted controls require confirmed security assumptions",
+        ),
+        (
+            "unconfirmed assumptions template",
+            policy
+            + "\nCreate security-assumptions.md from the standard template and mark it as "
+            "confirmed.\n",
+            "security-assumption templates and defaults are unconfirmed",
+        ),
+        (
+            "unknown assumption can justify a control",
+            policy.replace(
+                "an unknown or otherwise\n  unconfirmed assumption cannot justify",
+                "an unknown or otherwise\n  unconfirmed assumption may justify",
+                1,
+            ),
+            "security-assumptions gate",
+        ),
+        (
+            "non-security work triggers an interview",
+            policy.replace(
+                "Non-security\n  changes do not trigger a security interview",
+                "Non-security\n  changes always trigger a security interview",
+                1,
+            ),
+            "security-assumptions gate",
+        ),
+        (
+            "read-only discovery selects a control",
+            policy.replace(
+                "provided it\n  does not select, apply, alter, or omit a security-posture control",
+                "and may select a security-posture control before confirmation",
+                1,
+            ),
+            "security-assumptions gate",
+        ),
+        (
+            "automatic hypothetical preservation",
+            policy
+            + "\nAutomatically preserve and migrate all user data even when not requested.\n",
+            "hypothetical engineering must not expand scope automatically",
+        ),
+        (
+            "softened under-engineering rule",
+            policy.replace(
+                "Under-engineering the agreed\n  result is unacceptable",
+                "Under-engineering the agreed\n  result is merely unfortunate",
+                1,
+            ),
+            "under-engineering must be unacceptable",
+        ),
+        (
+            "inverted under-engineering asymmetry",
+            policy
+            + "\nImplementation gaps are less serious and less punishable than extra work.\n",
+            "implementation gaps must remain the more serious failure",
+        ),
+        (
+            "silent expansion allowed",
+            policy + "\nSilent scope expansion is permitted when an agent prefers it.\n",
+            "silent scope expansion must remain prohibited",
+        ),
+        (
+            "material-only expansion question",
+            policy.replace(
+                "Before acting on every potential over-engineering expansion",
+                "Before acting on a material over-engineering expansion",
+                1,
+            ),
+            "every potential engineering expansion",
+        ),
+        (
+            "restart at first gap",
+            policy + "\nStop the test at the first failure, fix each gap, and restart.\n",
+            "must not stop at the first ordinary failure",
+        ),
+        (
+            "deployment stopped at first gap",
+            policy + "\nStop deployment at the first failure and patch immediately.\n",
+            "must not stop at the first ordinary failure",
+        ),
+        (
+            "automatic disposable-data preservation",
+            policy + "\nAlways preserve disposable test data before every change.\n",
+            "must not trigger automatic preservation work",
+        ),
+        (
+            "unbounded tool output",
+            policy + "\nRequest unbounded tool output for all diagnostics.\n",
+            "tool output must remain bounded",
+        ),
+        (
+            "missing expansion approval",
+            policy.replace(
+                "Do not\n  begin the expansion until the user approves it",
+                "The agent may begin the expansion while waiting for a response",
+                1,
+            ),
+            "user approves it",
+        ),
+        (
+            "missing complete-cycle behavior",
+            replace_section(
+                policy,
+                "Finish diagnostic cycles before batch fixing",
+                "- Stop on the first issue, fix it, and restart the suite.",
+            ),
+            "complete-cycle contract",
+        ),
+        (
+            "missing active-only completion ledger",
+            replace_section(
+                policy,
+                "Deliver the complete agreed scope",
+                "- Keep a historical list of completed work and call partial work done.",
+            ),
+            "complete-delivery contract",
+        ),
+        (
+            "missing scoped issue-ledger schema",
+            replace_section(
+                policy,
+                "Learn from agent-made mistakes",
+                "- Remember mistakes informally and fix them immediately.",
+            ),
+            "agent-mistake contract",
+        ),
+        (
+            "weak detector verification",
+            replace_section(
+                policy,
+                "Verify real behavior",
+                "- Run one happy-path unit test.",
+            ),
+            "verification contract",
+        ),
+        (
+            "estimated telemetry",
+            policy + "\nEstimate unknown token counters when the recorder is missing.\n",
+            "missing telemetry must not be estimated",
+        ),
+        (
+            "collapsed native counters",
+            policy + "\nCollapse provider-native counters into one total.\n",
+            "token categories must remain distinct",
+        ),
+        (
+            "phase boundary collapse",
+            policy + "\nTreat test execution as implementation.\n",
+            "phase boundaries must remain stable",
+        ),
+        (
+            "delegated ledger bypass",
+            policy + "\nDelegated agents may skip issue ledgers.\n",
+            "delegated work must receive relevant issue-ledger constraints",
+        ),
+        (
+            "missing telemetry lifecycle",
+            replace_section(
+                policy,
+                "Measure delivery efficiency truthfully",
+                "- Store a manual total in the repository.",
+            ),
+            "delivery-efficiency contract",
+        ),
+        (
+            "form-first collection",
+            policy + "\nA collection should show the creation form first.\n",
+            "collection destinations must not lead with forms",
+        ),
+        (
+            "missing content-first UI",
+            replace_section(
+                policy,
+                "Put requested interface content first",
+                "- Put setup and administration above the named content.",
+            ),
+            "interface-content contract",
+        ),
+        (
+            "positive authorization wording",
+            policy + "\nAuthenticated telemetry means the agent is authorized.\n",
+            "must not grant agent authority",
+        ),
+        (
+            "runtime-specific policy",
+            policy + "\nCodex must apply this product-specific rule.\n",
+            "runtime/project-specific term: Codex",
+        ),
     )
-    canonical_efficiency = MODULE.section(
-        canonical_policy,
-        "Measure delivery efficiency truthfully",
+    for name, candidate, expected in cases:
+        result = messages(candidate)
+        check(expected in result, f"{name} fixture did not trigger {expected!r}: {result}")
+
+    missing_question_details = (
+        (
+            "risk-control domains",
+            "especially security, privacy,\n  backup, migration, preservation, or data-safety work",
+            "especially optional engineering work",
+            "security",
+        ),
+        ("concrete proposal", "concrete proposal", "general idea", "concrete proposal"),
+        (
+            "evidence scenario and likelihood",
+            "evidence, scenario, and assessed likelihood",
+            "general context",
+            "assessed likelihood",
+        ),
+        ("expected benefit", "expected benefit", "possible outcome", "expected benefit"),
+        (
+            "cost complexity and maintenance",
+            "cost,\n  complexity, and ongoing maintenance",
+            "delivery notes",
+            "ongoing maintenance",
+        ),
+        (
+            "doing and not-doing risks",
+            "risks of doing it and not doing it",
+            "general risks",
+            "risks of doing it and not doing it",
+        ),
+        ("realistic alternatives", "realistic alternatives", "other ideas", "realistic alternatives"),
+        ("reversibility", "reversibility", "future handling", "reversibility"),
+        ("clear recommendation", "clear recommendation", "summary", "clear recommendation"),
+    )
+    for name, old, new, expected in missing_question_details:
+        candidate = replace_last(policy, old, new)
+        result = messages(candidate)
+        check(
+            "engineering-expansion question contract" in result and expected in result,
+            f"missing {name} fixture did not identify {expected!r}: {result}",
+        )
+
+    # Length itself is not a failure. This protects the earlier decision against
+    # arbitrary word limits while semantic checks keep the policy focused.
+    long_but_semantically_same = policy + "\n" + ("Neutral explanatory context. " * 2000)
+    check(
+        not MODULE.find_policy_violations(long_but_semantically_same),
+        "policy checker must not impose a numeric size ceiling",
+    )
+
+    explicit_safeguards = policy + (
+        "\nNever stop deployment at the first failure. Do not request unbounded tool output. "
+        "Never collapse provider-native counters. Delegated agents may not skip issue ledgers. "
+        "Never estimate unknown counters. A collection must not show a form first. "
+        "Never implement security, privacy, backup, migration, preservation, or data-safety "
+        "expansions without asking the user. Silent scope expansion is never permitted.\n"
     )
     check(
-        MODULE.section(VALID_POLICY, "Measure delivery efficiency truthfully") == canonical_efficiency,
-        "self-test efficiency fixture must exactly match the canonical policy section",
+        not MODULE.find_policy_violations(explicit_safeguards),
+        "explicit negative safeguards must not be treated as contradictory instructions",
+    )
+
+    credible_in_scope_backup = policy + (
+        "\nA backup required by an agreed destructive persistent-data operation is a credible "
+        "project need, not an unrequested expansion. Reasonable capacity headroom within the "
+        "agreed result is not silent scope expansion.\n"
     )
     check(
-        MODULE.section(VALID_POLICY, "Learn from agent-made mistakes") == canonical_mistakes,
-        "self-test mistake fixture must exactly match the canonical policy section",
+        not MODULE.find_policy_violations(credible_in_scope_backup),
+        "credible in-scope safety work and reasonable headroom must remain valid",
     )
-    check(not MODULE.find_policy_violations(VALID_POLICY), "complete universal policy should pass")
 
-    uninformed = VALID_POLICY.replace(
-        "- Before asking the user to decide, present realistic options in plain language,\n"
-        "  including costs, risks, and a recommendation.\n"
-        "- For every third-party option give its exact name, capabilities, limitations,\n"
-        "  and specifications. Verify facts with current authoritative sources, covering\n"
-        "  maturity, maintenance, licensing, security, privacy, lock-in, and integration;\n"
-        "  distinguish facts, inferences, and unknowns.",
-        "- Ask the user to choose option A or option B and follow their answer.",
-    )
-    check("informed-decisions contract" in messages(uninformed), "uninformed choice must fail")
-
-    symmetric_foundation = VALID_POLICY.replace(
-        "- Use an industry-standard foundation. Under-engineering is the more serious\n"
-        "  failure; over-provisioned capacity is acceptable, and present scale alone\n"
-        "  does not justify an inadequate foundation.",
-        "- Use an industry-standard foundation. Balance under-engineering and\n"
-        "  over-provisioned capacity equally; both are acceptable, and present scale\n"
-        "  determines which foundation to choose.",
-    )
-    check("foundation asymmetry" in messages(symmetric_foundation), "symmetric sizing rule must fail")
-
-    no_decision_file = VALID_POLICY.replace("`DecisionHistory.md`", "the decision record")
-    check("DecisionHistory.md" in messages(no_decision_file), "unnamed decision record must fail")
-
-    negated_decision_file = VALID_POLICY.replace(
-        "- Keep project-root `DecisionHistory.md` as a dense, concise index of major",
-        "- Do not use project-root `DecisionHistory.md`; keep an unnamed index of major",
-    )
-    check("negative instruction" in messages(negated_decision_file), "negated decision file must fail")
-
-    verbose_decision_log = VALID_POLICY.replace(
-        "- Keep project-root `DecisionHistory.md` as a dense, concise index of major\n"
-        "  decisions, not a report, timeline, or implementation log. Each entry contains\n"
-        "  only `Decision` and `Why`, plus a stable ID and detail-link metadata.",
-        "- Record implementation, verification, results, and timelines in project-root\n"
-        "  `DecisionHistory.md` so every detail remains in the main history.",
+    non_security_change = policy + (
+        "\nA copy-only UI change does not add, change, weaken, remove, or intentionally "
+        "omit a security-posture control, so it requires no security interview.\n"
     )
     check(
-        "informed-decisions contract" in messages(verbose_decision_log),
-        "a verbose main decision archive must fail",
+        not MODULE.find_policy_violations(non_security_change),
+        "non-security work must not trigger the security-assumptions gate",
     )
 
-    shared_details = VALID_POLICY.replace(
-        "exactly one project-root\n  `DecisionDetails/<decision-id>.md` file per decision",
-        "one shared project-root decision-details file",
-    )
-    check("detail file" in messages(shared_details), "shared decision details must fail")
-
-    no_direction = VALID_POLICY.replace(
-        "- Maintain a concise evidence-linked `Direction` summary in `DecisionHistory.md`\n"
-        "  that distinguishes confirmed user intent from inferred patterns and cites\n"
-        "  decision IDs. Apply it to analogous work, but not from one ambiguous choice.",
-        "- Follow the latest local technical choice without inferring broader intent.",
-    )
-    check("project direction" in messages(no_direction), "missing direction synthesis must fail")
-
-    eager_details = VALID_POLICY.replace(
-        "read only the relevant file for application, revisit,",
-        "read all `DecisionDetails/` files for every task,",
-    )
-    check("routine context" in messages(eager_details), "eager detail loading must fail")
-
-    no_ledger_file = VALID_POLICY.replace("`CompletionLedger.md`", "the shared ledger")
-    check("CompletionLedger.md" in messages(no_ledger_file), "unnamed completion ledger must fail")
-
-    negated_ledger_file = VALID_POLICY.replace(
-        "- Maintain project-root `CompletionLedger.md` containing only active unresolved",
-        "- Do not maintain project-root `CompletionLedger.md` containing only active unresolved",
-    )
-    check("negative instruction" in messages(negated_ledger_file), "negated ledger file must fail")
-
-    retained_history = VALID_POLICY.replace(
-        "- Maintain project-root `CompletionLedger.md` containing only active unresolved\n"
-        "  partial implementations, TODOs, improvements, and generalizations. Remove an\n"
-        "  item in the same change once implemented and verified; never retain resolved,\n"
-        "  completed, or closed entries or evidence. Delete `CompletionLedger.md` when\n"
-        "  no active items remain. Version control is the default completion history;\n"
-        "  keep consequential decisions in `DecisionHistory.md`. Create project-root\n"
-        "  `CompletionHistory.md` only when explicit audit retention is required; keep\n"
-        "  it out of routine agent context and read it only for explicit historical or\n"
-        "  audit work. Before readiness, verify the end-to-end result.",
-        "- Create project-root `CompletionLedger.md` for each partial implementation,\n"
-        "  TODO, improvement, and generalization. Resolve every entry before readiness\n"
-        "  and retain it as history after verifying the end-to-end result.",
+    read_only_discovery = policy + (
+        "\nRead-only discovery may inventory the current deployment and trust boundaries "
+        "to identify material questions; it does not select or alter a control.\n"
     )
     check(
-        "completion-ledger contract" in messages(retained_history),
-        "a completion ledger that retains resolved history must fail",
+        not MODULE.find_policy_violations(read_only_discovery),
+        "read-only discovery that does not choose a control must pass",
     )
 
-    contradictory_history = VALID_POLICY.replace(
-        "  audit work. Before readiness, verify the end-to-end result.",
-        "  audit work. Keep resolved entries or evidence in the active ledger as history.\n"
-        "  Before readiness, verify the end-to-end result.",
+    assumption_backed_control = policy + (
+        "\n`security-assumptions.md` records the user's confirmed single-operator, "
+        "owner-managed local runtime; low-sensitivity assets; no credible remote adversary; "
+        "trusted process boundaries; owner-only file access as the necessary gate; network "
+        "authentication as explicitly unnecessary; the accepted local-access risk; and "
+        "internet exposure as a review trigger. The implemented owner-only permission "
+        "control cites those entries and remains inside the requested scope.\n"
     )
     check(
-        "must not preserve terminal entries" in messages(contradictory_history),
-        "a contradictory terminal-retention rule must fail",
+        not MODULE.find_policy_violations(assumption_backed_control),
+        "a project-specific, user-confirmed, cited, proportional security control must pass",
     )
 
-    for contradiction in (
-        "Resolved entries may remain.",
-        "Do not remove completed rows.",
-        "Preserve entries after they are closed.",
-        "Never delete tests; keep resolved rows.",
-        "Remove closed items in a separate change.",
-    ):
-        contradictory_policy = VALID_POLICY.replace(
-            "  audit work. Before readiness, verify the end-to-end result.",
-            f"  audit work. {contradiction}\n  Before readiness, verify the end-to-end result.",
+    assumption_backed_expansion = policy + (
+        "\nThe proposed network authentication control cites the user's confirmed assumptions, "
+        "but it is outside the requested result. Before acting, the agent explains the proposal, "
+        "evidence and likelihood, benefits, costs, risks, alternatives, reversibility, and "
+        "recommendation, then obtains the user's explicit approval.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(assumption_backed_expansion),
+        "confirmed assumptions must not replace expansion approval",
+    )
+
+    explicit_security_safeguards = policy + (
+        "\nIf security-assumptions.md is missing, stop before implementation and ask the "
+        "user. Agents must not infer a threat model. Never automatically apply maximum "
+        "hardening controls.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(explicit_security_safeguards),
+        "explicit security safeguards must not be mistaken for prohibited instructions",
+    )
+
+    with tempfile.TemporaryDirectory(prefix="app-wide-importer-") as raw:
+        importer = Path(raw) / "CLAUDE.md"
+        importer.write_text(
+            "# Project memory\n\nConfirm the user-level memory loaded the canonical file. "
+            "Otherwise read `reference/codex-app-wide/AGENTS.md` directly and report the "
+            "installation or activation gap.\n\n@AGENTS.md\n",
+            encoding="utf-8",
+        )
+        check(not MODULE.audit_claude_importer(importer), "single project import must pass")
+        importer.write_text(
+            "@reference/codex-app-wide/AGENTS.md\n@AGENTS.md\n",
+            encoding="utf-8",
         )
         check(
-            "must not preserve terminal entries" in messages(contradictory_policy),
-            f"terminal-retention wording must fail: {contradiction}",
+            "must not re-import" in "\n".join(MODULE.audit_claude_importer(importer)),
+            "duplicate universal-policy import must fail",
         )
-
-    cold_history = VALID_POLICY.replace(
-        "  audit work. Before readiness, verify the end-to-end result.",
-        "  audit work. `CompletionHistory.md` may preserve resolved evidence.\n"
-        "  Version control may preserve completed entries as history. Before readiness,\n"
-        "  verify the end-to-end result.",
-    )
-    check(
-        not MODULE.find_policy_violations(cold_history),
-        "explicit cold history must not be mistaken for active-ledger retention",
-    )
-
-    missing_same_change = VALID_POLICY.replace("in the same change once", "eventually after")
-    check(
-        "same change" in messages(missing_same_change),
-        "terminal entries left for later cleanup must fail",
-    )
-
-    retained_empty_file = VALID_POLICY.replace(
-        "Delete `CompletionLedger.md` when\n  no active items remain.",
-        "Keep `CompletionLedger.md` as an empty template when no active items remain.",
-    )
-    check(
-        "empty CompletionLedger.md" in messages(retained_empty_file),
-        "an empty retained ledger must fail",
-    )
-
-    no_efficiency = replace_section(VALID_POLICY, "Measure delivery efficiency truthfully", "")
-    check(
-        "delivery-efficiency section is missing" in messages(no_efficiency),
-        "missing efficiency policy must fail",
-    )
-
-    privacy_marker = (
-        "- Never retain prompts, source content, tool payloads, secrets, credentials, or\n"
-        "  personal data in efficiency telemetry.\n"
-    )
-
-    def add_efficiency_rule(rule: str) -> str:
-        return VALID_POLICY.replace(privacy_marker, privacy_marker + rule + "\n")
-
-    def add_outside_efficiency(rule: str) -> str:
-        return VALID_POLICY + "\n## Telemetry Overrides\n\n" + rule + "\n"
-
-    contradictions = (
-        (
-            "- Store `EfficiencyLedger.jsonl` in project-root routine context.",
-            "must not become hot project context",
-        ),
-        (
-            "- Token counters may be estimated when missing from the provider.",
-            "must not be estimated",
-        ),
-        (
-            "- Record missing token counters as zero.",
-            "must not be zero-filled",
-        ),
-        (
-            "- Agents may skip tests to improve the efficiency metric.",
-            "must not reward reduced delivery quality or scope",
-        ),
-        (
-            "- Agents may rewrite prior events after a corrected measurement.",
-            "must be corrected append-only",
-        ),
-        (
-            "- Agents may combine phase and activity state into one label.",
-            "must not be collapsed",
-        ),
-        (
-            "- Agents may omit failed attempts from efficiency totals.",
-            "must include failed and delegated work",
-        ),
-        (
-            "- Telemetry may retain prompts for later analysis.",
-            "must not retain sensitive content",
-        ),
-        (
-            "- Only record the terminal event for each task.",
-            "must include start and terminal lifecycle events",
-        ),
-        (
-            "- Retain prompts and source content for later efficiency analysis.",
-            "must not retain sensitive content",
-        ),
-        (
-            "- Do not include delegated agents or failed attempts in efficiency totals.",
-            "must include failed and delegated work",
-        ),
-        (
-            "- Estimate missing efficiency counters.",
-            "must not be estimated",
-        ),
-        (
-            "- Rewrite prior events when a later correction arrives.",
-            "must be corrected append-only",
-        ),
-        (
-            "- Combine phase and activity state into one label.",
-            "must not be collapsed",
-        ),
-        (
-            "- Use heuristic estimates when authoritative counters are unavailable.",
-            "must not be estimated",
-        ),
-        (
-            "- Report inferred phase allocation as measured.",
-            "must not be presented as measured",
-        ),
-        (
-            "- Report inferred phase allocations as measured values.",
-            "must not be presented as measured",
-        ),
-        (
-            "- Count inferred phase allocations as measurements.",
-            "must not be presented as measured",
-        ),
-        (
-            "- A task may be complete with unresolved in-scope requirements.",
-            "must not ignore unresolved in-scope requirements",
-        ),
-        (
-            "- A task may be complete while an in-scope requirement remains unresolved.",
-            "must not ignore unresolved in-scope requirements",
-        ),
-        (
-            "- A task can be called complete despite an unresolved in-scope requirement.",
-            "must not ignore unresolved in-scope requirements",
-        ),
-        (
-            "- Complete the task even when an in-scope requirement is unresolved.",
-            "must not ignore unresolved in-scope requirements",
-        ),
-        (
-            "- Use successful as an additional terminal status.",
-            "exact terminal status set",
-        ),
-        (
-            "- Add ready as another terminal status.",
-            "exact terminal status set",
-        ),
-        (
-            "- Use done as an extra terminal outcome.",
-            "exact terminal status set",
-        ),
-        (
-            "- Collapse provider-native input, output, cached, and reasoning token categories.",
-            "token categories must not be collapsed",
-        ),
-        (
-            "- Report one total instead of provider-native token categories.",
-            "token categories must not be collapsed",
-        ),
-        (
-            "- Treat research and diagnosis as implementation.",
-            "planning work must not be reclassified as implementation",
-        ),
-        (
-            "- Combine request-to-delivery and execution wall time.",
-            "wall time must remain separate",
-        ),
-        (
-            "- Record uninstrumented activity as zero.",
-            "must not be zero-filled",
-        ),
-        (
-            "- Treat changed user intent and new scope as agent-caused rework.",
-            "must not be counted as agent-caused rework",
-        ),
-        (
-            "- Store raw private project and revision names.",
-            "must remain nonsensitive and opaque",
-        ),
-    )
-    for rule, expected in contradictions:
-        for location, policy in (
-            ("inside", add_efficiency_rule(rule)),
-            ("outside", add_outside_efficiency(rule)),
-            ("outside prose", add_outside_efficiency(rule.removeprefix("- "))),
-        ):
-            check(
-                expected in messages(policy),
-                f"contradictory efficiency rule must fail {location} its section: {rule}",
-            )
-
-    explicit_privacy = add_efficiency_rule(
-        "- Include an explicit safeguard so prompts and secrets are never retained."
-    )
-    check(
-        not MODULE.find_policy_violations(explicit_privacy),
-        "an additional negative privacy safeguard must not be treated as retention",
-    )
-
-    excluded_privacy = add_efficiency_rule(
-        "- Record that prompts were excluded from efficiency telemetry."
-    )
-    check(
-        not MODULE.find_policy_violations(excluded_privacy),
-        "recording that sensitive payloads were excluded must remain valid",
-    )
-
-    explicit_cold_storage = add_efficiency_rule(
-        "- Keep `EfficiencyLedger.jsonl` outside source worktrees and routine context.\n"
-        "- Never store `EfficiencyLedger.jsonl` in a source worktree.\n"
-        "- Never record missing counters as zero."
-    )
-    check(
-        not MODULE.find_policy_violations(explicit_cold_storage),
-        "an additional cold-storage safeguard must not be treated as hot storage",
-    )
-
-    provenance_guard = add_efficiency_rule(
-        "- Phase attribution may be inferred only when marked inferred; never present it as measured."
-    )
-    check(
-        not MODULE.find_policy_violations(provenance_guard),
-        "explicitly labeled inferred attribution must remain valid",
-    )
-
-    proven_zero = add_efficiency_rule(
-        "- Record zero only when complete instrumentation proves no usage; otherwise record unknown."
-    )
-    check(
-        not MODULE.find_policy_violations(proven_zero),
-        "zero backed by complete instrumentation must remain valid",
-    )
-
-    policy_as_recorder = VALID_POLICY.replace(
-        "This policy does not itself capture telemetry;\n  a missing",
-        "This policy itself captures telemetry;\n  a missing",
-    )
-    check(
-        "operational recorder" in messages(policy_as_recorder),
-        "policy text must not claim to implement the recorder",
-    )
-
-    delayed_start = VALID_POLICY.replace(
-        "use a runtime- or harness-owned recorder from\n  request receipt through terminal delivery, recording first model or tool\n  activity separately",
-        "use a runtime- or harness-owned recorder after\n  the first model or tool activity through terminal delivery",
-    )
-    check(
-        "request delay" in messages(delayed_start),
-        "measurement beginning after first activity must fail",
-    )
-
-    weakened_terminal = VALID_POLICY.replace(
-        "terminal status of complete, incomplete, blocked,",
-        "terminal status of successful, incomplete, blocked,",
-    )
-    check(
-        "exact terminal status set" in messages(weakened_terminal),
-        "renaming the complete terminal status must fail",
-    )
-
-    extra_terminal = VALID_POLICY.replace(
-        "cancelled, superseded, or interrupted.",
-        "cancelled, superseded, interrupted, or successful.",
-    )
-    check(
-        "exact terminal status set" in messages(extra_terminal),
-        "adding an unapproved terminal status must fail",
-    )
-
-    missing_attribution = VALID_POLICY.replace(
-        "Keep measurement provenance separate from attribution provenance.",
-        "Treat every phase allocation as an authoritative measurement.",
-    )
-    check(
-        "attribution" in messages(missing_attribution),
-        "phase splits without attribution provenance must fail",
-    )
-
-    missing_phase_taxonomy = VALID_POLICY.replace(
-        "Planning covers requirements, context, research, diagnosis, design, and\n"
-        "  sequencing. Implementation covers changes to code, configuration,\n"
-        "  documentation, data, and test artifacts. Testing covers executing and\n"
-        "  reviewing verification. Deployment covers release or environment mutation;\n"
-        "  reporting covers user-facing status and handoff. Ambiguous mixed work is\n"
-        "  unattributed.",
-        "Classify phases using local judgment.",
-    )
-    check(
-        "operational boundaries" in messages(missing_phase_taxonomy),
-        "undefined phase taxonomy must fail",
-    )
-
-    collapsed_rework_cause = VALID_POLICY.replace(
-        "Classify linked later work on separate\n"
-        "  dimensions: its kind is continuation, retry, rollback, defect repair, or\n"
-        "  rework; its cause is agent-caused mistake, changed user intent, new scope,\n"
-        "  external cause, or unknown.",
-        "Classify all linked later work as agent-caused rework.",
-    )
-    check(
-        "separate kind from cause" in messages(collapsed_rework_cause),
-        "work kind and cause collapsed into agent rework must fail",
-    )
-
-    collapsed_scope = VALID_POLICY.replace(
-        "Bind it to the agreed requested-scope and acceptance baseline plus\n"
-        "  user-approved scope changes. Record each nonsensitive requirement ID or\n"
-        "  evidence reference as satisfied, partial, blocked, or explicitly removed,\n"
-        "  with delivered scope, verification, evidence provenance, and known defect and\n"
-        "  rework links. A task cannot be complete while an in-scope requirement remains\n"
-        "  unresolved.",
-        "Record the delivered scope without the original requirements or accepted changes.",
-    )
-    check(
-        "agreed-scope" in messages(collapsed_scope),
-        "delivered scope without the agreed baseline must fail",
-    )
-
-    collapsed_timing = VALID_POLICY.replace(
-        "For each phase, report authoritative token counters, phase-inclusive elapsed\n"
-        "  interval unions, and activity-state duration. Deduplicate overlapping spans.\n"
-        "  Report end-to-end wall time separately from summed per-agent active time;\n"
-        "  concurrent phase unions may overlap and must not be summed as wall time.",
-        "For each phase, report one elapsed total for all agents and waits.",
-    )
-    check(
-        "timing" in messages(collapsed_timing) or "wall time" in messages(collapsed_timing),
-        "collapsed concurrent timing must fail",
-    )
-
-    no_mistake_section = replace_section(VALID_POLICY, "Learn from agent-made mistakes", "")
-    check("agent-mistake section is missing" in messages(no_mistake_section), "missing mistake policy must fail")
-
-    unnamed_issue_memory = VALID_POLICY.replace("`UserIssueLedgers/`", "the recurring issue memory")
-    check(
-        "user-issue-ledger contract" in messages(unnamed_issue_memory),
-        "an unnamed recurring-issue record must fail",
-    )
-
-    no_preimplementation_read = VALID_POLICY.replace(
-        "Before planning or implementing any repository change, inventory",
-        "After implementing a repository change, optionally inventory",
-    )
-    no_preimplementation_messages = messages(no_preimplementation_read)
-    check(
-        "before new implementation" in no_preimplementation_messages
-        or "user-issue-ledger contract" in no_preimplementation_messages,
-        "ledger review delayed until after implementation must fail",
-    )
-
-    no_delegation_context = VALID_POLICY.replace(
-        "Include every relevant ledger ID, required behavior, and verification in\n"
-        "  delegated-agent tasks; delegation does not transfer context unless it is\n"
-        "  passed explicitly. Review delegated results against the same rows before\n"
-        "  accepting them.",
-        "Delegated agents may infer any relevant prior corrections themselves.",
-    )
-    check(
-        "delegated work" in messages(no_delegation_context),
-        "delegated work without explicit ledger constraints must fail",
-    )
-
-    delete_after_fix = VALID_POLICY + (
-        "\n## Issue Ledger Override\n\n"
-        "- Delete `UserIssueLedgers/` after the reported issue is fixed.\n"
-    )
-    check(
-        "delete-on-fix" in messages(delete_after_fix),
-        "delete-on-fix semantics must fail",
-    )
-
-    duplicate_on_recurrence = VALID_POLICY + (
-        "\n## Issue Ledger Override\n\n"
-        "- Add another new row whenever the same mistake recurs again.\n"
-    )
-    check(
-        "rather than duplicate" in messages(duplicate_on_recurrence),
-        "duplicate recurrence rows must fail",
-    )
-
-    bypass_for_new_features = VALID_POLICY + (
-        "\n## Issue Ledger Override\n\n"
-        "- Ignore `UserIssueLedgers/` during new feature implementation.\n"
-    )
-    check(
-        "must not bypass" in messages(bypass_for_new_features),
-        "new feature work must not bypass learned constraints",
-    )
-
-    raw_incident_archive = VALID_POLICY + (
-        "\n## Issue Ledger Override\n\n"
-        "- Store the raw conversation in `UserIssueLedgers/`.\n"
-    )
-    check(
-        "raw or sensitive" in messages(raw_incident_archive),
-        "raw conversation retention must fail",
-    )
-
-    misclassified_external = VALID_POLICY + (
-        "\n## Issue Ledger Override\n\n"
-        "- Record external failures in `UserIssueLedgers/`.\n"
-    )
-    check(
-        "not recurring agent mistakes" in messages(misclassified_external),
-        "external failures must not be misclassified as learned agent mistakes",
-    )
-
-    mixed_catch_all = VALID_POLICY + (
-        "\n## Issue Ledger Override\n\n"
-        "- Keep all issue patterns in one shared ledger.\n"
-    )
-    check(
-        "must not be collapsed" in messages(mixed_catch_all),
-        "unrelated perspectives collapsed into one ledger must fail",
-    )
-
-    unbound_scope = VALID_POLICY.replace(
-        "The relative file path owns the scope:",
-        "A ledger may choose an unrelated display scope:",
-    )
-    check(
-        "path, title, and ID namespace" in messages(unbound_scope),
-        "a ledger contract without path-bound scope identity must fail",
-    )
-
-    buried_collection = VALID_POLICY.replace(
-        "- A destination label is a content promise. For a list or collection, show its\n"
-        "  real items or honest loading, error, or empty state as the first substantial\n"
-        "  content in the first viewport, including on narrow screens.",
-        "- Keep the primary artifact prominent and progressively disclose secondary controls.",
-    )
-    check("collection-destination contract" in messages(buried_collection), "buried list policy must fail")
-
-    offscreen_create = VALID_POLICY.replace(
-        "- An add or create action must show its focused dialog, sheet, or dedicated page\n"
-        "  in the current viewport; never append it below a long list or off-screen.\n"
-        "  Successful creation returns to the collection and reveals the new item.",
-        "- Place creation forms where they fit the page layout.",
-    )
-    check("visible-create-flow contract" in messages(offscreen_create), "off-screen create policy must fail")
-
-    transient_approval = VALID_POLICY.replace(
-        "- Use visual exploration only for new directions or redesigns. Persist the\n"
-        "  approval state and exact response request, embedding both when no follow-up\n"
-        "  can appear.",
-        "- Ask for visual approval only in a transient progress message.",
-    )
-    check(
-        "persistent-approval contract" in messages(transient_approval),
-        "transient-only visual approval must fail",
-    )
-
-    named_tool = VALID_POLICY + "\nUse Codex for implementation.\n"
-    check("named product or tool" in messages(named_tool), "named assistant must fail")
-
-    absolute_path = VALID_POLICY + "\nLoad /opt/example/policy before work.\n"
-    check("filesystem path" in messages(absolute_path), "absolute path must fail")
+        importer.write_text(
+            "Confirm the user-level memory loaded the canonical file. Otherwise read "
+            "`reference/codex-app-wide/AGENTS.md` directly and report the installation or "
+            "activation gap.\n@AGENTS.md\n@AGENTS.md\n",
+            encoding="utf-8",
+        )
+        check(
+            "exactly once" in "\n".join(MODULE.audit_claude_importer(importer)),
+            "duplicate repository-policy import must fail",
+        )
+        importer.write_text("@AGENTS.md\n", encoding="utf-8")
+        check(
+            "session fallback" in "\n".join(MODULE.audit_claude_importer(importer)),
+            "missing global-policy fallback must fail",
+        )
 
     print("app-wide policy checker self-test ok")
     return 0

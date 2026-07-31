@@ -25,7 +25,8 @@ outside the audited repo by default.
 
 ## How To Use
 
-From Codex, invoke:
+This exhaustive skill is explicit-only: ordinary review or gap-finding requests
+do not activate it. From Codex, invoke:
 
 ```text
 Use $full-repo-test-coverage-audit to audit this repo.
@@ -38,8 +39,10 @@ Use $full-repo-test-coverage-audit to audit /path/to/repo.
 ```
 
 The lead audit requires high effort or higher. File batches and UI/visual
-coverage checks are handled by low-effort workers when available. If worker
-spawning is unavailable, the skill may use disclosed manual fallback coverage.
+coverage checks use Light workers (runtime value `low`) or disclosed manual
+fallback. Codex workers use `fork_turns="none"` and receive the entire
+generated prompt. If worker spawning or isolated context is unavailable, the
+skill may use disclosed manual fallback coverage.
 
 ## What It Produces
 
@@ -56,8 +59,15 @@ The harness creates an audit output directory containing:
 - `effort_ledger.json`: lead-recorded worker/effort/fallback ledger.
 - `excluded_files.json`: skipped files and scope-warning reasons.
 - `reports/`: required returned worker reports.
+- `logs/`: complete command output kept outside routine model context.
+- `final-report.md`: complete lead synthesis and prioritized plan.
 - `queue_complete.json`: queue-generation marker, not proof that verification
   is complete.
+
+Workers write complete reports directly to the declared artifact paths and
+return only compact filename/hash/byte/count receipts. The final chat response
+is a short outcome, counts, verifier status, evidence caveat, and artifact
+index—not the full report.
 
 ## Direct Harness Usage
 

@@ -7,11 +7,13 @@ import atexit
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,13 +34,42 @@ HARNESS_SKILL_NAMES = (
     "full-repo-test-coverage-audit",
     "ui-implementation-audit",
 )
+FAILURES: list[str] = []
 
 
-def run(args: list[str], *, cwd: Path = ROOT) -> None:
-    print("+", " ".join(args), flush=True)
+def run(args: list[str], *, cwd: Path = ROOT) -> bool:
+    """Run one command, retain its failure, and let the validation pass continue."""
+
+    rendered = shlex.join(args)
+    print("+", rendered, flush=True)
     environment = dict(os.environ)
     environment["PYTHONPYCACHEPREFIX"] = str(PYCACHE_ROOT)
-    subprocess.run(args, cwd=cwd, env=environment, check=True)
+    completed = subprocess.run(args, cwd=cwd, env=environment, check=False)
+    if completed.returncode != 0:
+        FAILURES.append(f"command exited {completed.returncode}: {rendered}")
+        return False
+    return True
+
+
+def attempt(label: str, operation: Callable[[], object]) -> bool:
+    """Run an in-process check without aborting independent later checks."""
+
+    try:
+        operation()
+    except SystemExit as error:
+        detail = str(error) or f"exit {error.code}"
+        FAILURES.append(f"{label}: {detail}")
+        return False
+    except Exception as error:  # noqa: BLE001 - the pass must collect independent failures
+        FAILURES.append(f"{label}: {type(error).__name__}: {error}")
+        return False
+    return True
+
+
+def print_failure_summary() -> None:
+    print(f"validation failed with {len(FAILURES)} collected failure(s):", flush=True)
+    for index, failure in enumerate(FAILURES, start=1):
+        print(f"  {index}. {failure}", flush=True)
 
 
 def tree_digest(path: Path) -> str:
@@ -187,7 +218,9 @@ def check_interaction_label_parity() -> None:
 
 
 def main() -> int:
-    check_repository_layout()
+    FAILURES.clear()
+    attempt("repository layout", check_repository_layout)
+    run([sys.executable, "scripts/validate_self_test.py"])
     run([sys.executable, "scripts/check_app_wide_policy_self_test.py"])
     run([sys.executable, "scripts/check_app_wide_policy.py"])
     run([sys.executable, "scripts/check_decision_history_self_test.py"])
@@ -202,9 +235,9 @@ def main() -> int:
     run([sys.executable, "scripts/check_ci_security_self_test.py"])
     run([sys.executable, "scripts/check_ci_security.py"])
     run([sys.executable, "scripts/sync_vendored_harness.py", "--check"])
-    check_vendor_sync()
-    check_interaction_label_parity()
-    check_include_glob_exclusions()
+    attempt("vendored harness sync", check_vendor_sync)
+    attempt("interaction label parity", check_interaction_label_parity)
+    attempt("include-glob exclusions", check_include_glob_exclusions)
     run([sys.executable, "scripts/self_test_manage_skill_links.py"])
     run([sys.executable, "scripts/manage_global_policy_self_test.py"])
     run([sys.executable, "scripts/merge_findings_self_test.py"])
@@ -228,8 +261,12 @@ def main() -> int:
     )
 
     for skill in SKILLS:
-        check_standalone_skill(skill)
-    check_standalone_recorder()
+        attempt(f"standalone skill {skill.name}", lambda skill=skill: check_standalone_skill(skill))
+    attempt("standalone delivery-efficiency recorder", check_standalone_recorder)
+
+    if FAILURES:
+        print_failure_summary()
+        return 1
 
     print("validation ok (5 canonical skills + portable recorder; standalone matrix passed)")
     return 0

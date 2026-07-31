@@ -5,13 +5,71 @@ complete truthful end-to-end behavior, informed choices, outcome-aware efficienc
 cannot reward reduced scope or verification,
 production-grade foundations, canonical ownership, scoped persistent memory for user-indicated
 mistakes, realistic verification, audits that begin only
-after their target implementation exists, proportionate runtime effort, and interfaces whose
+after their target implementation exists, complete diagnostic passes before batch repair,
+unacceptable under-engineering and informed approval before every expansion beyond the requested
+result or credible need, security controls grounded in user-confirmed project assumptions,
+relevant bounded agent context, proportionate runtime effort, and
+interfaces whose
 visible hierarchy matches the task and promised content (D-20260714-03, D-20260713-03,
-D-20260713-04, D-20260714-04, D-20260720-01, D-20260729-01, D-20260728-02, D-20260728-01, D-20260726-01, D-20260710-03,
+D-20260713-04, D-20260714-04, D-20260720-01, D-20260731-01, D-20260731-02,
+D-20260729-01,
+D-20260728-02, D-20260728-01, D-20260726-01, D-20260710-03,
 D-20260710-05). Inferred: repeated choices indicate a taste for compact low-noise UI,
 stable ordering and grouping, visible exceptions, contextual actions, and durable state rather than
 volatile cleverness (D-20260707-01, D-20260707-02, D-20260707-07, D-20260707-08); apply these
 patterns by default while treating them as inference when a new context materially differs.
+
+## [D-20260731-02 — Security controls use user-confirmed project assumptions](DecisionDetails/D-20260731-02.md)
+
+Decision: Every decision that adds, changes, weakens, removes, or intentionally omits a
+security-posture control is grounded in project-specific, user-confirmed assumptions recorded in
+project-root `security-assumptions.md`. Before implementation, read that file; when it is absent or
+insufficient for the decision, question the user and record the confirmed answers before acting.
+Never invent assumptions or default to maximum hardening.
+
+Why: Generic hardening treated hypothetical threats as project facts and added gates irrelevant to
+the actual users and environment. Options: selected one durable, user-confirmed project assumption
+contract over agent-inferred threat models, unconditional maximum hardening, or applying the gate
+only to out-of-scope expansions because proportional security requires actual project context even
+when security work is requested or already in scope. D-20260731-01 remains a separate authorization
+gate: assumption support establishes relevance, not permission to expand scope, and expansion
+approval does not replace the security-assumption record. Prior attempts: the every-expansion rule
+prevented silent extras but missed grounding controls already within scope. Intent: make security
+proportional, traceable, and controlled by the user's actual operating assumptions. Revisit only if:
+the user approves another durable project source with equivalent confirmation and per-control
+traceability.
+
+## [D-20260731-01 — Agent work uses complete evidence passes and bounded scope](DecisionDetails/D-20260731-01.md)
+
+Decision: Finish finite diagnostic, test, audit, rehearsal, and deployment passes after
+non-critical gaps, then batch guardrail and implementation fixes before one complete rerun; treat
+under-engineering the agreed result as unacceptable and implementation gaps as more serious and
+more punishable than reasonable over-engineering, while requiring an informative question and
+explicit approval before every potential over-engineering expansion beyond the requested result
+or credible project need; and keep agent-controlled context, capabilities, and tool output relevant
+and bounded. Claude project memory imports only repository policy because its user-level target
+already supplies universal policy. The exhaustive implementation and test-coverage repository
+audits require explicit skill invocation. Repository-audit workers use isolated fresh contexts and
+write full results to cold artifacts; every success receipt names its file. The formal web verifier
+owns artifact creation and defaults to bounded receipts; full report stdout is an explicit
+human-terminal mode.
+
+Why: The prior first-gap repair loop repeated expensive setup and hid later failure evidence, while
+the unconditional under-engineering asymmetry invited valueless migration, preservation, and local
+hardening work. Options: selected finish-pass/batch-fix plus a strong foundation asymmetry,
+every-expansion informed approval, and cold raw logs over restart-on-first-failure, unrestricted
+precautionary engineering, a material-only approval gate, weaker requested foundations, or
+discarded evidence because it preserves complete scope and diagnostics without choosing extras for
+the user or paying repeatedly for irrelevant work or model-facing output. Explicit-only heavy
+audits and software-owned artifact output were selected over broad implicit matching and an
+optional quiet flag because exhaustive workflows should be deliberate and context safety should
+not depend on an agent remembering a flag. Prior attempts: the first bounded-scope wording gated
+only material expansion and omitted the full decision context; the long universal policy and
+duplicate Claude import caused recurring context, tool reads returned much more content than tasks
+needed, and audit workers and the formal verifier could return full reports through parent context.
+Intent: optimize delivery cost by eliminating repeated and irrelevant work, never by reducing the
+agreed result or hiding known gaps. Revisit only if: a runtime provides proven semantic
+deduplication and context budgeting, or a safety-critical cycle requires a narrower fail-fast rule.
 
 ## [D-20260729-01 — One canonical global policy serves Codex and Claude](DecisionDetails/D-20260729-01.md)
 

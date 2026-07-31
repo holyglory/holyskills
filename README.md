@@ -541,10 +541,14 @@ unrelated runtime entries may be deleted.
 ## Deploy the universal global policy
 
 `reference/codex-app-wide/AGENTS.md` is the canonical app-wide Codex policy and
-the universal cross-runtime policy imported by this repository's `CLAUDE.md`.
+the universal cross-runtime policy loaded through each configured user-level
+runtime target.
 Root `AGENTS.md` is Holy Skills repository policy and must not be installed
-globally. Root `CLAUDE.md` remains a thin pair of relative imports: canonical
-universal policy first and repository policy second.
+globally. Root `CLAUDE.md` remains a thin relative import of repository policy;
+the user-level Claude target already supplies the canonical universal policy,
+so the project file does not import the same policy twice. Its startup text
+requires a session-local direct read and an installation-gap report if that
+user-level policy is absent or not activated.
 
 Use only `scripts/manage_global_policy.py` to deploy the universal file. The
 manager infers no home directory: every destination and the private transaction

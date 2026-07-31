@@ -431,6 +431,7 @@ def render_batch_prompt(
     entries: list[queue.AuditUnit],
     assets: list[VisualAsset],
     requirements: list[RequirementSource],
+    report_path: Path,
 ) -> str:
     return f"""# UI Implementation Audit Batch {batch_id:03d}/{total_batches:03d}
 
@@ -438,7 +439,10 @@ Run ID: `{run_id}`
 Repo root: `{repo}`
 Batch ID: `batch_{batch_id:03d}`
 
-You are a low-effort worker auditing interface source implementation. Do not edit files. Inspect every owned unit below and compare source-defined UI behavior, visible text, layout, state handling, responsive intent, implementation paths, and test evidence against the mockup/assets, required UI elements, features, and journey requirements listed here and in `manifest.json`.
+{queue.artifact_delivery_contract(report_path)}
+{queue.isolated_light_worker_contract()}
+
+You are a low-effort worker auditing interface source implementation. Do not edit the audited repository; write only the exact audit artifact authorized above. Inspect every owned unit below and compare source-defined UI behavior, visible text, layout, state handling, responsive intent, implementation paths, and test evidence against the mockup/assets, required UI elements, features, and journey requirements listed here and in `manifest.json`.
 
 ## Files You Own
 
@@ -465,9 +469,9 @@ For ranged units, inspect the assigned range manually plus nearby imports/types/
 - Do not mark source alignment clear just because it resembles a mockup; rendered viewports must help the user make the current journey decision.
 - Flag missing UI elements, unwired handlers, missing data/persistence paths, missing states, missing accessibility paths, and missing safe visual states or fixture paths when source implies heavy or production-only operations.
 
-## Required Report
+## Required Report File
 
-Return exactly these top-level headings in order:
+Write exactly these top-level headings in order to the report path above:
 
 ## Run ID
 {run_id}
@@ -526,14 +530,23 @@ List ambiguity for the lead, or `None.`
 """
 
 
-def render_mockup_asset_prompt(repo: Path, run_id: str, assets: list[VisualAsset], requirements: list[RequirementSource]) -> str:
+def render_mockup_asset_prompt(
+    repo: Path,
+    run_id: str,
+    assets: list[VisualAsset],
+    requirements: list[RequirementSource],
+    report_path: Path,
+) -> str:
     return f"""# UI Implementation Audit: Mockup And Asset Worker
 
 Run ID: `{run_id}`
 Repo root: `{repo}`
 Worker: `mockup_asset_audit`
 
-Do not edit files. Inventory the design target from mockups/assets and journey requirement sources, including required screens, features, UI elements, states, implementation expectations, and test expectations. Use image-viewing tools when available for raster assets; otherwise describe the blocker and rely on filenames/nearby docs only as fallback.
+{queue.artifact_delivery_contract(report_path)}
+{queue.isolated_light_worker_contract()}
+
+Do not edit the audited repository; write only the exact audit artifact authorized above. Inventory the design target from mockups/assets and journey requirement sources, including required screens, features, UI elements, states, implementation expectations, and test expectations. Use image-viewing tools when available for raster assets; otherwise describe the blocker and rely on filenames/nearby docs only as fallback.
 
 ## Mockup And Asset Inputs
 
@@ -543,7 +556,7 @@ Do not edit files. Inventory the design target from mockups/assets and journey r
 
 {compact_requirement_list(requirements)}
 
-Return exactly:
+Write exactly these sections to the report path above:
 
 ## Run ID
 {run_id}
@@ -568,7 +581,13 @@ List missing mockups, unclear journeys, missing UI element/feature/test expectat
 """
 
 
-def render_visual_tooling_prompt(repo: Path, run_id: str, ui_entries: list[queue.FileEntry], requirements: list[RequirementSource]) -> str:
+def render_visual_tooling_prompt(
+    repo: Path,
+    run_id: str,
+    ui_entries: list[queue.FileEntry],
+    requirements: list[RequirementSource],
+    report_path: Path,
+) -> str:
     files = "\n".join(f"- `{item.rel_path}` ({item.kind}, sha256=`{item.sha256}`)" for item in ui_entries) or "- None."
     return f"""# UI Implementation Audit: Visual Tooling Worker
 
@@ -576,7 +595,10 @@ Run ID: `{run_id}`
 Repo root: `{repo}`
 Worker: `visual_tooling_audit`
 
-Do not edit files. Identify how to render the implemented UI safely for screenshot comparison and how required screens, UI elements, states, and visual tests can be exercised. Prefer Playwright, Cypress, Storybook, Vite/Next dev servers, browser MCP tools, native previews/simulators, test fixtures, mock data modes, or existing screenshot tests.
+{queue.artifact_delivery_contract(report_path)}
+{queue.isolated_light_worker_contract()}
+
+Do not edit the audited repository; write only the exact audit artifact authorized above. Identify how to render the implemented UI safely for screenshot comparison and how required screens, UI elements, states, and visual tests can be exercised. Prefer Playwright, Cypress, Storybook, Vite/Next dev servers, browser MCP tools, native previews/simulators, test fixtures, mock data modes, or existing screenshot tests.
 
 ## Interface Source Files
 
@@ -586,7 +608,7 @@ Do not edit files. Identify how to render the implemented UI safely for screensh
 
 {compact_requirement_list(requirements)}
 
-Return exactly:
+Write exactly these sections to the report path above:
 
 ## Run ID
 {run_id}
@@ -611,14 +633,27 @@ List blockers or `None.`
 """
 
 
-def render_visual_comparison_prompt(repo: Path, run_id: str, assets: list[VisualAsset], requirements: list[RequirementSource]) -> str:
+def render_visual_comparison_prompt(
+    repo: Path,
+    run_id: str,
+    assets: list[VisualAsset],
+    requirements: list[RequirementSource],
+    report_path: Path,
+) -> str:
     return f"""# UI Implementation Audit: Visual Comparison Worker
 
 Run ID: `{run_id}`
 Repo root: `{repo}`
 Worker: `visual_comparison_audit`
 
-Do not edit files. Use available screenshot-capable tooling to compare the implemented UI against mockups/assets, required UI elements, feature behavior, tests, and user journey requirements. Prefer safe test/fixture/preview mode. If the UI cannot be rendered, create desktop and mobile `BLOCKED` rows with concrete tool/route evidence and report the missing visual harness as a finding.
+{queue.artifact_delivery_contract(report_path)}
+{queue.isolated_light_worker_contract()}
+
+Authorized visual evidence manifest: `{(report_path.parent.parent / 'visual_evidence.json').resolve()}`.
+Screenshot and formal-verifier artifacts may be written only beneath the same
+audit-output directory and must be registered in that manifest.
+
+Do not edit the audited repository; write only the exact audit artifacts authorized above. Use available screenshot-capable tooling to compare the implemented UI against mockups/assets, required UI elements, feature behavior, tests, and user journey requirements. Prefer safe test/fixture/preview mode. If the UI cannot be rendered, create desktop and mobile `BLOCKED` rows with concrete tool/route evidence and report the missing visual harness as a finding.
 
 For every produced screenshot/native capture/formal-verifier JSON, add a record to `visual_evidence.json` with stable id, confined relative path, SHA-256, detected MIME, actual image dimensions when applicable, route, state, viewport width/height/label, and capture tool. Cite it as `evidence:<id>` in every applicable row. A filename or the word screenshot is not evidence. For rendered web UI, bind the formal-verifier JSON and preserve each checked page's visible scrollbar inventory.
 
@@ -632,7 +667,7 @@ Before visual comparison, define the journey decision model and required UI elem
 
 {compact_requirement_list(requirements)}
 
-Return exactly:
+Write exactly these sections to the report path above:
 
 ## Run ID
 {run_id}
@@ -749,6 +784,8 @@ def write_completion_marker(out_dir: Path, manifest: dict) -> None:
         "effort_ledger": "effort_ledger.json",
         "excluded_files": "excluded_files.json",
         "reports_dir": "reports",
+        "logs_dir": "logs",
+        "final_report": "final-report.md",
         "ownership_marker": ARTIFACT_MARKER,
         "batch_count": manifest["batch_count"],
         "source_file_count": manifest["source_file_count"],
@@ -790,11 +827,12 @@ Scope warnings: **{manifest['scope_warning_count']}**
 ## Dispatch
 
 1. Fill `effort_ledger.json` as workers are assigned.
-2. Dispatch one low-effort worker per batch prompt.
-3. Save returned reports under `reports/batch_###.md`.
+2. Dispatch one Light-effort (`reasoning_effort="low"`) worker per batch prompt. In Codex set `fork_turns="none"` and pass the entire prompt plus applicable project-ledger requirements.
+3. Workers write complete reports to their prompt-declared `reports/` paths and return only bounded filename-bearing `REPORT_SAVED` receipts; never request the report body through the worker response.
 4. Dispatch visual workers when listed below.
 5. Run verifier: `{manifest['verifier_command']}`
 6. The lead must review visual evidence directly before final synthesis; source-only review is not a completed visual audit.
+7. Redirect verbose command output to `logs/`, write the complete synthesis to `final-report.md`, and return only a compact outcome/counts/verifier/artifact summary to chat.
 
 {visual_prompts}
 
@@ -841,6 +879,8 @@ def write_outputs(
         archived_reports_name = archive.name
         archived_reports_dir = str(archive)
     reports_dir.mkdir(exist_ok=True)
+    logs_dir = out_dir / "logs"
+    logs_dir.mkdir(exist_ok=True)
 
     batch_records: list[dict] = []
     all_paths: list[str] = []
@@ -848,7 +888,16 @@ def write_outputs(
     for index, batch in enumerate(batches, start=1):
         prompt = f"batch_{index:03d}.md"
         (out_dir / prompt).write_text(
-            render_batch_prompt(repo, run_id, index, len(batches), batch, visual_assets, requirements),
+            render_batch_prompt(
+                repo,
+                run_id,
+                index,
+                len(batches),
+                batch,
+                visual_assets,
+                requirements,
+                reports_dir / prompt,
+            ),
             encoding="utf-8",
         )
         paths = sorted({item.rel_path for item in batch})
@@ -859,6 +908,7 @@ def write_outputs(
             {
                 "id": f"batch_{index:03d}",
                 "prompt": prompt,
+                "report": f"reports/{prompt}",
                 "file_count": len(paths),
                 "coverage_unit_count": len(batch),
                 "interface_file_count": len(paths),
@@ -881,9 +931,36 @@ def write_outputs(
     visual_required = True
 
     if visual_required:
-        (out_dir / "mockup_asset_audit.md").write_text(render_mockup_asset_prompt(repo, run_id, visual_assets, requirements), encoding="utf-8")
-        (out_dir / "visual_tooling_audit.md").write_text(render_visual_tooling_prompt(repo, run_id, entries, requirements), encoding="utf-8")
-        (out_dir / "visual_comparison_audit.md").write_text(render_visual_comparison_prompt(repo, run_id, visual_assets, requirements), encoding="utf-8")
+        (out_dir / "mockup_asset_audit.md").write_text(
+            render_mockup_asset_prompt(
+                repo,
+                run_id,
+                visual_assets,
+                requirements,
+                reports_dir / "mockup_asset_audit.md",
+            ),
+            encoding="utf-8",
+        )
+        (out_dir / "visual_tooling_audit.md").write_text(
+            render_visual_tooling_prompt(
+                repo,
+                run_id,
+                entries,
+                requirements,
+                reports_dir / "visual_tooling_audit.md",
+            ),
+            encoding="utf-8",
+        )
+        (out_dir / "visual_comparison_audit.md").write_text(
+            render_visual_comparison_prompt(
+                repo,
+                run_id,
+                visual_assets,
+                requirements,
+                reports_dir / "visual_comparison_audit.md",
+            ),
+            encoding="utf-8",
+        )
         queue.write_json(out_dir / "visual_evidence.json", {"schema_version": 1, "run_id": run_id, "artifacts": []})
 
     verifier_args = [
@@ -900,6 +977,8 @@ def write_outputs(
         "excluded_files.json",
         "manifest.json",
         "queue_complete.json",
+        "final-report.md",
+        "logs",
         *(["mockup_asset_audit.md", "visual_tooling_audit.md", "visual_comparison_audit.md", "visual_evidence.json"] if visual_required else []),
         *([archived_reports_name] if archived_reports_name else []),
         *[batch["prompt"] for batch in batch_records],
@@ -910,6 +989,8 @@ def write_outputs(
         "audit_kind": "ui-implementation",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "reports_dir": str(reports_dir),
+        "logs_dir": str(logs_dir),
+        "final_report": str(out_dir / "final-report.md"),
         "archived_reports_dir": archived_reports_dir,
         "artifact_marker": str(out_dir / ARTIFACT_MARKER),
         "effort_ledger": str(out_dir / "effort_ledger.json"),

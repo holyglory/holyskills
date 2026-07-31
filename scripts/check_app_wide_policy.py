@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the stable semantic contract of the universal agent policy."""
+"""Validate the outcome-bearing contracts of the universal agent policy."""
 
 from __future__ import annotations
 
@@ -10,7 +10,26 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_POLICY = ROOT / "reference" / "codex-app-wide" / "AGENTS.md"
+DEFAULT_CLAUDE_IMPORTER = ROOT / "CLAUDE.md"
 
+REQUIRED_SECTIONS = (
+    "Use relevant authoritative context",
+    "Ground security-posture decisions in confirmed assumptions",
+    "Keep decisions compact and usable",
+    "Deliver the complete agreed scope",
+    "Finish diagnostic cycles before batch fixing",
+    "Keep behavior truthful",
+    "Learn from agent-made mistakes",
+    "Verify real behavior",
+    "Measure delivery efficiency truthfully",
+    "Put requested interface content first",
+    "Respect data and system boundaries",
+    "Protect sources, repositories, and running systems",
+    "Report status honestly",
+)
+
+# A universal policy must not depend on one runtime, product, framework, or
+# repository. Runtime adapters and project policy own those names.
 FORBIDDEN_NAMES = (
     "Codex",
     "Claude",
@@ -37,16 +56,33 @@ def section(text: str, heading: str) -> str:
     return match.group("body") if match else ""
 
 
-def require_terms(
-    violations: list[str],
-    body: str,
-    label: str,
-    terms: tuple[str, ...],
+def _fold(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
+def _require_terms(
+    violations: list[str], body: str, label: str, terms: tuple[str, ...]
 ) -> None:
-    folded = " ".join(body.casefold().split())
+    folded = _fold(body)
     missing = [term for term in terms if term.casefold() not in folded]
     if missing:
         violations.append(f"{label} missing required concepts: {', '.join(missing)}")
+
+
+def _require_pattern(
+    violations: list[str], body: str, label: str, pattern: str
+) -> None:
+    if not re.search(pattern, body, flags=re.IGNORECASE | re.DOTALL):
+        violations.append(label)
+
+
+def _bullet_starting_with(body: str, opening: str) -> str:
+    match = re.search(
+        rf"^-\s+{opening}.*?(?=^-\s+|\Z)",
+        body,
+        flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+    return match.group(0) if match else ""
 
 
 def find_policy_violations(text: str) -> list[str]:
@@ -55,1023 +91,577 @@ def find_policy_violations(text: str) -> list[str]:
     if not text.startswith("# Universal Agent Instructions\n"):
         violations.append("policy must use the universal title")
 
-    decision = section(text, "Use authoritative context and informed decisions")
-    if not decision:
-        violations.append("informed-decisions section is missing")
-    else:
-        require_terms(
+    bodies = {heading: section(text, heading) for heading in REQUIRED_SECTIONS}
+    for heading, body in bodies.items():
+        if not body:
+            violations.append(f"required section is missing: {heading}")
+
+    context = bodies["Use relevant authoritative context"]
+    if context:
+        _require_terms(
             violations,
-            decision,
-            "informed-decisions contract",
+            context,
+            "relevant-context contract",
             (
-                "before asking",
-                "realistic options",
+                "unchanged rule",
+                "live context",
+                "task matches",
+                "targeted",
+                "smallest useful result",
+                "cold artifact",
+                "raw logs",
+                "realistic materially distinct options",
                 "plain language",
+                "recommend",
                 "third-party",
                 "exact name",
-                "capabilities",
-                "limitations",
                 "authoritative sources",
-                "specifications",
-                "maturity",
-                "maintenance",
-                "licensing",
-                "security",
-                "privacy",
-                "lock-in",
-                "integration",
                 "facts",
                 "inferences",
                 "unknowns",
-                "costs",
-                "risks",
-                "recommendation",
+                "production-grade",
                 "industry-standard",
-                "under-engineering",
-                "over-provisioned",
-                "present scale",
-                "DecisionHistory.md",
+                "under-engineering the agreed result is unacceptable",
+                "implementation gaps",
+                "more serious",
+                "more punishable",
+                "reasonable over-engineering",
+                "silent scope expansion",
+                "every potential over-engineering expansion",
+                "requested result",
+                "credible project need",
+                "ask the user",
+                "explicit approval",
+                "highly informative question",
+                "disposable test data",
+                "single-user environment",
+            ),
+        )
+        _require_pattern(
+            violations,
+            context,
+            "under-engineering must be unacceptable and more punishable than reasonable over-engineering",
+            r"under-engineering\s+the\s+agreed\s+result\s+is\s+unacceptable"
+            r".{0,120}implementation\s+gaps?\s+are\s+more\s+serious\s+and\s+more"
+            r"\s+punishable\s+than\s+reasonable\s+over-engineering",
+        )
+        _require_pattern(
+            violations,
+            context,
+            "the engineering asymmetry must explicitly prohibit silent scope expansion",
+            r"(?:never|must\s+not|do\s+not).{0,40}authorize.{0,40}silent\s+scope\s+expansion",
+        )
+        expansion_question = _bullet_starting_with(context, r"Before\s+acting\s+on\s+every")
+        if not expansion_question:
+            violations.append(
+                "every potential engineering expansion must trigger an informative user question before action"
+            )
+        else:
+            _require_terms(
+                violations,
+                expansion_question,
+                "engineering-expansion question contract",
+                (
+                    "potential over-engineering expansion",
+                    "requested result",
+                    "credible project need",
+                    "security",
+                    "privacy",
+                    "backup",
+                    "migration",
+                    "preservation",
+                    "data-safety",
+                    "ask the user",
+                    "explicit approval",
+                    "highly informative question",
+                    "concrete proposal",
+                    "evidence",
+                    "scenario",
+                    "assessed likelihood",
+                    "expected benefit",
+                    "cost",
+                    "complexity",
+                    "ongoing maintenance",
+                    "risks of doing it and not doing it",
+                    "realistic alternatives",
+                    "reversibility",
+                    "clear recommendation",
+                    "do not begin the expansion until the user approves it",
+                ),
+            )
+            _require_pattern(
+                violations,
+                expansion_question,
+                "expansion approval must precede action",
+                r"before\s+acting.{0,500}ask\s+the\s+user.{0,120}explicit\s+approval"
+                r".{0,900}do\s+not\s+begin\s+the\s+expansion\s+until\s+the\s+user\s+approves",
+            )
+
+    security = bodies["Ground security-posture decisions in confirmed assumptions"]
+    if security:
+        _require_terms(
+            violations,
+            security,
+            "security-assumptions gate",
+            (
+                "every decision that adds, changes, weakens, removes, or intentionally omits",
+                "security-posture control",
+                "before proposing or making such a decision",
+                "project-root `security-assumptions.md`",
+                "non-security changes do not trigger a security interview",
+                "read-only discovery",
+                "identify material assumptions or questions",
+                "does not select, apply, alter, or omit",
+                "project-specific",
+                "user-confirmed assumptions",
+                "every security-posture decision and resulting implemented security measure",
+                "cite",
+                "templates, defaults, and agent guesses are not confirmed project facts",
+                "users and operators",
+                "deployment or runtime environment and ownership",
+                "assets and data sensitivity",
+                "credible adversaries and misuse",
+                "trust boundaries",
+                "necessary gates",
+                "explicitly unnecessary gates",
+                "acceptable risks",
+                "review triggers",
+                "is absent",
+                "stop before the security-posture decision or implementation",
+                "elaborate, plain-language baseline question",
+                "covering every assumption area",
+                "create the file",
+                "confirmed answers",
+                "exists but is insufficient for the current decision",
+                "ask only about unresolved assumptions material to that decision",
+                "update the file",
+                "do not repeat already resolved areas",
+                "before resuming security work",
+                "never invent or infer a project assumption",
+                "unconfirmed template",
+                "record unknowns explicitly",
+                "unconfirmed assumption cannot justify",
+                "never default to blanket hardening",
+                "cumulative",
+                "every potential expansion",
+                "requested result",
+                "credible project need",
+                "explicit approval before action",
+                "never satisfies or waives the other",
+            ),
+        )
+        _require_pattern(
+            violations,
+            security,
+            "every security-posture change or omission must read confirmed assumptions first",
+            r"every\s+decision\s+that\s+adds,\s+changes,\s+weakens,\s+removes,\s+or"
+            r"\s+intentionally\s+omits.{0,100}before\s+proposing\s+or\s+making"
+            r".{0,100}read\s+the\s+project-root\s+`security-assumptions\.md`",
+        )
+        _require_pattern(
+            violations,
+            security,
+            "every security-posture decision and implementation must cite confirmed assumptions",
+            r"every\s+security-posture\s+decision\s+and\s+resulting\s+implemented\s+security"
+            r"\s+measure\s+must\s+cite.{0,120}user-confirmed\s+assumptions",
+        )
+        _require_pattern(
+            violations,
+            security,
+            "an absent assumptions file must trigger the complete baseline question",
+            r"is\s+absent.{0,160}stop\s+before.{0,180}baseline\s+question"
+            r".{0,120}every\s+assumption\s+area.{0,160}create\s+the\s+file"
+            r".{0,100}confirmed\s+answers",
+        )
+        _require_pattern(
+            violations,
+            security,
+            "an insufficient assumptions file must trigger only material unresolved questions",
+            r"exists\s+but\s+is\s+insufficient.{0,160}ask\s+only\s+about\s+unresolved"
+            r"\s+assumptions\s+material.{0,180}update\s+the\s+file.{0,180}do\s+not"
+            r"\s+repeat\s+already\s+resolved\s+areas",
+        )
+        _require_pattern(
+            violations,
+            security,
+            "unknown security assumptions must be explicit and cannot justify posture decisions",
+            r"record\s+unknowns\s+explicitly.{0,100}(?:unknown|unconfirmed\s+assumption)"
+            r".{0,80}cannot\s+justify\s+adding,\s+changing,\s+weakening,\s+removing,"
+            r"\s+or\s+intentionally\s+omitting",
+        )
+        _require_pattern(
+            violations,
+            security,
+            "the security-assumptions gate and expansion approval must remain cumulative",
+            r"assumption\s+gate\s+and\s+the\s+informed-approval\s+rule.{0,180}cumulative"
+            r".{0,260}explicit\s+approval\s+before\s+action.{0,160}never\s+satisfies\s+or"
+            r"\s+waives\s+the\s+other",
+        )
+
+    decisions = bodies["Keep decisions compact and usable"]
+    if decisions:
+        _require_terms(
+            violations,
+            decisions,
+            "decision-memory contract",
+            (
+                "project-root `DecisionHistory.md`",
                 "dense",
                 "concise",
-                "major",
                 "not a report",
-                "timeline",
-                "implementation log",
-                "stable ID",
                 "DecisionDetails/<decision-id>.md",
-                "file per decision",
+                "exactly one",
+                "only `Decision` and `Why`",
                 "routine context",
-                "options considered",
-                "selected option",
-                "better",
-                "previously tried",
-                "did not work",
-                "project direction",
-                "quality bar",
-                "workflow expectations",
-                "UI preferences",
-                "taste",
                 "Direction",
                 "confirmed user intent",
                 "inferred patterns",
                 "decision IDs",
-                "analogous work",
                 "ambiguous choice",
-                "rejected or failed",
+                "rejected or failed option",
                 "new evidence",
-                "what changed",
-                "superseding",
-                "context loss",
+                "superseding decision",
             ),
         )
-        if not re.search(
-            r"(?is)\b(?:keep|record|use|maintain)\b.{0,160}\bproject-root\b"
-            r".{0,80}`DecisionHistory\.md`",
-            decision,
-        ):
-            violations.append("DecisionHistory.md must be positively assigned as the project-root record")
-        if re.search(r"(?is)\b(?:do not|never)\b.{0,100}`DecisionHistory\.md`", decision):
-            violations.append("DecisionHistory.md appears only or ambiguously in a negative instruction")
-        if not re.search(r"(?is)\bunder-engineering\b.{0,100}\bmore serious\b", decision):
-            violations.append("foundation asymmetry must make under-engineering the more serious failure")
-        if not re.search(r"(?is)\bover-provisioned\b.{0,80}\bacceptable\b", decision):
-            violations.append("foundation asymmetry must make over-provisioned capacity acceptable")
-        if not re.search(
-            r"(?is)\beach entry.{0,100}\bonly\b.{0,80}\bDecision\b.{0,80}\bWhy\b",
-            decision,
-        ):
-            violations.append("DecisionHistory.md entries must contain only Decision and Why")
-        if not re.search(
-            r"(?is)\bexactly one\b.{0,100}\bproject-root\b.{0,80}"
-            r"`DecisionDetails/<decision-id>\.md`.{0,80}\bfile per decision\b",
-            decision,
-        ):
-            violations.append("each decision must have exactly one named detail file")
-        if not re.search(
-            r"(?is)\bDirection\b.{0,240}\bconfirmed user intent\b.{0,160}"
-            r"\binferred\s+patterns\b.{0,160}\bdecision IDs\b",
-            decision,
-        ):
-            violations.append("DecisionHistory.md must synthesize evidence-linked project direction")
-        if not re.search(
-            r"(?is)\bdo not load\b.{0,100}\broutine context\b.{0,120}"
-            r"\bread only\b.{0,100}\brelevant file\b",
-            decision,
-        ):
-            violations.append("decision details must remain outside routine context")
-        if re.search(
-            r"(?is)\b(?:store|keep|record|include)\b.{0,80}"
-            r"\b(?:implementation|verification|timeline|results?)\b.{0,80}"
-            r"`DecisionHistory\.md`",
-            decision,
-        ):
-            violations.append("DecisionHistory.md must not become an implementation archive")
-        if re.search(
-            r"(?is)\b(?:load|read)\s+(?:all|every)\b.{0,100}"
-            r"`?DecisionDetails(?:/|`)",
-            decision,
-        ):
-            violations.append("routine work must not load every decision detail")
 
-    delivery = section(text, "Deliver the complete requested scope")
-    if not delivery:
-        violations.append("complete-delivery section is missing")
-    else:
-        require_terms(
+    delivery = bodies["Deliver the complete agreed scope"]
+    if delivery:
+        _require_terms(
             violations,
             delivery,
-            "completion-ledger contract",
+            "complete-delivery contract",
             (
-                "CompletionLedger.md",
+                "full agreed scope",
+                "only an explicit user decision",
+                "project-root `CompletionLedger.md`",
                 "only active unresolved",
-                "partial implementation",
-                "TODO",
-                "improvement",
-                "generalization",
+                "partial implementations",
                 "same change",
                 "implemented and verified",
                 "never retain",
-                "resolved",
-                "completed",
-                "closed",
+                "delete the file",
                 "no active items remain",
-                "version control",
-                "DecisionHistory.md",
                 "CompletionHistory.md",
                 "explicit audit retention",
-                "routine agent context",
-                "explicit historical or audit work",
                 "before readiness",
                 "end-to-end",
+                "unblock condition",
             ),
         )
-        if not re.search(
-            r"(?is)\b(?:create|use|maintain)\b.{0,180}\bproject-root\b.{0,80}`CompletionLedger\.md`",
-            delivery,
-        ):
-            violations.append("CompletionLedger.md must be positively assigned as the project-root ledger")
-        if re.search(
-            r"(?is)\b(?:do not|never|must not|may not)\s+(?:create|use|maintain)\b"
-            r".{0,100}`CompletionLedger\.md`",
-            delivery,
-        ):
-            violations.append("CompletionLedger.md appears only or ambiguously in a negative instruction")
-        if not re.search(
-            r"(?is)`CompletionLedger\.md`.{0,160}\bonly active unresolved\b",
-            delivery,
-        ):
-            violations.append("CompletionLedger.md must contain only active unresolved work")
-        if not re.search(
-            r"(?is)\bremove\b.{0,60}\b(?:item|entry)\b.{0,80}\bsame change\b"
-            r".{0,100}\bimplemented and verified\b",
-            delivery,
-        ):
-            violations.append("implemented ledger items must be removed in the same change")
-        if not re.search(
-            r"(?is)\bnever retain\b.{0,100}\bresolved\b.{0,80}\bcompleted\b"
-            r".{0,80}\bclosed\b",
-            delivery,
-        ):
-            violations.append("terminal ledger entries must never be retained")
-        if not re.search(
-            r"(?is)\bdelete\b.{0,60}`CompletionLedger\.md`.{0,100}"
-            r"\bno active items remain\b",
-            delivery,
-        ):
-            violations.append("an empty CompletionLedger.md must be deleted")
-        if not re.search(
-            r"(?is)\bversion control\b.{0,80}\bdefault\b.{0,80}\bhistory\b",
-            delivery,
-        ):
-            violations.append("version control must be the default completion history")
-        if not re.search(
-            r"(?is)\bconsequential\s+decisions\b.{0,100}`DecisionHistory\.md`",
-            delivery,
-        ):
-            violations.append("consequential decisions must remain in DecisionHistory.md")
-        if not re.search(
-            r"(?is)\bcreate\b.{0,80}`CompletionHistory\.md`.{0,80}\bonly\b"
-            r".{0,80}\bexplicit audit retention\b",
-            delivery,
-        ):
-            violations.append("CompletionHistory.md must be an explicit-audit-only archive")
 
-        terminal_entry = re.compile(
-            r"(?is)(?:\b(?:resolved|completed|closed)\b.{0,100}"
-            r"\b(?:entries|items|rows|evidence)\b|"
-            r"\b(?:entries|items|rows|evidence)\b.{0,100}"
-            r"\b(?:resolved|completed|closed)\b)"
+    cycle = bodies["Finish diagnostic cycles before batch fixing"]
+    if cycle:
+        _require_terms(
+            violations,
+            cycle,
+            "complete-cycle contract",
+            (
+                "continue to the end",
+                "non-critical failures",
+                "CompletionLedger.md",
+                "cold artifact",
+                "do not fix one small gap and restart",
+                "security or safety harm",
+                "data loss",
+                "shared-state corruption",
+                "destruction of useful evidence",
+                "group findings by cause",
+                "fix the batch",
+                "rerun the complete relevant cycle",
+                "test server",
+                "already included in the agreed task",
+                "deploy it",
+                "tell the user what remains",
+                "incomplete test deployment",
+            ),
         )
-        retention_verb = re.compile(
-            r"(?i)\b(?:keep|retain|archive|store|preserve|leave|remain)\b"
+        _require_pattern(
+            violations,
+            cycle,
+            "non-critical findings must be collected before the batch fix",
+            r"continue\s+to\s+the\s+end.{0,900}after\s+the\s+complete\s+evidence\s+pass"
+            r".{0,300}fix\s+the\s+batch",
         )
-        negative_removal = re.compile(
-            r"(?is)\b(?:do not|never|must not|may not|shall not|should not)\b"
-            r".{0,30}\b(?:remove|delete|clear|drop|removed|deleted|cleared|dropped)\b"
-        )
-        removal = r"\b(?:remove|delete|clear|drop|removed|deleted|cleared|dropped)\b"
-        delay = r"\b(?:later|eventually|subsequently|after readiness|separate change)\b"
-        delayed_removal = re.compile(
-            rf"(?is)(?:{removal}.{{0,80}}{delay}|{delay}.{{0,80}}{removal})"
-        )
-        negative_prefix = re.compile(
-            r"(?is)(?:\bnever\b|\b(?:do|must|may|shall|should|can)\s+not\b|"
-            r"\bnot\b(?:\s+\w+){0,2})\s*$"
-        )
-        clauses = re.split(r"[.!?;]\s+|[—–]|\s+(?i:but)\s+|\n(?=- )", delivery)
-        for clause in clauses:
-            if not terminal_entry.search(clause):
-                continue
-            active_context = "`CompletionLedger.md`" in clause or bool(
-                re.search(r"(?i)\bactive\s+(?:completion\s+)?ledger\b", clause)
-            )
-            cold_history = "`CompletionHistory.md`" in clause or bool(
-                re.search(r"(?i)\bversion control\b", clause)
-            )
-            if cold_history and not active_context:
-                continue
-            if negative_removal.search(clause) or delayed_removal.search(clause):
-                violations.append("CompletionLedger.md must not preserve terminal entries as history")
-                break
-            for match in retention_verb.finditer(clause):
-                prefix = clause[: match.start()].rsplit(",", 1)[-1]
-                if negative_prefix.search(prefix):
-                    continue
-                violations.append("CompletionLedger.md must not preserve terminal entries as history")
-                break
-            else:
-                continue
-            break
 
-    efficiency = section(text, "Measure delivery efficiency truthfully")
-    if not efficiency:
-        violations.append("delivery-efficiency section is missing")
-    else:
-        require_terms(
+    truthful = bodies["Keep behavior truthful"]
+    if truthful:
+        _require_terms(
+            violations,
+            truthful,
+            "truthful-behavior contract",
+            (
+                "never present invented",
+                "control must perform",
+                "end to end",
+                "unavailable data",
+                "mockups",
+                "production behavior",
+            ),
+        )
+
+    mistakes = bodies["Learn from agent-made mistakes"]
+    if mistakes:
+        _require_terms(
+            violations,
+            mistakes,
+            "agent-mistake contract",
+            (
+                "changed user intent",
+                "finish its useful diagnostic cycle",
+                "before the product fix",
+                "batch",
+                "retest",
+                "guardrail",
+                "project-root `UserIssueLedgers/`",
+                "concise routine context",
+                "confirmed user-indicated agent mistakes",
+                "durable user corrections",
+                "absence is valid",
+                "multiple narrowly scoped ledgers",
+                "mixed catch-all",
+                "BusinessLogic/<Perspective>.md",
+                "# User Issue Ledger: <scope>",
+                "`ID`",
+                "`Applies to`",
+                "`Mistake pattern`",
+                "`Required behavior`",
+                "`Prevention and verification`",
+                "UIL-<SCOPE>-NNN",
+                "relative file path owns the scope",
+                "same path components",
+                "ID namespace derives from all of them",
+                "Never mix another path's namespace",
+                "narrowest owning ledger",
+                "before planning or implementing",
+                "repository-wide or cross-cutting work",
+                "negative acceptance criterion",
+                "delegated-agent tasks",
+                "one row per distinct pattern",
+                "merging duplicates",
+                "reuse its ID",
+                "persist after the immediate fix",
+                "explicit user retraction",
+                "version control",
+                "raw conversation",
+            ),
+        )
+        for route in ("UI work always reads UI", "code changes read coding-style", "automation reads automation"):
+            if route.casefold() not in _fold(mistakes):
+                violations.append(f"mandatory issue-ledger routing is missing: {route}")
+
+    verify = bodies["Verify real behavior"]
+    if verify:
+        _require_terms(
+            violations,
+            verify,
+            "verification contract",
+            (
+                "same visible or operational surface",
+                "acceptance criteria",
+                "end to end",
+                "recall",
+                "precision",
+                "must-catch failures",
+                "false-positive guards",
+                "never delete shared records",
+            ),
+        )
+
+    efficiency = bodies["Measure delivery efficiency truthfully"]
+    if efficiency:
+        _require_terms(
             violations,
             efficiency,
             "delivery-efficiency contract",
             (
                 "observational",
-                "complete scope",
-                "never omit",
-                "required work",
-                "tests",
-                "improve a metric",
-                "runtime",
-                "harness",
-                "recorder",
+                "never omit work",
+                "approved configured recorder",
+                "exact stable launcher",
+                "without authority",
                 "request receipt",
-                "first model or tool activity",
-                "terminal delivery",
-                "request-to-delivery wall time",
-                "execution wall time",
-                "queue or scheduling delay",
-                "concurrency-safely",
+                "first activity",
+                "authoritative provider counters",
+                "monotonic time",
                 "EfficiencyLedger.jsonl",
                 "outside source worktrees",
-                "routine context",
-                "does not itself capture telemetry",
-                "instrumentation gap",
-                "reconstruct",
-                "estimate",
-                "zero",
-                "complete instrumentation",
-                "proves no usage",
-                "not-applicable",
-                "task start",
-                "terminal status",
-                "complete",
-                "incomplete",
-                "blocked",
-                "cancelled",
-                "superseded",
-                "interrupted",
-                "preserve prior events",
-                "continuations",
-                "corrections",
-                "defects",
-                "retries",
-                "rollback",
-                "rework",
-                "original lineage",
-                "double-counting",
-                "separate dimensions",
-                "kind",
-                "continuation",
-                "defect repair",
-                "cause",
-                "agent-caused",
-                "changed user intent",
-                "new scope",
-                "external cause",
-                "authoritative runtime or provider token counters",
-                "monotonic clock",
-                "provider-native",
-                "input",
-                "output",
-                "cached",
-                "reasoning",
-                "provenance",
-                "instrumentation coverage",
-                "root",
-                "delegated agents",
-                "failed attempts",
-                "two independent dimensions",
-                "planning",
-                "implementation",
-                "testing",
-                "deployment",
-                "reporting",
-                "unattributed",
-                "model-active",
-                "tool-active",
-                "external-wait",
-                "user-wait",
-                "blocked-wait",
-                "test authoring",
-                "test execution",
-                "planning covers requirements",
-                "context",
-                "research",
-                "diagnosis",
-                "design",
-                "sequencing",
-                "implementation covers changes",
-                "configuration",
-                "documentation",
-                "data",
-                "test artifacts",
-                "testing covers executing and reviewing verification",
-                "deployment covers release or environment mutation",
-                "reporting covers user-facing status and handoff",
-                "ambiguous mixed work",
+                "never reconstruct or estimate",
+                "complete instrumentation proves zero",
+                "complete, incomplete, blocked, cancelled, superseded, or interrupted",
+                "append linked continuations",
+                "without double counting",
+                "kind separately from cause",
+                "phase",
+                "activity state",
                 "measurement provenance",
                 "attribution provenance",
-                "agent-declared",
-                "classifier or schema version",
-                "inferred allocation",
-                "measured",
-                "phase-inclusive elapsed",
-                "interval unions",
-                "activity-state duration",
-                "deduplicate overlapping spans",
-                "end-to-end wall time",
-                "summed per-agent active time",
-                "concurrent phase unions",
-                "task lineage",
-                "opaque project and revision",
-                "schema",
-                "recorder",
-                "policy",
-                "model or runtime configuration versions",
-                "outcome",
-                "delivered scope",
-                "agreed requested-scope",
-                "acceptance baseline",
-                "user-approved scope changes",
-                "requirement ID",
-                "evidence reference",
-                "satisfied",
-                "partial",
-                "explicitly removed",
-                "in-scope requirement",
-                "unresolved",
-                "verification",
-                "evidence provenance",
-                "coverage",
-                "measurement overhead",
                 "runtime-observed",
-                "declared",
+                "agent-declared",
                 "inferred",
                 "unknown",
-                "task-type",
-                "scope-size",
-                "method tags",
-                "compatible measurement semantics",
+                "request-to-delivery wall time",
+                "execution wall time",
+                "summed per-agent active time",
+                "deduplicate overlaps",
+                "provider-native input, output, cached, reasoning",
+                "never collapse",
+                "Planning covers requirements",
+                "research",
+                "diagnosis",
+                "Implementation covers changes to code",
+                "configuration",
+                "documentation",
+                "test artifacts",
+                "test authoring",
+                "Testing covers executing and reviewing verification",
+                "Deployment covers release or environment mutation",
+                "reporting covers the user-facing handoff",
+                "ambiguous mixed work is unattributed",
+                "agreed scope",
+                "requirement coverage",
+                "cannot be complete",
                 "prompts",
-                "source content",
                 "tool payloads",
                 "secrets",
-                "credentials",
                 "personal data",
             ),
         )
-        efficiency = " ".join(efficiency.split())
-        if not re.search(
-            r"(?is)\buse a runtime-\s+or harness-owned recorder\b",
-            efficiency,
-        ) or not re.search(r"(?is)\brecorder\b.{0,500}`EfficiencyLedger\.jsonl`", efficiency):
-            violations.append("the cold efficiency ledger must be assigned to a runtime or harness recorder")
-        if not re.search(
-            r"(?is)`EfficiencyLedger\.jsonl`.{0,100}\boutside source worktrees\b"
-            r".{0,100}\broutine context\b",
-            efficiency,
-        ):
-            violations.append("efficiency telemetry must remain outside worktrees and routine context")
-        if not re.search(
-            r"(?is)\bpolicy\b.{0,60}\bdoes not itself capture telemetry\b.{0,140}"
-            r"\binstrumentation gap\b",
-            efficiency,
-        ):
-            violations.append("policy must distinguish its contract from an operational recorder")
-        if not re.search(
-            r"(?is)\brecorder\s+from\s+request receipt\s+through\s+terminal delivery\b"
-            r".{0,120}\bfirst model or tool activity\b.{0,40}\bseparately\b",
-            efficiency,
-        ) or not re.search(
-            r"(?is)\brequest-to-delivery wall time\b.{0,80}\bexecution wall time\b"
-            r".{0,40}\bseparately\b.{0,100}\b(?:queue|scheduling) delay\b",
-            efficiency,
-        ):
-            violations.append("efficiency timing must expose request delay separately from execution")
-        terminal_window = re.search(
-            r"(?is)\bterminal status of\s+(?P<statuses>.{0,180}?)(?:\.|\n\s*-)",
-            efficiency,
-        )
-        terminal_statuses = ("complete", "incomplete", "blocked", "cancelled", "superseded", "interrupted")
-        recorded_statuses = (
-            {
-                word.casefold()
-                for word in re.findall(r"\b[A-Za-z][A-Za-z-]*\b", terminal_window.group("statuses"))
-                if word.casefold() not in {"and", "or"}
-            }
-            if terminal_window
-            else set()
-        )
-        if recorded_statuses != set(terminal_statuses):
-            violations.append("efficiency telemetry must retain the exact terminal status set")
-        if not re.search(
-            r"(?is)\btask start\b.{0,100}\bterminal status\b.{0,220}"
-            r"\bpreserve prior events\b.{0,140}\bappend linked\b.{0,100}"
-            r"\b(?:continuations|corrections)\b",
-            efficiency,
-        ):
-            violations.append("efficiency events must preserve the complete append-only lifecycle")
-        if not re.search(
-            r"(?is)\bauthoritative\b.{0,80}\b(?:runtime|provider)\b.{0,80}"
-            r"\btoken counters\b.{0,100}\bmonotonic\s+clock\b",
-            efficiency,
-        ):
-            violations.append("token and time measurements must have authoritative provenance")
-        if not re.search(
-            r"(?is)\bprovider-native\b.{0,100}\binput\b.{0,40}\boutput\b.{0,40}"
-            r"\bcached\b.{0,40}\breasoning\b.{0,80}\btoken categories\b",
-            efficiency,
-        ):
-            violations.append("provider-native token categories must remain distinct when available")
-        if not re.search(
-            r"(?is)\brecord zero only\b.{0,80}\bcomplete instrumentation\b.{0,60}"
-            r"\bproves no usage\b.{0,80}\bunknown\b.{0,40}\bnot-applicable\b",
-            efficiency,
-        ):
-            violations.append("zero requires proven complete instrumentation; missing values remain unknown")
-        if not re.search(
-            r"(?is)\btwo independent dimensions\b.{0,180}\bphase\b.{0,240}"
-            r"\bactivity state\b",
-            efficiency,
-        ):
-            violations.append("phase and activity state must remain independent dimensions")
-        if not re.search(
-            r"(?is)\bmeasurement provenance\b.{0,80}\battribution provenance\b.{0,220}"
-            r"\bruntime-observed\b.{0,80}\bagent-declared\b.{0,80}\binferred\b.{0,80}"
-            r"\bunknown\b.{0,120}\bclassifier or schema version\b",
-            efficiency,
-        ) or not re.search(
-            r"(?is)\bnever present an inferred allocation as measured\b",
-            efficiency,
-        ):
-            violations.append("phase and classification attribution must carry separate provenance")
-        if not re.search(
-            r"(?is)\btest authoring\b.{0,100}\bimplementation\b.{0,100}"
-            r"\btest execution\b.{0,100}\btesting\b",
-            efficiency,
-        ):
-            violations.append("test authoring and execution must use stable phase boundaries")
-        if not re.search(
-            r"(?is)\bplanning covers requirements\b.{0,160}\bcontext\b.{0,80}\bresearch\b"
-            r".{0,80}\bdiagnosis\b.{0,80}\bdesign\b.{0,80}\bsequencing\b",
-            efficiency,
-        ) or not re.search(
-            r"(?is)\bimplementation covers changes\b.{0,80}\bcode\b.{0,80}"
-            r"\bconfiguration\b.{0,80}\bdocumentation\b.{0,80}\bdata\b.{0,80}"
-            r"\btest artifacts\b",
-            efficiency,
-        ) or not re.search(
-            r"(?is)\btesting covers executing and reviewing verification\b.{0,100}"
-            r"\bdeployment covers release or environment mutation\b.{0,120}"
-            r"\breporting covers user-facing status and handoff\b.{0,100}"
-            r"\bambiguous mixed work\b.{0,60}\bunattributed\b",
-            efficiency,
-        ):
-            violations.append("efficiency phases must have stable operational boundaries")
-        if not re.search(
-            r"(?is)\bphase-inclusive elapsed\b.{0,80}\binterval unions\b.{0,120}"
-            r"\bactivity-state duration\b",
-            efficiency,
-        ):
-            violations.append("phase-inclusive and activity-state timing must both be reported")
-        if not re.search(
-            r"(?is)\bend-to-end wall time\b.{0,80}\bseparately\b.{0,100}"
-            r"\bsummed per-agent active time\b.{0,140}\bconcurrent phase unions\b"
-            r".{0,100}\bmust not be summed as wall time\b",
-            efficiency,
-        ):
-            violations.append("concurrent agent time must not be confused with wall time")
-        if not re.search(
-            r"(?is)\bterminal event\b.{0,400}\boutcome\b",
-            efficiency,
-        ) or not re.search(
-            r"(?is)\bdelivered scope\b.{0,100}\bverification\b.{0,100}\bevidence provenance\b",
-            efficiency,
-        ):
-            violations.append("terminal telemetry must bind cost to outcome, scope, and verification")
-        if not re.search(
-            r"(?is)\bagreed requested-scope\b.{0,80}\bacceptance baseline\b.{0,80}"
-            r"\buser-approved scope changes\b.{0,220}\brequirement ID\b.{0,80}"
-            r"\bevidence reference\b.{0,120}\bsatisfied\b.{0,60}\bpartial\b.{0,60}"
-            r"\bblocked\b.{0,60}\bexplicitly removed\b",
-            efficiency,
-        ) or not re.search(
-            r"(?is)\bcannot be complete\b.{0,100}\bin-scope requirement\b.{0,80}\bunresolved\b",
-            efficiency,
-        ):
-            violations.append("terminal telemetry must prove agreed-scope and requirement coverage")
-        if not re.search(
-            r"(?is)\bwithout double-counting\b.{0,160}\bseparate dimensions\b.{0,80}"
-            r"\bkind\b.{0,80}\bcontinuation\b.{0,60}\bretry\b.{0,60}\brollback\b"
-            r".{0,60}\bdefect repair\b.{0,60}\brework\b.{0,100}\bcause\b.{0,80}"
-            r"\bagent-caused\b.{0,80}\bchanged user intent\b.{0,80}\bnew scope\b"
-            r".{0,80}\bexternal cause\b.{0,60}\bunknown\b",
-            efficiency,
-        ):
-            violations.append("linked work must separate kind from cause and avoid double-counting")
-        if not re.search(
-            r"(?is)\bnonsensitive opaque project and\s+revision identifiers\b",
-            efficiency,
-        ):
-            violations.append("project and revision identity must be nonsensitive and opaque")
 
-        contradictions = (
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
-                r"(?:store|keep|write|maintain)\b.{0,80}`EfficiencyLedger\.jsonl`"
-                r".{0,40}\b(?:in|inside|within|under)\b.{0,60}"
-                r"\b(?:project-root|source worktree|routine context)\b",
-                "EfficiencyLedger.jsonl must not become hot project context",
-            ),
-            (
-                r"(?is)\b(?:may|should|must|can|will)\s+(?:be\s+)?"
-                r"(?:estimate|estimated|reconstruct|reconstructed|infer|inferred)\b"
-                r".{0,120}\b(?:missing|unknown|unavailable|unsupported)\b",
-                "missing efficiency measurements must not be estimated",
-            ),
-            (
-                r"(?ims)^\s*(?:-\s+)?(?:use\s+(?:a\s+)?(?:heuristic\s+)?estimates?|"
-                r"estimate|reconstruct|infer)\b.{0,160}"
-                r"(?:missing|unknown|unavailable|unsupported|authoritative counters?)\b",
-                "missing efficiency measurements must not be estimated",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
-                r"(?:record|treat|fill|substitute|report)\b.{0,80}"
-                r"\b(?:missing|unknown|unavailable|unsupported|uninstrumented|unobserved)\b.{0,80}"
-                r"\b(?:as|with)\s+(?:a\s+)?zero\b",
-                "unknown efficiency measurements must not be zero-filled",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can)\s+)(?:omit|skip|reduce|narrow|drop)\b"
-                r".{0,120}\b(?:scope|required work|tests?|verification|quality|context|explanation)\b"
-                r".{0,120}\b(?:metric|efficien)",
-                "efficiency metrics must not reward reduced delivery quality or scope",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can)\s+)(?:rewrite|replace|delete|discard)\b"
-                r".{0,100}\b(?:prior|earlier|old)\s+(?:events?|history|records?)\b",
-                "efficiency history must be corrected append-only",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can)\s+)(?:combine|collapse|merge|treat)\b"
-                r".{0,100}\bphase\b.{0,100}\bactivity(?: state)?\b",
-                "phase and activity state must not be collapsed",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can)\s+)(?:omit|exclude|ignore|drop)\b"
-                r".{0,100}\b(?:failed attempts?|retries|rollback|rework|delegated agents?)\b",
-                "efficiency telemetry must include failed and delegated work",
-            ),
-            (
-                r"(?is)\b(?:do not|don't|never)\s+(?:include|record|count)\b"
-                r".{0,100}\b(?:failed attempts?|retries|rollback|rework|delegated agents?)\b",
-                "efficiency telemetry must include failed and delegated work",
-            ),
-            (
-                r"(?is)\b(?:begin|start|measure|record)\b.{0,80}\bafter\s+(?:the\s+)?"
-                r"first model or tool activity\b",
-                "efficiency timing must not omit pre-execution request delay",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
-                r"(?:report|present|treat|label|count|record)\b.{0,100}\binferred\b.{0,80}"
-                r"\ballocations?\b.{0,60}\b(?:as|like)\s+"
-                r"(?:measured(?:\s+values?)?|measurements?|observed values?)\b",
-                "inferred efficiency attribution must not be presented as measured",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?)(?:"
-                r"(?:a\s+)?task\b.{0,60}\b(?:may|can|should)\b.{0,40}"
-                r"(?:be\s+)?(?:(?:called|marked|reported|treated)\s+)?complete\b|"
-                r"complete\b.{0,40}\b(?:the\s+)?task\b|"
-                r"(?:declare|mark|report|treat|call)\b.{0,60}\bcomplete\b)"
-                r"(?=.{0,260}\bin-scope\b)(?=.{0,260}\b(?:unresolved|partial|blocked)\b)",
-                "completion telemetry must not ignore unresolved in-scope requirements",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
-                r"(?:use|add|allow|record|treat)\s+[a-z][a-z0-9_-]*\s+as\s+"
-                r"(?:an?\s+)?(?:additional|extra|new|another)\s+terminal\s+(?:status|outcome)\b",
-                "efficiency telemetry must retain the exact terminal status set",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
-                r"(?:combine|collapse|merge|aggregate|discard)\b.{0,120}"
-                r"\b(?:provider-native|input|output|cached|reasoning)\b.{0,100}\btoken categor",
-                "provider-native token categories must not be collapsed",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
-                r"report\b.{0,100}\b(?:one|single|combined|aggregate)\s+total\b"
-                r".{0,100}\b(?:instead of|rather than|for)\b.{0,100}"
-                r"\bprovider-native\b.{0,80}\btoken categor",
-                "provider-native token categories must not be collapsed",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
-                r"(?:combine|collapse|merge|sum)\b.{0,140}\b(?:request-to-delivery|request)\b"
-                r".{0,100}\bexecution wall time\b",
-                "request-to-delivery and execution wall time must remain separate",
-            ),
-            (
-                r"(?ims)^\s*(?:-\s+)?report\b.{0,100}\b(?:request-to-delivery|request)\b"
-                r".{0,100}\bexecution\b.{0,80}\b(?:one|single|combined)\b.{0,40}\bwall time\b",
-                "request-to-delivery and execution wall time must remain separate",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
-                r"(?:treat|classify|count|label)\b.{0,120}"
-                r"\b(?:changed user intent|new scope)\b.{0,100}\bas\s+agent-caused\b",
-                "changed intent and new scope must not be counted as agent-caused rework",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
-                r"(?:record|store|retain|use)\b.{0,100}\b(?:raw|private|confidential)\b"
-                r".{0,100}\b(?:project|revision)\b(?:.{0,40}\b(?:name|metadata|identity)\b)?",
-                "project and revision identity must remain nonsensitive and opaque",
-            ),
-            (
-                r"(?ims)(?:^\s*(?:-\s+)?|\b(?:may|should|must|can|will)\s+)"
-                r"(?:treat|classify|label|count)\b.{0,120}"
-                r"\b(?:requirements?|context|research|diagnosis|design|sequencing)\b"
-                r".{0,120}\bas\s+implementation\b",
-                "planning work must not be reclassified as implementation",
-            ),
-            (
-                r"(?is)\b(?:only|just)\s+(?:record|write|keep)\b.{0,100}"
-                r"\bterminal\s+(?:event|record|status)\b",
-                "efficiency telemetry must include start and terminal lifecycle events",
-            ),
-        )
-        for pattern, message in contradictions:
-            if re.search(pattern, text):
-                violations.append(message)
-
-        for line in text.splitlines():
-            directive = line.strip().removeprefix("-").strip()
-            if (
-                re.match(r"(?i)^(?:use|record|report|treat|substitute)\b", directive)
-                and re.search(r"(?i)\bzero\b", directive)
-                and re.search(
-                    r"(?i)\b(?:missing|unknown|unavailable|unsupported|uninstrumented|unobserved)\b",
-                    directive,
-                )
-                and not (
-                    re.search(r"(?i)\bonly\b", directive)
-                    and re.search(r"(?i)\bcomplete instrumentation\b", directive)
-                    and re.search(r"(?i)\bproves no usage\b", directive)
-                )
-            ):
-                violations.append("unknown efficiency measurements must not be zero-filled")
-            sensitive = re.search(
-                r"(?i)\b(?:prompts?|source content|tool payloads?|secrets?|credentials?|personal data)\b",
-                directive,
-            )
-            if not sensitive:
-                continue
-            positive_retention = re.match(r"(?i)^(?:store|retain|record|include)\b", directive) or re.search(
-                r"(?i)\b(?:may|should|must|can|will)\s+(?:store|retain|record|include)\b",
-                directive,
-            )
-            if not positive_retention:
-                continue
-            if re.search(
-                r"(?i)\b(?:never|not|without|omit(?:ted|ting)?|exclud(?:e|ed|ing)|redact(?:ed|ing)?|safeguard)\b",
-                directive,
-            ):
-                continue
-            violations.append("efficiency telemetry must not retain sensitive content")
-            break
-
-    mistakes = section(text, "Learn from agent-made mistakes")
-    if not mistakes:
-        violations.append("agent-mistake section is missing")
-    else:
-        require_terms(
-            violations,
-            mistakes,
-            "agent-mistake contract",
-            ("user intent", "before fixing", "guardrail", "retest"),
-        )
-        require_terms(
-            violations,
-            mistakes,
-            "user-issue-ledger contract",
-            (
-                "project-root",
-                "UserIssueLedgers/",
-                "concise routine context",
-                "confirmed user-indicated agent mistakes",
-                "durable user corrections",
-                "first qualifying correction",
-                "absence is valid",
-                "persistent prevention ledgers",
-                "CompletionLedger.md",
-                "DecisionHistory.md",
-                "multiple narrowly scoped ledgers",
-                "one mixed catch-all",
-                "automation",
-                "coding-style",
-                "split business logic",
-                "bounded domain",
-                "BusinessLogic/<Perspective>.md",
-                "# User Issue Ledger: <scope>",
-                "ID",
-                "Applies to",
-                "Mistake pattern",
-                "Required behavior",
-                "Prevention and verification",
-                "UIL-<SCOPE>-NNN",
-                "relative file path owns the scope",
-                "title must name the same path components",
-                "ID namespace derived from all of them",
-                "Never mix another path's namespace",
-                "narrowest owning ledger",
-                "do not duplicate it across ledgers",
-                "UI",
-                "math",
-                "business logic",
-                "before planning or implementing",
-                "inventory",
-                "plausibly relevant",
-                "UI work always reads",
-                "code changes always read",
-                "automation work always reads",
-                "business behavior reads every affected",
-                "read all ledgers",
-                "repository-wide or cross-cutting work",
-                "negative acceptance criterion",
-                "must not recur",
-                "delegated-agent tasks",
-                "before fixing",
-                "one row per distinct pattern",
-                "merge duplicates",
-                "on recurrence",
-                "reuse the existing ID",
-                "strengthen",
-                "persist after the immediate fix",
-                "explicitly retracts",
-                "recorded decision",
-                "version control",
-                "changed intent",
-                "new scope",
-                "external failures",
-                "unconfirmed agent-found concerns",
-                "raw conversation",
-            ),
-        )
-        if not re.search(
-            r"(?is)\b(?:keep|create|maintain|use)\b.{0,140}\bproject-root\b"
-            r".{0,80}`UserIssueLedgers/`",
-            mistakes,
-        ):
-            violations.append("UserIssueLedgers/ must be positively assigned as a project-root record")
-        if not re.search(
-            r"(?is)\bmultiple narrowly scoped ledgers\b.{0,120}\bone mixed catch-all\b"
-            r".{0,280}\bsplit business logic\b.{0,120}\bperspective or bounded domain\b"
-            r".{0,240}`BusinessLogic/<Perspective>\.md`",
-            mistakes,
-        ):
-            violations.append("user issues must be routed to narrow ledgers and business perspectives")
-        if not re.search(
-            r"(?is)\btitle\b.{0,80}`# User Issue Ledger: <scope>`.{0,120}"
-            r"\bcolumns\b.{0,80}`ID`.{0,60}`Applies\s+to`.{0,60}`Mistake\s+pattern`"
-            r".{0,60}`Required\s+behavior`.{0,80}`Prevention\s+and\s+verification`",
-            mistakes,
-        ):
-            violations.append("scoped user issue ledgers must define the exact compact prevention schema")
-        path_scope_binding = (
-            re.search(
-                r"(?is)\brelative file path owns the scope\b.{0,160}"
-                r"\btitle\s+must\s+name\s+the\s+same\s+path\s+components\b",
-                mistakes,
-            )
-            and re.search(
-                r"(?is)\btitle\s+must\s+name\s+the\s+same\s+path\s+components\b.{0,160}"
-                r"\bID\s+namespace\b.{0,40}\bderived\s+from\s+all\s+of\s+them\b",
-                mistakes,
-            )
-            and re.search(
-                r"(?is)`BusinessLogic/Pricing\.md`.{0,180}"
-                r"`UIL-BUSINESS-LOGIC-PRICING-001`",
-                mistakes,
-            )
-            and re.search(r"(?is)\bnever mix another path's namespace\b", mistakes)
-        )
-        if not path_scope_binding:
-            violations.append("each user issue ledger path, title, and ID namespace must identify one scope")
-        scoped_prework = (
-            re.search(
-                r"(?is)\bbefore planning or implementing\b.{0,160}\binventory\b"
-                r".{0,100}`UserIssueLedgers/`.{0,180}\bread every ledger\b"
-                r".{0,100}\bplausibly relevant\b",
-                mistakes,
-            )
-            and re.search(
-                r"(?is)\bread\s+all\s+ledgers\b.{0,120}"
-                r"\brepository-wide\s+or\s+cross-cutting\s+work\b",
-                mistakes,
-            )
-            and re.search(
-                r"(?is)\btreat\s+every\s+relevant\s+row\b.{0,100}"
-                r"\brequired\s+negative\s+acceptance\s+criterion\b"
-                r".{0,120}\bmust\s+not\s+recur\b",
-                mistakes,
-            )
-        )
-        if not scoped_prework:
-            violations.append("agents must route and apply relevant scoped issue rows before new implementation")
-        if not re.search(
-            r"(?is)\bUI work always reads\b.{0,100}\bUI ledger\b.{0,120}"
-            r"\bcode changes always read\b.{0,100}\bcoding-style ledger\b.{0,120}"
-            r"\bautomation work always reads\b.{0,100}\bautomation ledger\b.{0,140}"
-            r"\bbusiness behavior reads every affected business-logic perspective\b",
-            mistakes,
-        ):
-            violations.append("common work types must route to their mandatory scoped ledgers")
-        if not re.search(
-            r"(?is)\brelevant ledger ID\b.{0,120}\brequired behavior\b.{0,120}"
-            r"\bverification\b.{0,100}\bdelegated-agent tasks\b",
-            mistakes,
-        ):
-            violations.append("delegated work must receive applicable user issue constraints")
-        normalized_before_fix = re.search(
-            r"(?is)\bqualifying\s+mistake\b.{0,120}\badd\s+or\s+update\b"
-            r".{0,120}\brow\s+before\s+fixing\b",
-            mistakes,
-        ) and re.search(
-            r"(?is)\bone\s+row\s+per\s+distinct\s+pattern\b.{0,100}"
-            r"\bmerge\s+duplicates\b",
-            mistakes,
-        )
-        if not normalized_before_fix:
-            violations.append("qualifying corrections must be normalized before the product fix")
-        if not re.search(
-            r"(?is)\bon recurrence\b.{0,100}\breuse the existing ID\b.{0,120}"
-            r"\bstrengthen\b.{0,120}\bguardrail\b.{0,100}\bbefore fixing\b",
-            mistakes,
-        ):
-            violations.append("recurring mistakes must strengthen their existing ledger row")
-        persistent_rows = re.search(
-            r"(?is)\bledger rows persist after the immediate fix\b",
-            mistakes,
-        ) and re.search(
-            r"(?is)\bremove or supersede a row only\b.{0,120}\buser explicitly\b"
-            r".{0,40}\bretracts\b.{0,100}\brecorded decision\b",
-            mistakes,
-        )
-        if not persistent_rows:
-            violations.append("user issue rows must persist until explicitly invalidated")
-
-        contradictions = (
-            (
-                r"(?ims)^\s*(?:-\s+)?(?:delete|remove|clear|drop)\b.{0,120}"
-                r"`UserIssueLedgers/`|^\s*(?:-\s+)?`UserIssueLedgers/`"
-                r".{0,120}\b(?:delete|remove|clear|drop)\b.{0,80}\b(?:after|when)\b"
-                r".{0,60}\b(?:fix|resolved|complete)\b",
-                "UserIssueLedgers/ must not use completion-ledger delete-on-fix semantics",
-            ),
-            (
-                r"(?ims)^\s*(?:-\s+)?(?:add|create|append)\b.{0,100}\b(?:new|another)\b"
-                r".{0,80}\brow\b.{0,100}\b(?:recurrence|repeated|again)\b",
-                "a recurring issue must update its existing row rather than duplicate it",
-            ),
-            (
-                r"(?ims)^\s*(?:-\s+)?(?:skip|ignore|do not read|need not read)\b.{0,100}"
-                r"`UserIssueLedgers/`.{0,120}\b(?:new|implementation|feature|planning)\b",
-                "new work must not bypass scoped user issue ledgers",
-            ),
-            (
-                r"(?ims)^\s*(?:-\s+)?(?:record|store|retain|copy|include)\b.{0,120}"
-                r"\b(?:raw conversation|full prompt|source content|tool payload|secret|credential)\b"
-                r".{0,100}`?UserIssueLedgers/`?",
-                "UserIssueLedgers/ must not retain raw or sensitive incident content",
-            ),
-            (
-                r"(?ims)^\s*(?:-\s+)?(?:record|add|store)\b.{0,100}"
-                r"\b(?:changed intent|new scope|external failures?)\b.{0,100}"
-                r"`?UserIssueLedgers/`?",
-                "changed intent, new scope, and external failures are not recurring agent mistakes",
-            ),
-            (
-                r"(?ims)^\s*(?:-\s+)?(?:keep|put|store|record)\b.{0,120}"
-                r"\b(?:all|every|mixed|unrelated)\b.{0,80}\b(?:issue|mistake|pattern|rule)s?\b"
-                r".{0,100}\b(?:one|single|shared)\b.{0,80}\bledger\b",
-                "unrelated user issue perspectives must not be collapsed into one ledger",
-            ),
-        )
-        for pattern, message in contradictions:
-            if re.search(pattern, text):
-                violations.append(message)
-
-    interface = section(text, "Put requested interface content first")
-    if not interface:
-        violations.append("content-first interface section is missing")
-    else:
-        require_terms(
+    interface = bodies["Put requested interface content first"]
+    if interface:
+        _require_terms(
             violations,
             interface,
-            "collection-destination contract",
+            "interface-content contract",
             (
                 "content promise",
-                "first substantial content",
+                "first substantial",
                 "first viewport",
-                "list or collection",
-                "real items",
-                "narrow screens",
-                "loading",
-                "error",
-                "empty state",
-            ),
-        )
-        require_terms(
-            violations,
-            interface,
-            "visible-create-flow contract",
-            (
-                "add or create",
+                "collection destination",
+                "must not lead",
+                "add or edit form",
+                "immediately reveal",
                 "current viewport",
-                "dialog",
-                "sheet",
-                "dedicated page",
                 "below a long list",
-                "off-screen",
-                "focused",
-                "successful creation",
+                "success returns",
                 "new item",
+                "narrow constraints",
+                "loading, empty, error, populated, and long-content states",
+                "functional defect",
+                "visual exploration only for new directions or redesigns",
             ),
         )
-        require_terms(
+
+    boundaries = bodies["Respect data and system boundaries"]
+    if boundaries:
+        _require_terms(
             violations,
-            interface,
-            "persistent-approval contract",
+            boundaries,
+            "data-boundary contract",
+            ("domain meaning", "ownership", "lifecycle", "does not imply shared ownership"),
+        )
+
+    protection = bodies["Protect sources, repositories, and running systems"]
+    if protection:
+        _require_terms(
+            violations,
+            protection,
+            "source-and-system protection contract",
             (
-                "visual exploration",
-                "approval state",
-                "exact response request",
-                "embedding",
-                "no follow-up",
+                "canonical sources",
+                "current remote",
+                "Remote-unavailable means unknown",
+                "valuable dirty work",
+                "shared resource",
+                "data loss",
+                "recoverable backup",
+                "disposable and isolated",
+                "unambiguous mutation targets",
             ),
         )
-        if not re.search(
-            r"(?is)^- .*\b(?:list or collection|collection)\b.*\b(?:show|first|lead)\b",
-            interface,
-            flags=re.MULTILINE,
-        ):
-            violations.append("collection-first behavior must be an operative policy bullet")
-        if not re.search(
-            r"(?is)^- .*\badd or create\b.*\bcurrent\s+viewport\b",
-            interface,
-            flags=re.MULTILINE,
-        ):
-            violations.append("visible add/create behavior must be an operative policy bullet")
+
+    reporting = bodies["Report status honestly"]
+    if reporting:
+        _require_terms(
+            violations,
+            reporting,
+            "honest-status contract",
+            ("outcomes and evidence", "facts", "inferences", "assumptions", "never ready"),
+        )
 
     for name in FORBIDDEN_NAMES:
-        if name.casefold() in text.casefold():
-            violations.append(f"universal policy contains named product or tool: {name}")
+        if re.search(rf"\b{re.escape(name)}\b", text):
+            violations.append(f"universal policy must not name runtime/project-specific term: {name}")
 
-    absolute_path = re.search(r"(?m)(?:^|[\s`])(?:/[^\s`]+|~/[^\s`]+)", text)
-    if absolute_path:
-        violations.append(f"universal policy contains a filesystem path: {absolute_path.group(0).strip()}")
+    positive_authorization = re.search(
+        r"(?i)(?:authenticated|signed[ -]?in|telemetry|recorder).{0,80}"
+        r"(?:agent\s+is\s+authorized|authorizes\s+(?:the\s+)?agent|grants\s+(?:the\s+)?agent\s+permission)",
+        text,
+    )
+    if positive_authorization:
+        violations.append("operational runtime state must not grant agent authority")
 
+    contradictory_instructions = (
+        (r"(?i)\balways\s+reread\b|\bload\s+every\s+(?:skill|tool)\b", "context must remain relevant and non-redundant"),
+        (r"(?i)(?<!never )(?<!do not )(?<!must not )\bstop\s+(?:the\s+)?(?:test|suite|debug|audit|rehearsal|deployment|cycle|pass)\s+at\s+(?:the\s+)?first\b", "diagnostic cycles must not stop at the first ordinary failure"),
+        (r"(?i)(?<!never )(?<!do not )(?<!must not )\bfix\s+each\s+(?:error|failure|gap).{0,100}\brestart\b", "diagnostic findings must be batch-fixed after the evidence pass"),
+        (r"(?i)(?<!never )(?<!do not )(?<!must not )\bimplement\s+(?:unrequested|hypothetical).{0,100}\bwithout\s+(?:asking|approval)\b", "unrequested engineering must never proceed without informed approval"),
+        (r"(?i)\b(?:under-engineering|implementation\s+gaps?)\s+(?:is|are)\s+(?:acceptable|less\s+serious|less\s+punishable)\b", "under-engineering and implementation gaps must remain the more serious failure"),
+        (r"(?i)\breasonable\s+over-engineering\s+is\s+(?:more\s+serious|more\s+punishable)\s+than\s+(?:under-engineering|implementation\s+gaps?)\b", "under-engineering asymmetry must not be inverted"),
+        (r"(?i)\bsilent\s+scope\s+expansion\s+is\s+(?:acceptable|allowed|authorized|permitted)\b", "silent scope expansion must remain prohibited"),
+        (r"(?i)(?<!never )(?<!do not )(?<!must not )\b(?:implement|perform|begin|proceed\s+with|automatically\s+add).{0,100}(?:security|privacy|backup|migration|preservation|data[- ]safety|hardening|infrastructure).{0,120}\bwithout\s+(?:asking|approval)\b", "risk-control expansion must not proceed without user approval"),
+        (r"(?i)\b(?:automatically|always)\s+(?:add|implement|perform|create|preserve|migrate|back\s*up|harden).{0,160}(?:even\s+(?:if|when).{0,80}(?:unrequested|not\s+(?:requested|required|needed))|without\s+(?:evidence|a\s+credible\s+(?:project\s+)?need))", "hypothetical engineering must not expand scope automatically"),
+        (r"(?i)(?<!never )(?<!do not )(?<!must not )\b(?:if|when)\s+`?security-assumptions\.md`?\s+is\s+(?:absent|missing|unavailable|incomplete|insufficient).{0,180}\b(?:implement|apply|begin|continue|proceed\s+with)\b.{0,180}\b(?:before\s+(?:asking|confirmation)|document|record|update).{0,80}\b(?:later|afterward|after\s+implementation)\b", "missing security assumptions must stop implementation before controls are applied"),
+        (r"(?i)\b(?:agent|agents|we|you)\s+(?:may|can|should|must|will)\s+(?:infer|assume|presume)\b.{0,140}\b(?:security\s+assumptions?|threat\s+model|credible\s+adversar(?:y|ies)|misuse|trust\s+boundaries?|maximum\s+threat|multi[- ]tenant|internet[- ]facing)\b", "security assumptions and threats must be user-confirmed, not inferred"),
+        (r"(?im)(?:^|(?<=[.!?]))\s*(?:-\s*)?(?:weaken|remove|disable|omit|intentionally\s+omit)\b.{0,120}\b(?:security(?:-posture)?\s+(?:control|gate|measure)|authentication\s+control|authorization\s+control|access-control\s+gate)\b.{0,120}\bwithout\s+(?:reading|citing|confirmed|user-confirmed)\b", "weakened, removed, or omitted controls require confirmed security assumptions"),
+        (r"(?i)\b(?:populate|create|fill|update)\b.{0,100}`?security-assumptions\.md`?.{0,120}\b(?:template|defaults?)\b.{0,120}\b(?:treat|mark|regard|count)\b.{0,60}\b(?:as\s+)?confirmed\b", "security-assumption templates and defaults are unconfirmed until the user confirms them"),
+        (r"(?im)(?:^|(?<=[.!?]))\s*(?:-\s*)?(?:always|automatically|by\s+default|regardless\s+of\s+(?:context|assumptions))\b.{0,100}\b(?:apply|implement|enable|require|add|use)\b.{0,100}\b(?:maximum|blanket|all|every)\b.{0,60}\b(?:hardening|security\s+controls?|security\s+gates?|security\s+measures?)\b", "blanket security controls must not replace assumption-backed proportional controls"),
+        (r"(?i)\balways\s+(?:preserve|migrate|back\s*up)\s+disposable\s+test\s+data\b", "disposable test data must not trigger automatic preservation work"),
+        (r"(?i)(?<!never )(?<!do not )(?<!must not )\brequest\s+(?:unbounded|unlimited)\s+(?:tool\s+)?output\b", "model-facing tool output must remain bounded"),
+        (r"(?i)(?<!never )(?<!do not )(?<!must not )\bcollapse\s+provider-native\s+(?:token\s+)?counters\b", "provider-native token categories must remain distinct"),
+        (r"(?i)(?<!never )(?<!do not )(?<!must not )\btreat\s+(?:research|diagnosis|test execution)\s+as\s+implementation\b", "operational phase boundaries must remain stable"),
+        (r"(?i)\bdelegated\s+agents?\s+may\s+(?:skip|ignore)\s+(?:the\s+)?(?:issue\s+)?ledgers?\b", "delegated work must receive relevant issue-ledger constraints"),
+        (r"(?i)(?<!never )(?<!do not )(?<!must not )\bestimate\s+(?:missing|unknown).{0,60}\b(?:token|counter|time)", "missing telemetry must not be estimated"),
+        (r"(?i)(?<!never )(?<!do not )(?<!must not )\bstore\s+(?:prompts|tool payloads).{0,80}`?EfficiencyLedger", "telemetry must not retain private model content"),
+        (r"(?i)(?<!never )(?<!do not )(?<!must not )\bretain\s+(?:resolved|completed|closed).{0,80}`?CompletionLedger", "the completion ledger must remain active-only"),
+        (r"(?i)\bcollection(?!.{0,80}\b(?:must not|never|do not)\b).{0,100}\bform\s+first\b", "collection destinations must not lead with forms"),
+    )
+    for pattern, label in contradictory_instructions:
+        if re.search(pattern, text, flags=re.DOTALL):
+            violations.append(label)
+
+    return violations
+
+
+def audit_policy(path: Path) -> list[str]:
+    try:
+        return find_policy_violations(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        return [f"could not read policy: {exc}"]
+
+
+def audit_claude_importer(path: Path) -> list[str]:
+    """Keep project memory from importing the global policy a second time."""
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"could not read Claude project importer: {exc}"]
+    import_lines = [line.strip() for line in text.splitlines() if line.lstrip().startswith("@")]
+    violations: list[str] = []
+    if import_lines.count("@AGENTS.md") != 1:
+        violations.append("Claude project memory must import root AGENTS.md exactly once")
+    if any("codex-app-wide/AGENTS.md" in line for line in import_lines):
+        violations.append("Claude project memory must not re-import the user-level universal policy")
+    if "# Universal Agent Instructions" in text or "# Repo Agent Instructions" in text:
+        violations.append("Claude project memory must not copy either authoritative policy")
+    folded = _fold(text)
+    if (
+        "confirm the user-level memory loaded" not in folded
+        or "read `reference/codex-app-wide/agents.md` directly" not in folded
+        or "installation or activation gap" not in folded
+    ):
+        violations.append("Claude project memory must provide a session fallback for missing global policy")
     return violations
 
 
@@ -1080,9 +670,13 @@ def main() -> int:
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY)
     args = parser.parse_args()
 
-    if not args.policy.is_file():
-        raise SystemExit(f"policy not found: {args.policy}")
-    violations = find_policy_violations(args.policy.read_text(encoding="utf-8"))
+    violations = audit_policy(args.policy)
+    try:
+        is_canonical = args.policy.resolve() == DEFAULT_POLICY.resolve()
+    except OSError:
+        is_canonical = False
+    if is_canonical:
+        violations.extend(audit_claude_importer(DEFAULT_CLAUDE_IMPORTER))
     if violations:
         for violation in violations:
             print(f"policy violation: {violation}")

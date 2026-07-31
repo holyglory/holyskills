@@ -91,6 +91,8 @@ The harness creates an audit output directory containing:
 - `effort_ledger.json`: lead-recorded worker/effort/fallback ledger.
 - `excluded_files.json`: skipped files and scope-warning reasons.
 - `reports/`: required returned worker reports.
+- `logs/`: verbose command output kept outside routine model context.
+- `final-report.md`: complete lead visual/source synthesis.
 - `queue_complete.json`: queue-generation marker, not proof that verification
   is complete.
 
@@ -155,3 +157,10 @@ scope warnings, visual comparison evidence shape, first-viewport journey
 coverage, and ledger completion. It cannot prove the semantic truth of each
 visual judgment; the lead agent remains responsible for reviewing screenshot
 evidence before final synthesis.
+
+Codex workers use `fork_turns="none"` and Light/runtime `low` effort; another
+runtime uses the equivalent fresh worker context or disclosed manual fallback
+when runtime `low` is unavailable. Workers write complete reports directly to
+their declared artifact paths and return only compact filename/hash/byte/count
+receipts. The final chat response is a short outcome, counts, caveats, verifier
+status, and artifact index.

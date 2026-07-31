@@ -384,6 +384,52 @@ def main() -> int:
         manifest = build(fixture, out)
         check(manifest["audit_kind"] == "test-coverage", "manifest should record test-coverage audit kind")
         check("test_coverage_audit" in manifest, "manifest should include test_coverage_audit block")
+        check(manifest["logs_dir"] == str((out / "logs").resolve()), "manifest should record cold logs_dir")
+        check(manifest["final_report"] == str((out / "final-report.md").resolve()), "manifest should record final report path")
+        check((out / "logs").is_dir(), "builder should create cold logs directory")
+        marker = json.loads((out / ".full-repo-test-coverage-audit-artifacts.json").read_text(encoding="utf-8"))
+        check("logs" in marker["generated_artifacts"] and "final-report.md" in marker["generated_artifacts"], "ownership marker should reserve cold logs and final report")
+        for batch in manifest["batches"]:
+            prompt_text = (out / batch["prompt"]).read_text(encoding="utf-8")
+            check(str((out / batch["report"]).resolve()) in prompt_text, "batch prompt should contain exact report path")
+            for token in (
+                'fork_turns="none"',
+                'reasoning_effort="low"',
+                "Light",
+                "REPORT_SAVED",
+                f"filename={Path(batch['report']).name};",
+                "REPORT_NOT_SAVED path=<exact-report-path>; reason=<short-reason>",
+                "at or below 80 tokens",
+            ):
+                check(token in prompt_text, f"batch prompt should enforce context-light artifact delivery: {token}")
+        coverage_meta = manifest["test_coverage_audit"]
+        for prompt_key, report_key in (("ui_prompt", "ui_report"), ("visual_prompt", "visual_report")):
+            prompt_text = (out / coverage_meta[prompt_key]).read_text(encoding="utf-8")
+            check(str((out / coverage_meta[report_key]).resolve()) in prompt_text, f"{prompt_key} should contain exact report path")
+            check('fork_turns="none"' in prompt_text and "REPORT_SAVED" in prompt_text, f"{prompt_key} should use a compact context-light worker contract")
+            check(
+                f"filename={Path(coverage_meta[report_key]).name};" in prompt_text,
+                f"{prompt_key} receipt should name its saved report filename",
+            )
+        skill_contract = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        check('fork_turns="none"' in skill_contract, "skill must require context-light Codex forks")
+        check("Light" in skill_contract and 'reasoning_effort="low"' in skill_contract, "skill must map visible Light to runtime low")
+        check(
+            "final-report.md" in skill_contract and "filename-bearing `REPORT_SAVED`" in skill_contract,
+            "skill must keep complete results in cold artifacts with filename-bearing receipts",
+        )
+        agent_metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        check(
+            "\npolicy:\n  allow_implicit_invocation: false\n" in f"\n{agent_metadata}",
+            "full-repo-test-coverage-audit metadata must disable implicit invocation",
+        )
+        check(
+            any(
+                line.strip().startswith("default_prompt:") and "$full-repo-test-coverage-audit" in line
+                for line in agent_metadata.splitlines()
+            ),
+            "full-repo-test-coverage-audit default prompt must explicitly invoke $full-repo-test-coverage-audit",
+        )
         omitted_target_out = tmp / "omitted-target-out"
         build(fixture, omitted_target_out)
         write_complete_reports(omitted_target_out, omit_target_symbol="loadUser")

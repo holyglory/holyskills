@@ -611,6 +611,8 @@ KNOWN_GENERATED_ARTIFACTS = {
     "excluded_files.json",
     "journey_audit.md",
     "lead_reconciliation.md",
+    "final-report.md",
+    "logs",
     "manifest.json",
     "queue_complete.json",
     "queue_complete.json.tmp",
@@ -683,6 +685,55 @@ def validate_repo_relative_path_token(value: str, field_name: str) -> None:
     path = PurePosixPath(value)
     if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
         raise ValueError(f"{field_name} must be a repo-relative path without '.' or '..' segments.")
+
+
+def artifact_delivery_contract(report_path: Path) -> str:
+    """Render the shared cold-artifact/compact-receipt worker contract."""
+    report_text = str(report_path.resolve())
+    validate_markdown_safe_token(report_text, "worker report path")
+    report_name = report_path.name
+    validate_markdown_safe_token(report_name, "worker report filename")
+    return f"""## Artifact Delivery Contract
+
+Write the complete required Markdown report directly to `{report_text}`. The
+report file is the result of record; do not paste or repeat its body in the
+subagent response. Writing this audit artifact does not authorize editing the
+audited repository.
+
+After the file is durably written, compute its SHA-256 and byte length, then
+respond with only this compact receipt:
+
+`REPORT_SAVED filename={report_name}; status=<complete|blocked> sha256=<64-hex> bytes=<integer> findings=<integer-or-unknown>`
+
+Keep the receipt at or below 80 tokens. If the report cannot be written, return
+only `REPORT_NOT_SAVED path=<exact-report-path>; reason=<short-reason>`, still
+at or below 80 tokens. Never substitute the full report body for a failed
+artifact write.
+"""
+
+
+def isolated_light_worker_contract() -> str:
+    return """## Dispatch Contract
+
+The lead must pass this entire generated prompt plus applicable project-ledger
+requirements. In Codex, spawn this worker with `fork_turns="none"` and
+`reasoning_effort="low"`; the effort selector calls that runtime value
+**Light**. In another runtime, use its equivalent fresh worker context and
+Light/low effort. Never inherit the lead transcript merely to obtain the worker
+effort setting.
+"""
+
+
+def lead_artifact_delivery_contract(report_path: Path) -> str:
+    report_text = str(report_path.resolve())
+    validate_markdown_safe_token(report_text, "lead report path")
+    return f"""## Artifact Delivery Contract
+
+Write the complete lead-owned reconciliation directly to `{report_text}`.
+Keep this detailed artifact out of routine chat context; inspect it through
+targeted sections and let the verifier validate it. Writing this artifact does
+not authorize editing the audited repository.
+"""
 
 
 def parse_args() -> argparse.Namespace:
@@ -1748,13 +1799,21 @@ def render_journey_file_list(entries: list[FileEntry]) -> str:
     )
 
 
-def render_journey_source_prompt(repo: Path, run_id: str, entries: list[FileEntry]) -> str:
+def render_journey_source_prompt(
+    repo: Path,
+    run_id: str,
+    entries: list[FileEntry],
+    report_path: Path,
+) -> str:
     return f"""# Full Repo Audit User Journey Source Worker
 
 Repo root: `{repo}`
 Run ID: `{run_id}`
 
-You are a separate low-effort worker focused on user journeys through the UI. Do not edit files. Use the interface-relevant source files below, plus repo docs/routes/config when needed, to determine whether the app describes complete user journey(s), required feature/UI elements, and test expectations, and whether the UI source supports them.
+{artifact_delivery_contract(report_path)}
+{isolated_light_worker_contract()}
+
+You are a separate low-effort worker focused on user journeys through the UI. Do not edit the audited repository; write only the exact audit artifacts authorized above. Use the interface-relevant source files below, plus repo docs/routes/config when needed, to determine whether the app describes complete user journey(s), required feature/UI elements, and test expectations, and whether the UI source supports them.
 
 ## Interface-Relevant Files
 
@@ -1773,9 +1832,9 @@ You are a separate low-effort worker focused on user journeys through the UI. Do
 8. Check whether the interface exposes a test mode or lightweight fixture path for visually exercising the journey without heavy load or production side effects.
 9. Report concrete gaps with file evidence and visible copy when possible, including missing UI elements, unwired implementation paths, interaction checklist gaps, or missing test evidence. Treat unconfirmed journeys as open questions or assumption-based coverage, not as clean UI proof.
 
-## Required Output
+## Required Report File
 
-Return Markdown with exactly these sections:
+Write Markdown with exactly these sections to the report path above:
 
 ## Run ID
 {run_id}
@@ -1811,13 +1870,25 @@ Ask the lead to clarify the most frequent use cases when journey information is 
 """
 
 
-def render_visual_journey_prompt(repo: Path, run_id: str, entries: list[FileEntry]) -> str:
+def render_visual_journey_prompt(
+    repo: Path,
+    run_id: str,
+    entries: list[FileEntry],
+    report_path: Path,
+) -> str:
     return f"""# Full Repo Audit Visual Journey Worker
 
 Repo root: `{repo}`
 Run ID: `{run_id}`
 
-You are a separate low-effort worker focused on visual journey verification. Do not edit files. Check the visual surface against complete journey, feature, UI element, and test expectations. If the repo has a test mode, fixture mode, Playwright/browser automation, MCP browser tooling, or another safe visual test path, use or recommend that test mode before any production/heavy-load path. If no visual tool or no test mode is available, report the blocker as a finding or open question with evidence.
+{artifact_delivery_contract(report_path)}
+{isolated_light_worker_contract()}
+
+Authorized visual evidence manifest: `{(report_path.parent.parent / 'visual_evidence.json').resolve()}`.
+Screenshot and formal-verifier artifacts may be written only beneath the same
+audit-output directory and must be registered in that manifest.
+
+You are a separate low-effort worker focused on visual journey verification. Do not edit the audited repository; write only the exact audit artifacts authorized above. Check the visual surface against complete journey, feature, UI element, and test expectations. If the repo has a test mode, fixture mode, Playwright/browser automation, MCP browser tooling, or another safe visual test path, use or recommend that test mode before any production/heavy-load path. If no visual tool or no test mode is available, report the blocker as a finding or open question with evidence.
 
 For CLI, library, plugin, or skill packages that expose only metadata/Markdown and no repo-owned rendered UI surface, mark visual desktop/mobile checks as `not applicable` with evidence instead of treating host-owned rendering as a repo defect. Still report a finding if the package promises a visual surface, ships screenshots/previews, or contains UI source without a safe visual test path.
 
@@ -1838,9 +1909,9 @@ For CLI, library, plugin, or skill packages that expose only metadata/Markdown a
 9. When a web UI has a safe render path, run `formal-web-ui-verification` or explicitly report why formal DOM/layout verification is blocked. Treat unresolved critical formal findings for clipped text, hidden controls, unintended overlap, off-canvas controls, broken media, invisible text, horizontal overflow, or area violations as gaps. Always record the verifier's visible scrollbar inventory as evidence.
 10. When visual checks are applicable, populate `visual_evidence.json` with a stable id, confined relative artifact path, SHA-256, MIME, actual image dimensions, route, state, viewport width/height/label, and capture tool. Cite each real artifact as `evidence:<id>` in the applicable row. Filenames or screenshot keywords alone are rejected. For rendered web UI, bind the formal-verifier JSON and preserve checked-page coverage plus visible scrollbar inventory. If required screens, elements, states, formal DOM checks, or visual tests are missing, report them as gaps. If no repo-owned rendered UI exists, explicitly mark checks `not applicable` with evidence.
 
-## Required Output
+## Required Report File
 
-Return Markdown with exactly these sections:
+Write Markdown with exactly these sections to the report path above:
 
 ## Run ID
 {run_id}
@@ -1873,11 +1944,13 @@ List missing test-mode or journey clarifications for the lead.
 """
 
 
-def render_lead_reconciliation_prompt(repo: Path, run_id: str) -> str:
+def render_lead_reconciliation_prompt(repo: Path, run_id: str, report_path: Path) -> str:
     return f"""# Full Repo Audit Lead Reconciliation
 
 Repo root: `{repo}`
 Run ID: `{run_id}`
+
+{lead_artifact_delivery_contract(report_path)}
 
 This is a required lead-owned reconciliation artifact, not a low-effort batch.
 Complete it only after reading every batch report and, when applicable, both
@@ -1885,7 +1958,8 @@ journey reports. Independently reopen the assigned source and recheck every
 batch `PASS` responsibility anchor; a batch conclusion is a lead, not a
 substitute for this lead-owned review. Rechecks may be completed incrementally,
 but sampling PASS rows is not sufficient for full semantic coverage. Do not
-edit the audited repository.
+edit the audited repository; write only the exact audit artifact authorized
+above.
 
 Trace the repository's real feature, API, command, route, job, event,
 configuration, schema/migration, build/deploy, and operational contracts across
@@ -1901,9 +1975,9 @@ Every finding must describe exactly one independently closable implementation
 outcome. Do not save a compound finding. Reissue it as separate atomic finding
 blocks, each with its own evidence, gap, and verification direction.
 
-## Required Output
+## Required Report File
 
-Return Markdown with exactly these sections:
+Write Markdown with exactly these sections to the report path above:
 
 ## Run ID
 {run_id}
@@ -1942,7 +2016,14 @@ List unresolved ambiguities or exactly `None.`. Questions and hypotheses are not
 """
 
 
-def render_batch_prompt(repo: Path, run_id: str, batch_id: int, total_batches: int, entries: list[AuditUnit]) -> str:
+def render_batch_prompt(
+    repo: Path,
+    run_id: str,
+    batch_id: int,
+    total_batches: int,
+    entries: list[AuditUnit],
+    report_path: Path,
+) -> str:
     file_lines = "\n".join(
         (
             f"- Unit `{entry.unit_id}`: `{entry.rel_path}` lines {entry.start_line}-{entry.end_line} "
@@ -1968,7 +2049,10 @@ The exact ranged unit id must also appear in either `Findings` or `No Finding No
 Repo root: `{repo}`
 Batch purpose: {purpose_for(entries)}
 
-You are a low-effort subagent performing a manual source-code audit for only this batch. Do not edit files. Inspect every listed file directly and report only evidence you can tie to these files.
+{artifact_delivery_contract(report_path)}
+{isolated_light_worker_contract()}
+
+You are a low-effort subagent performing a manual source-code audit for only this batch. Do not edit the audited repository; write only the exact audit artifact authorized above. Inspect every listed file directly and report only evidence you can tie to these files.
 
 ## Files You Own
 
@@ -1992,9 +2076,9 @@ For each file, check:
 - Are errors, loading states, permissions, data validation, migrations, observability, or edge cases missing?
 - Are tests absent or too shallow for the behavior this file owns?
 
-## Required Output
+## Required Report File
 
-Return Markdown with exactly these sections:
+Write Markdown with exactly these sections to the report path above:
 
 ## Run ID
 {run_id}
@@ -2268,6 +2352,8 @@ def write_completion_marker(out_dir: Path, manifest: dict) -> None:
         "effort_ledger": "effort_ledger.json",
         "excluded_files": "excluded_files.json",
         "reports_dir": "reports",
+        "logs_dir": "logs",
+        "final_report": "final-report.md",
         "ownership_marker": ARTIFACT_MARKER,
         "batch_count": manifest["batch_count"],
         "source_file_count": manifest["source_file_count"],
@@ -2562,6 +2648,8 @@ def write_outputs(
         archived_reports_dir = str(archive_candidate)
         archived_reports_name = archive_candidate.name
     reports_dir.mkdir(exist_ok=True)
+    logs_dir = out_dir / "logs"
+    logs_dir.mkdir(exist_ok=True)
 
     batch_records = []
     all_batched_paths: list[str] = []
@@ -2571,7 +2659,11 @@ def write_outputs(
     for index, batch in enumerate(batches, start=1):
         prompt_name = f"batch_{index:03d}.md"
         prompt_path = out_dir / prompt_name
-        prompt_path.write_text(render_batch_prompt(repo, run_id, index, total_batches, batch), encoding="utf-8")
+        report_path = reports_dir / prompt_name
+        prompt_path.write_text(
+            render_batch_prompt(repo, run_id, index, total_batches, batch, report_path),
+            encoding="utf-8",
+        )
         paths = sorted({item.rel_path for item in batch})
         unit_ids = [item.unit_id for item in batch]
         all_batched_paths.extend(paths)
@@ -2580,6 +2672,7 @@ def write_outputs(
             {
                 "id": f"batch_{index:03d}",
                 "prompt": prompt_name,
+                "report": f"reports/{prompt_name}",
                 "file_count": len(paths),
                 "coverage_unit_count": len(batch),
                 "interface_file_count": sum(1 for item in batch if item.interface_relevant),
@@ -2622,16 +2715,21 @@ def write_outputs(
         "report": "reports/lead_reconciliation.md",
     }
     (out_dir / "lead_reconciliation.md").write_text(
-        render_lead_reconciliation_prompt(repo, run_id),
+        render_lead_reconciliation_prompt(repo, run_id, reports_dir / "lead_reconciliation.md"),
         encoding="utf-8",
     )
     if journey_required:
         (out_dir / "journey_audit.md").write_text(
-            render_journey_source_prompt(repo, run_id, interface_entries),
+            render_journey_source_prompt(repo, run_id, interface_entries, reports_dir / "journey_audit.md"),
             encoding="utf-8",
         )
         (out_dir / "visual_journey_audit.md").write_text(
-            render_visual_journey_prompt(repo, run_id, interface_entries),
+            render_visual_journey_prompt(
+                repo,
+                run_id,
+                interface_entries,
+                reports_dir / "visual_journey_audit.md",
+            ),
             encoding="utf-8",
         )
         write_json(out_dir / "visual_evidence.json", {"schema_version": 1, "run_id": run_id, "artifacts": []})
@@ -2654,6 +2752,8 @@ def write_outputs(
         "manifest.json",
         "queue_complete.json",
         "lead_reconciliation.md",
+        "final-report.md",
+        "logs",
         VERIFICATION_RECEIPT_NAME,
         *(
             ["journey_audit.md", "visual_journey_audit.md", "visual_evidence.json"]
@@ -2669,6 +2769,8 @@ def write_outputs(
         "run_id": run_id,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "reports_dir": str(reports_dir),
+        "logs_dir": str(logs_dir),
+        "final_report": str(out_dir / "final-report.md"),
         "archived_reports_dir": archived_reports_dir,
         "artifact_marker": str(out_dir / ARTIFACT_MARKER),
         "effort_ledger": str(out_dir / "effort_ledger.json"),
@@ -2767,13 +2869,13 @@ All source files queued exactly once: **{str(invariant).lower()}**
 ## Lead Agent Instructions
 
 1. Run the lead architectural audit with extra-high effort.
-2. Spawn one low-effort subagent per batch prompt, in waves if needed.
+2. Spawn one Light-effort (`reasoning_effort="low"`) subagent per batch prompt, in waves if needed. In Codex always set `fork_turns="none"`; pass the entire prompt and applicable project-ledger requirements.
 {journey_instruction}
-4. Require each subagent to return file coverage and one or more source-backed `Implementation Inventory` rows for every file or range unit in its batch, with one uniquely identified row per distinct responsibility.
+4. Each worker writes its complete report to the exact path embedded in its prompt and returns only the bounded `REPORT_SAVED` receipt. Do not request or accept the report body through the subagent response.
 5. Confirm `queue_complete.json` exists and its `run_id` matches `manifest.json` before dispatching batches.
 6. Fill `effort_ledger.json` with the subagent capability check, lead effort status, per-batch agent/effort status, and journey worker status.
 7. Inspect `excluded_files.json`; resolve any `scope_warning: true` exclusions and review any `pruned_directory_review_hints` before claiming full coverage.
-8. Save one Markdown report per batch under `reports/` using the exact filename `batch_###.md`, then verify returned subagent coverage:
+8. Confirm one Markdown report per batch exists under `reports/` using the exact filename `batch_###.md`, then verify artifact-backed subagent coverage:
    `{manifest['verifier_command']}`
 9. If the verifier reports missing reports or ledger/report drift after an interrupted run, treat the verifier and manifest as authoritative: rerun the missing batch/journey prompts, save the exact report filenames, update `effort_ledger.json`, and rerun the verifier before final synthesis.
 10. Requeue missing or unchecked files before final synthesis.
@@ -2781,6 +2883,7 @@ All source files queued exactly once: **{str(invariant).lower()}**
 12. Complete `{lead_reconciliation.get('prompt', 'lead_reconciliation.md')}` and save the exact verified report `{lead_reconciliation.get('report', 'reports/lead_reconciliation.md')}`. Record every lead-only cross-file gap as an atomic finding there, including marker-free semantic gaps.
 13. Validate every candidate finding directly before placing it in the implementation plan or a completion-ledger projection.
 14. Include implementation, interface, and journey findings for controls, fields, menu items, routes, visible decision information, messages, intended features, implementation paths, and tests that imply missing or wrong behavior.
+15. Redirect verbose command stdout/stderr to `logs/`. Write the complete synthesized audit to `final-report.md`; return to chat only a compact outcome, critical/finding counts, verifier status, and artifact paths.
 
 ## Batches
 
@@ -2801,6 +2904,8 @@ All source files queued exactly once: **{str(invariant).lower()}**
 - `effort_ledger.json`: required lead/subagent capability and effort ledger.
 - `excluded_files.json`: skipped files and reasons.
 - `reports/`: required destination for returned `batch_###.md` subagent reports.
+- `logs/`: cold command output; do not paste full command logs into model context.
+- `final-report.md`: complete lead synthesis; chat receives only a compact artifact index.
 - `lead_reconciliation.md`: required lead prompt; its exact report is `reports/lead_reconciliation.md`.
 - `journey_audit.md` and `visual_journey_audit.md`: generated when interface-relevant files exist and tracked in `effort_ledger.json`.
 - `batch_###.md`: exact subagent prompts, including range unit ids for oversized files when needed.

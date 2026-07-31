@@ -7,6 +7,10 @@ description: Run a manifest-verified repository implementation, source, interfac
 
 ## Overview
 
+This exhaustive workflow is explicit-only. Run it only when the user invokes
+`$full-repo-audit`; ordinary implementation, review, testing, or gap-finding
+requests must not activate it implicitly.
+
 Run a multi-level audit: the lead agent performs the architectural, product-flow, implementation, and interface review; low-effort subagents manually inspect every source file in deterministic batches; separate UI journey workers inspect source-level journeys and visual testability. Use the harness script to create a coverage manifest and worker prompts, then reconcile file traces into complete feature and entry-point traces before producing the final implementation plan.
 
 Treat documented product intent, confirmed user journeys, source-backed feature promises, visible UI elements, and expected tests as one complete product contract. Every intended journey, feature, route, control, state, handler, persistence path, permission path, error path, and verification path must be present, implemented, and tested; otherwise report the gap.
@@ -43,12 +47,30 @@ unrecognized UI toolkit.
 ## Required Execution Model
 
 - Request extra-high reasoning effort for the lead audit. Call it `runtime-attested x-high` only when immutable/runtime provenance actually reports that setting. A configured or self-reported value must be labeled `ledger-recorded-unverified`; never call it confirmed. If runtime attestation is unavailable, the audit may continue only as `unattested lead review`, must disclose that limitation, and must not claim x-high assurance.
-- Use low-effort subagents for file-batch inspection. When spawning these agents, set `reasoning_effort` to `low`.
+- Use Light-effort subagents for file-batch inspection. **Light** is the Codex
+  selector label for runtime `reasoning_effort="low"`. In Codex, every worker
+  spawn must also set `fork_turns="none"`; pass the entire generated prompt and
+  every applicable project-ledger requirement because no parent transcript is
+  inherited. Other runtimes must use the equivalent fresh worker context.
 - When interface-relevant files are queued, use separate low-effort workers for `journey_audit.md` and `visual_journey_audit.md`. Manual fallback may process these prompts in the current agent only when worker spawning is unavailable, but the final coverage label must disclose that fallback.
 - Treat the user's request to run this audit as authorization for the batch subagents required by this workflow.
-- After the lead x-high gate above is satisfied, check whether the active runtime exposes a subagent tool that can set `reasoning_effort` for spawned worker agents. If that worker tool is absent, fails, or cannot set low effort, record the reason and enter manual fallback mode for worker coverage only.
+- After the lead x-high gate above is satisfied, inspect the active runtime's
+  worker-context and effort capabilities. Request Light/runtime `low`; the
+  label difference is not an unsupported-effort condition. Enter manual
+  fallback when runtime `low` is genuinely unavailable, workers cannot be
+  isolated from the parent transcript, or spawning is unavailable/fails.
 - Keep a lead-recorded effort/capability ledger. Every capability and effort claim needs a claim basis (`runtime-attested`, `tool-schema-inspected`, `self-reported`, or `manual-fallback`), a consistent claim label, and concrete provenance/evidence. The verifier checks ledger consistency, not hidden scheduler state.
-- If the lead x-high gate is satisfied but the runtime cannot spawn worker subagents or set low worker effort, continue only in **manual fallback mode** for worker coverage: disclose the limitation, run each generated batch sequentially in the current agent, save one report per batch under `<audit-output>/reports/batch_###.md`, verify coverage with `verify_audit_results.py`, and label final coverage as `manual fallback coverage` rather than subagent coverage.
+- If manual fallback is required, disclose the exact limitation, run each
+  generated batch sequentially in the current agent, save one report per batch
+  under `<audit-output>/reports/batch_###.md`, verify coverage with
+  `verify_audit_results.py`, and label final coverage as `manual fallback
+  coverage` rather than subagent coverage.
+- Keep complete worker reports, lead reconciliation, verifier output, command
+  stdout/stderr, and final synthesis in `<audit-output>/reports/`,
+  `<audit-output>/logs/`, and `<audit-output>/final-report.md`. A worker writes
+  its prompt-declared report directly and returns only the bounded
+  filename-bearing `REPORT_SAVED` receipt. Never route a complete report or raw
+  log through the subagent response or final chat message.
 - Keep subagent ownership disjoint: one batch prompt per subagent, no overlapping file ownership unless a batch must be rechecked.
 - Keep the audited repo read-only by default. Every verified artifact-backed
   audit creates and fully reviews an exact external completion-ledger
@@ -119,7 +141,11 @@ unrecognized UI toolkit.
 
 4. **Dispatch low-effort workers**
    - Open the generated `audit_index.md`.
-   - For each `batch_###.md`, spawn one low-effort subagent and pass the entire prompt file content.
+   - For each `batch_###.md`, spawn one Light/runtime-low subagent, pass the
+     entire prompt file content plus applicable project-ledger requirements,
+     and in Codex set `fork_turns="none"`. The generated prompt contains the
+     exact report path. Accept only its compact receipt; inspect the report from
+     disk rather than asking the worker to return it again.
    - Require at least one `Implementation Inventory` row for every owned file or range unit and one separate row for every distinct responsibility found there. A unit may therefore appear in multiple rows. Each row has a unique stable `Contract ID` in deterministic `batch_###:C###` namespace, numbered within its owning batch, plus concrete source anchors, ordered implementation/data/side-effect flow, failure/permission/recovery handling, verification evidence, and `PASS`, `GAP`, or `BLOCKED`; marker searches, one catch-all file row, or a generic purpose summary are not substitutes. In the responsibility cell, require an enumerated `Basis: <kind> — <reference>` and `Discovery: parsed|manual — <assigned-unit anchor>`. Parsed discovery requires a recognized named definition; declarative, unsupported, and unparsed responsibilities require manual enumeration, and inability to enumerate is `BLOCKED`. Begin all three trace/evidence cells with `pass`, `gap`, `blocked`, or `not applicable`; derive the row result from them, and inventory every high-confidence named source definition in its own row so a working helper cannot hide an omitted entry point.
    - When generated, spawn a separate low-effort source journey worker with `journey_audit.md`. This worker checks journey documentation, drafts missing journeys, estimates UI element relevance, and traces navigation/decision information through UI source.
    - When generated, spawn a separate visual journey worker with `visual_journey_audit.md`. If the repo is UI-heavy or screenshots are available, the lead must review the visual findings directly; do not let low-effort visual notes be the only basis for declaring a UI usable. Rerun the dedicated `ui-implementation-audit` only after manually confirming and naming a substantive repo-owned target UI source file and passing its recognized-source preflight. If no such implementation exists, keep the UI state planned or unimplemented and do not invoke that skill; reserve its type-to-component source-anchor relationship for a manually proven unrecognized UI toolkit.
@@ -131,7 +157,9 @@ unrecognized UI toolkit.
    - Compare `manifest.json` source files, coverage units, run id, and SHA-256 fingerprints with every subagent `File Coverage` table. For range units, the coverage row must use the exact unit id such as `path#Lstart-Lend` or `path#Bstart-end`; the exact unit id must also appear in `Findings` or `No Finding Notes` so the verifier can prove that specific range was checked, while the finding `Files` field still references the real repo-relative file path.
    - Compare the same exact coverage-unit set with every batch's `Implementation Inventory`. Require at least one row per unit, permit repeated units for separate responsibilities, and reject missing units or high-confidence named definitions, duplicate or generic `Contract ID`s, extra units, fabricated or source-unanchored basis/discovery rows, trace/result contradictions, missing or duplicate evidence type/counterfactual/invariance declarations, source-only PASS for stateful/external claims, `PASS` without concrete verification, and any non-atomic result/finding mapping. Every `GAP`/`BLOCKED` row has exactly one file-bound finding, and every finding cites exactly one `GAP`/`BLOCKED` Contract ID; a compound outcome must be reissued as separate rows/findings. A valid table proves that the manual trace was recorded, not that the judgment is automatically correct.
    - Confirm required journey reports exist at `reports/journey_audit.md` and `reports/visual_journey_audit.md` when interface-relevant files were queued, and that `effort_ledger.json` records those workers as completed or manual fallback.
-   - Save one subagent Markdown report per batch under `<audit-output>/reports/` using the exact filename `batch_###.md`.
+   - Confirm each worker wrote one Markdown report under
+     `<audit-output>/reports/` using the exact filename `batch_###.md`; verify
+     the receipt's hash/byte claim before treating the worker as complete.
    - Inspect suspicious high-impact findings directly as lead before including them.
    - Reconcile all responsibility-level rows by `Contract ID` into the lead implementation-contract inventory. Independently reopen and recheck every batch PASS anchor against its source, callers, registrations, persistence, integrations, and verification until every contract item has a complete trace; incremental waves are allowed, but sampling is not. Do not infer end-to-end completeness by merging file-local `PASS` rows.
    - Complete generated `<audit-output>/lead_reconciliation.md` and save the result as required `<audit-output>/reports/lead_reconciliation.md`. It contains `Run ID`, `Worker` with exact value `lead_reconciliation`, `Cross-File Contract Trace`, atomic `Findings`, and `Open Questions`. In `Cross-File Contract Trace`, assign every file-local, cross-file, public, or operational contract a unique sequential `lead:C###` ID; map every batch `Contract ID` to exactly one lead row; cite every mapped source and concrete evidence; and give evidence-backed `pass`, `gap`, `blocked`, or `not applicable` statuses for all nine implementation trace labels. The lead verification cell records its independent recheck with exactly one evidence type and counterfactual or invariance; source-only evidence cannot close a stateful or external PASS. Derive the overall `Result` from those statuses and never hide a mapped batch `GAP` or `BLOCKED`. Use the exact `No findings.` sentinel when clean. The verifier must validate this manifest-declared artifact; a final response or private lead notes cannot substitute for it.
@@ -196,9 +224,9 @@ unrecognized UI toolkit.
      ```
    - The updater must not trust the receipt as proof by itself. During both plan and apply it must reopen the exact manifest-authorized report set, hold the manifest, reports, current source files, queue/exclusion/effort records, prompts, visual-evidence manifest, and referenced artifacts under no-follow guards, rerun `verify_audit_results.py`, validate every guard after the run, normalize only a proven `CompletionLedger.md`-only freshness mismatch, and require the canonical rerun result digest to equal the receipt's verifier-result digest. It must reject pending, omitted, or tampered candidates; malformed or symlinked ledgers; stale or forged receipts and plans; concurrent ledger drift; and source, report, companion, or evidence drift; preserve unrelated rows; write only project-root `CompletionLedger.md`; and verify the applied hash. Recording a finding is not fixing it and does not make the audited product ready.
 
-## Subagent Result Requirements
+## Subagent Artifact Requirements
 
-Require each batch subagent to return:
+Require each batch subagent's saved report to contain:
 
 - `Run ID`: the exact run id from the batch prompt.
 - `Batch ID`: the exact `batch_###` id.
@@ -245,9 +273,10 @@ Reject or requeue a batch result if it omits files, claims broad conclusions wit
 
 Require the journey source worker to return `Run ID`, `Worker`, `Journey Sources`, `Proposed Journeys`, `UI Source Journey Checks`, `Findings`, and `Open Questions`. Require `UI Source Journey Checks` to cover every confirmed and drafted journey and to compare current UI hierarchy against journey-derived relevance: critical information, primary navigation, secondary information, rare/detail/debug content, interaction target expectations, message metadata relevance, UI assumption status, and desktop/native/mobile fit. Require the visual journey worker to return `Run ID`, `Worker`, `Visual Tooling`, `Visual Journey Checks`, `Findings`, and `Open Questions`. Journey and visual workers must include the interaction checklist labels `badge-detail`, `row-hit-target`, `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`, `status-summary`, and `message-metadata` in `UI Source Journey Checks`, `Visual Journey Checks`, or the first line of `Findings`; any `gap`/`blocked` status must have a finding. Their `Findings` sections must use the same field schema as batch findings (`Files`, `Evidence`, `Interface evidence`, `Expected behavior/standard`, `Gap`, `Suggested direction`) or the exact clean sentinel `No findings.` If no explicit journey documentation exists, the journey source report must include draft journeys marked `draft-needs-user-confirmation`, and the final audit must either ask the user to confirm them or label UI/journey coverage as assumption-based.
 
-## Final Audit Output
+## Final Audit Artifact And Chat Output
 
-Return a concise but complete plan with exactly these top-level Markdown headings, in this order:
+Write the complete plan to `<audit-output>/final-report.md` with exactly these
+top-level Markdown headings, in this order:
 
 ## Coverage
 Repo root, audit output path, run id, source files queued, coverage units queued, files or units checked by subagents or manual fallback, implementation contract items inventoried, trace counts by pass/gap/blocked/not-applicable, files rechecked by the lead, journey workers run, scope warnings, exclusions, unchecked files or units, verifier result, subagent capability check result, ledger-recorded lead effort status, and per-batch/journey effort/fallback ledger.
@@ -287,6 +316,13 @@ Ordered work items with expected behavior, affected files or modules, implementa
 
 ## Verification Plan
 Commands, browser/API checks, fixtures, or user workflows needed to prove each improvement. Include the exact verifier command and any commands already run.
+
+Do not paste this full report, trace table, worker report, consolidated finding
+set, or raw command log into chat. The final chat response contains only the
+overall outcome, incomplete/blocking status, critical and total finding counts,
+verifier result, material coverage caveats, and paths to `final-report.md` plus
+the audit artifact directory. Keep it compact enough to serve as an artifact
+index, not a second report.
 
 Use this priority scale:
 

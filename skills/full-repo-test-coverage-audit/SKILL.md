@@ -7,6 +7,10 @@ description: Run a manifest-verified test assurance audit with deterministic str
 
 ## Overview
 
+This exhaustive workflow is explicit-only. Run it only when the user invokes
+`$full-repo-test-coverage-audit`; ordinary implementation, review, testing, or
+gap-finding requests must not activate it implicitly.
+
 Run a read-only, manifest-verified audit of test coverage. The lead agent reviews the repo architecture, test strategy, UI/user journeys, intended feature set, UI element set, and high-level behavior. Low-effort workers inspect deterministic file batches and manually identify reasonable test targets, existing test evidence, missing scenarios, boundary cases, failure paths, and recommended test types.
 
 This is an empirical coverage audit only when the user supplies a supported runtime coverage report. Without one, label results `structural/manual test assurance`; the presence of a test file is structural evidence, not proof that it ran or covered a line.
@@ -16,11 +20,23 @@ Treat documented product intent, confirmed user journeys, source-backed feature 
 ## Required Execution Model
 
 - Use high reasoning effort or higher for the lead audit. If the current lead run cannot be confirmed as high effort or higher, tell the user before starting.
-- Use low-effort subagents for file-batch inspection when the runtime supports spawned workers. Treat the user's request to run this audit as authorization for the needed low-effort batch workers.
+- Use Light-effort subagents for file-batch inspection when the runtime supports
+  spawned workers. **Light** is the Codex selector label for runtime
+  `reasoning_effort="low"`. In Codex, every worker spawn must set
+  `fork_turns="none"` and receive the entire generated prompt plus applicable
+  project-ledger requirements. Other runtimes use the equivalent fresh worker
+  context. If runtime `low` is genuinely unavailable, use disclosed manual
+  fallback rather than an invalid effort request or inherited lead context.
+  Treat the user's request to
+  run this audit as authorization for the needed workers.
 - When interface-relevant files are queued, run separate low-effort workers for `ui_test_coverage_audit.md` and `visual_e2e_coverage_audit.md`.
 - If workers are unavailable, continue in disclosed manual fallback mode for worker coverage only: process each prompt sequentially, save reports under `<audit-output>/reports/`, and keep the final coverage label as manual fallback coverage.
 - Keep the audited repo read-only unless the user separately asks to implement the resulting test plan. Generated audit artifacts are allowed and should live outside the audited repo by default.
 - Do not claim every file or target was checked until the manifest, batch reports, effort ledger, and verifier agree.
+- Workers write complete reports directly to their prompt-declared paths and
+  return only bounded filename-bearing `REPORT_SAVED` receipts. Keep complete
+  reports and command output in `<audit-output>/reports/` and
+  `<audit-output>/logs/`; never paste them through subagent responses.
 
 ## Workflow
 
@@ -35,9 +51,13 @@ Treat documented product intent, confirmed user journeys, source-backed feature 
 3. Inspect `audit_index.md`, `manifest.json`, and `excluded_files.json`. Resolve any `scope_warning: true` rows before claiming full coverage, or disclose downgraded coverage.
    - Supply runtime evidence with repeated `--coverage-report <path>` arguments. Supported formats are LCOV, Cobertura XML, coverage.py JSON, and Istanbul JSON. The manifest records exact evidence path, SHA-256, format, measured lines, and covered lines.
 4. Fill `effort_ledger.json` as workers are dispatched and reconciled: lead effort status, subagent capability, batch worker ids/effort/report status, UI journey coverage worker, visual/e2e coverage worker, fallback status, and pruned-directory review decisions when applicable.
-5. Dispatch one low-effort worker per `batch_###.md`. Tell workers not to edit files.
-6. If generated, dispatch `ui_test_coverage_audit.md` and `visual_e2e_coverage_audit.md` as separate low-effort workers.
-7. Save one report per batch under `reports/batch_###.md`, then verify:
+5. Dispatch one Light/runtime-low worker per `batch_###.md`; in Codex set
+   `fork_turns="none"`. Pass the complete prompt, accept only its compact
+   receipt, and confirm the exact report artifact on disk.
+6. If generated, dispatch `ui_test_coverage_audit.md` and
+   `visual_e2e_coverage_audit.md` with the same isolated context and
+   artifact-first contract.
+7. Confirm one report per batch under `reports/batch_###.md`, then verify:
 
    ```bash
    python3 "$FULL_REPO_TEST_COVERAGE_AUDIT_SKILL_DIR/scripts/verify_test_coverage_audit_results.py" --manifest <audit-output>/manifest.json --reports <audit-output>/reports
@@ -107,9 +127,10 @@ The UI test coverage worker checks whether intended routes, controls, forms, UI 
 
 The visual/e2e coverage worker identifies Playwright, Cypress, Storybook, native preview, screenshot, or browser tooling. For CLI, library, plugin, or skill packages with no repo-owned rendered UI surface, mark visual checks as `not applicable` with evidence rather than reporting a defect.
 
-## Final Output
+## Final Audit Artifact And Chat Output
 
-Return exactly these top-level headings:
+Write the complete result to `<audit-output>/final-report.md` with exactly these
+top-level headings:
 
 ```markdown
 ## Coverage
@@ -121,6 +142,11 @@ Return exactly these top-level headings:
 ```
 
 `## Coverage` must state `empirical`, `structural`, and `manual` scopes separately. Name each supplied coverage artifact, format, SHA-256, and source-file scope. If none was supplied, say `No empirical runtime coverage evidence supplied`; never report a percentage inferred from source/test matching.
+
+Do not paste `final-report.md`, worker reports, consolidated findings, or raw
+command logs into chat. Return only the overall outcome, incomplete/blocking
+status, high-priority and total gap counts, verifier result, empirical-versus-
+structural caveat, and the final-report/audit-directory paths.
 
 Prioritize gaps with:
 

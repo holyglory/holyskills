@@ -11,6 +11,11 @@ const DEFAULT_VIEWPORTS = [
   { name: "mobile", width: 390, height: 844 },
   { name: "desktop", width: 1440, height: 900 },
 ];
+const RECEIPT_MAX_BYTES = 2048;
+const DEFAULT_ARTIFACT_PREFIX = "formal-web-ui-verification-";
+
+let fallbackArtifacts;
+let activeArtifacts;
 
 function usage() {
   return `Usage:
@@ -22,8 +27,10 @@ Options:
   --url <url>                       Add a URL target. Can be repeated.
   --config <path>                   Load JSON config.
   --viewport <name=WIDTHxHEIGHT>    Add viewport. Can be repeated.
-  --json-out <path>                 Write JSON report.
-  --markdown-out <path>             Write Markdown report.
+  --json-out <path>                 Override the auto-created JSON artifact path.
+  --markdown-out <path>             Override the auto-created Markdown artifact path.
+  --receipt-only                    Deprecated no-op; bounded receipt output is already the default.
+  --human-readable-stdout           Human-only compatibility mode: print the full Markdown report instead of the bounded JSON receipt.
   --fail-on <critical|warning|info> Exit 1 when this severity or higher is found. Default: critical.
   --browser-executable <path>       Use a specific Chrome/Chromium executable.
   --from-coordinator                Read current URLs from codex-dev-coordinator inventory.
@@ -42,6 +49,76 @@ Options:
                                     auth-gated pages; scoped to the target URL by default.
   --ignore-https-errors             Accept invalid/self-signed TLS certificates.
 `;
+}
+
+function pathIsWithin(candidate, root) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+function createDefaultArtifacts() {
+  const cwd = fs.realpathSync.native(process.cwd());
+  const roots = [os.tmpdir(), path.join(os.homedir(), ".cache")];
+  let lastError;
+  for (const candidate of [...new Set(roots.map((item) => path.resolve(item)))]) {
+    try {
+      fs.mkdirSync(candidate, { recursive: true, mode: 0o700 });
+      const realRoot = fs.realpathSync.native(candidate);
+      if (pathIsWithin(realRoot, cwd)) continue;
+      const directory = fs.mkdtempSync(path.join(realRoot, DEFAULT_ARTIFACT_PREFIX));
+      fs.chmodSync(directory, 0o700);
+      return {
+        directory,
+        jsonOut: path.join(directory, "report.json"),
+        markdownOut: path.join(directory, "report.md"),
+        automatic: true,
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(`Unable to create an external artifact directory: ${lastError?.message || "no safe writable root"}`);
+}
+
+function normalizeOutputPath(value, optionName) {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${optionName} must be a non-empty path string`);
+  }
+  return path.resolve(value);
+}
+
+function deriveCompanionPath(source, extension) {
+  const parsed = path.parse(source);
+  let candidate = path.join(parsed.dir, `${parsed.name}${extension}`);
+  if (candidate === source) candidate = `${source}${extension}`;
+  return candidate;
+}
+
+function resolveArtifactPaths(config, cli, defaults) {
+  let jsonOut = normalizeOutputPath(cli.jsonOut ?? config.jsonOut, "jsonOut");
+  let markdownOut = normalizeOutputPath(cli.markdownOut ?? config.markdownOut, "markdownOut");
+  if (!jsonOut && !markdownOut) return defaults;
+  if (!jsonOut) jsonOut = deriveCompanionPath(markdownOut, ".json");
+  if (!markdownOut) markdownOut = deriveCompanionPath(jsonOut, ".md");
+  if (jsonOut === markdownOut) {
+    throw new Error("JSON and Markdown artifact paths must be distinct");
+  }
+  return {
+    directory: path.dirname(jsonOut) === path.dirname(markdownOut) ? path.dirname(jsonOut) : undefined,
+    jsonOut,
+    markdownOut,
+    automatic: false,
+  };
+}
+
+function removeUnusedDefaultArtifacts(defaults, selected) {
+  if (!defaults || selected === defaults || !defaults.directory) return;
+  try {
+    fs.rmdirSync(defaults.directory);
+  } catch {
+    // A non-empty or concurrently replaced fallback is evidence worth preserving.
+  }
 }
 
 function parseKeyValue(value, optionName) {
@@ -81,6 +158,7 @@ function parseArgs(argv) {
     configPath: undefined,
     jsonOut: undefined,
     markdownOut: undefined,
+    humanReadableStdout: false,
     browserExecutable: process.env.FORMAL_WEB_UI_BROWSER || process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
     fromCoordinator: false,
     coordinatorScript: undefined,
@@ -112,6 +190,11 @@ function parseArgs(argv) {
       cli.jsonOut = next();
     } else if (arg === "--markdown-out") {
       cli.markdownOut = next();
+    } else if (arg === "--receipt-only") {
+      // Deprecated compatibility alias. Receipt output is always the safe
+      // default, and this flag can never disable artifact creation.
+    } else if (arg === "--human-readable-stdout") {
+      cli.humanReadableStdout = true;
     } else if (arg === "--fail-on") {
       cli.failOn = next();
     } else if (arg === "--browser-executable") {
@@ -366,7 +449,7 @@ function normalizeViewports(config, cli) {
   return viewports.length ? viewports : DEFAULT_VIEWPORTS;
 }
 
-function normalizeConfig(config, cli) {
+function normalizeConfig(config, cli, artifacts) {
   const rules = config.rules && typeof config.rules === "object" ? config.rules : {};
   const failOn = cli.failOn || rules.failOn || "critical";
   if (!(failOn in SEVERITY_ORDER)) throw new Error(`Invalid failOn severity: ${failOn}`);
@@ -383,6 +466,12 @@ function normalizeConfig(config, cli) {
     }
     return { name: item.name, selector: item.selector };
   });
+  if (config.humanReadableStdout !== undefined) {
+    throw new Error("humanReadableStdout is CLI-only; use --human-readable-stdout in an attended human terminal");
+  }
+  if (config.receiptOnly !== undefined && typeof config.receiptOnly !== "boolean") {
+    throw new Error("receiptOnly must be a boolean when present");
+  }
   return {
     targets: normalizeTargets(config, cli),
     viewports: normalizeViewports(config, cli),
@@ -395,8 +484,9 @@ function normalizeConfig(config, cli) {
       failOn,
       strictTruncation: Boolean(rules.strictTruncation),
     },
-    jsonOut: cli.jsonOut || config.jsonOut,
-    markdownOut: cli.markdownOut || config.markdownOut,
+    jsonOut: artifacts.jsonOut,
+    markdownOut: artifacts.markdownOut,
+    humanReadableStdout: cli.humanReadableStdout,
     browserExecutable: cli.browserExecutable || config.browserExecutable,
     fromCoordinator: cli.fromCoordinator || Boolean(config.fromCoordinator),
     coordinatorScript: cli.coordinatorScript || config.coordinatorScript,
@@ -2041,9 +2131,140 @@ function ensureTargets(config) {
   return unique;
 }
 
+function writeReportArtifacts(report, markdown, artifacts) {
+  fs.mkdirSync(path.dirname(artifacts.jsonOut), { recursive: true });
+  fs.mkdirSync(path.dirname(artifacts.markdownOut), { recursive: true });
+  fs.writeFileSync(artifacts.jsonOut, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  fs.writeFileSync(artifacts.markdownOut, markdown, "utf8");
+}
+
+function artifactReceipt(artifacts) {
+  if (!artifacts) return undefined;
+  const jsonDirectory = path.dirname(artifacts.jsonOut);
+  const markdownDirectory = path.dirname(artifacts.markdownOut);
+  if (jsonDirectory === markdownDirectory) {
+    return {
+      directory: jsonDirectory,
+      json: path.basename(artifacts.jsonOut),
+      markdown: path.basename(artifacts.markdownOut),
+    };
+  }
+  return { json: artifacts.jsonOut, markdown: artifacts.markdownOut };
+}
+
+function emitReceipt(receipt) {
+  let line = JSON.stringify(receipt);
+  if (Buffer.byteLength(line, "utf8") > RECEIPT_MAX_BYTES) {
+    const artifacts = receipt.artifacts
+      ? {
+          json: path.basename(receipt.artifacts.json || "report.json"),
+          markdown: path.basename(receipt.artifacts.markdown || "report.md"),
+          pathOmittedForBound: true,
+        }
+      : undefined;
+    line = JSON.stringify({
+      tool: "formal-web-ui-verification",
+      status: receipt.status,
+      exitCode: receipt.exitCode,
+      artifacts,
+      receiptTruncated: true,
+    });
+  }
+  console.log(line);
+}
+
+function resultReceipt(report, exitCode, config, blocking) {
+  return {
+    tool: "formal-web-ui-verification",
+    runId: report.runId,
+    status: exitCode === 0 ? "passed" : (exitCode === 1 ? "blocking-findings" : "coverage-failed"),
+    exitCode,
+    failOn: config.rules.failOn,
+    counts: {
+      blocking: blocking.length,
+      critical: report.findings.filter((finding) => finding.severity === "critical").length,
+      warning: report.findings.filter((finding) => finding.severity === "warning").length,
+      checkedPages: report.coverage.checkedPages,
+      skippedPages: report.pages.filter((page) => page.skipped).length,
+    },
+    coverage: report.coverage.failed ? "failed" : "passed",
+    artifacts: artifactReceipt(activeArtifacts),
+  };
+}
+
+function errorEvidence(error) {
+  const message = String(error?.message || error || "Unknown setup failure");
+  const stack = String(error?.stack || message);
+  return {
+    name: String(error?.name || "Error"),
+    message: message.slice(0, 8192),
+    stack: stack.slice(0, 32768),
+  };
+}
+
+function setupFailureArtifacts(error, preferred, fallback) {
+  const evidence = errorEvidence(error);
+  const report = {
+    runId: `formal-web-ui-${Date.now().toString(36)}-setup`,
+    generatedAt: new Date().toISOString(),
+    status: "setup-failure",
+    exitCode: 2,
+    error: evidence,
+    targets: [],
+    pages: [],
+    findings: [],
+    coverage: {
+      failed: true,
+      checkedPages: 0,
+      failures: [],
+      tolerated: [],
+      minimumFailure: "Verification did not start because setup or configuration failed.",
+    },
+  };
+  const markdown = [
+    "# Formal Web UI Verification Setup Failure",
+    "",
+    `- Run: ${report.runId}`,
+    "- Exit code: 2",
+    `- Error: ${evidence.message.replace(/\r?\n/g, " ")}`,
+    "",
+    "## Diagnostic",
+    "",
+    "```text",
+    evidence.stack.replace(/```/g, "` ` `"),
+    "```",
+    "",
+  ].join("\n");
+  const candidates = [preferred, fallback].filter(Boolean);
+  const seen = new Set();
+  let writeError;
+  for (const artifacts of candidates) {
+    const key = `${artifacts.jsonOut}\u0000${artifacts.markdownOut}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      writeReportArtifacts(report, markdown, artifacts);
+      return { report, artifacts };
+    } catch (errorDuringWrite) {
+      writeError = errorDuringWrite;
+    }
+  }
+  return { report, artifacts: undefined, writeError };
+}
+
 async function main() {
-  const cli = parseArgs(process.argv.slice(2));
-  const config = normalizeConfig(loadConfig(cli.configPath), cli);
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs.includes("--help") || rawArgs.includes("-h")) {
+    console.log(usage());
+    return;
+  }
+  fallbackArtifacts = createDefaultArtifacts();
+  activeArtifacts = fallbackArtifacts;
+  const cli = parseArgs(rawArgs);
+  activeArtifacts = resolveArtifactPaths({}, cli, fallbackArtifacts);
+  const rawConfig = loadConfig(cli.configPath);
+  activeArtifacts = resolveArtifactPaths(rawConfig, cli, fallbackArtifacts);
+  const config = normalizeConfig(rawConfig, cli, activeArtifacts);
   const targets = expandTargetStates(ensureTargets(config));
   const { chromium, devices } = resolvePlaywright();
   config.viewports = resolveViewports(config.viewports, devices);
@@ -2087,23 +2308,31 @@ async function main() {
   }
   report.findings = summarizeFindings(report.pages);
   report.coverage = summarizeCoverage(report.pages, config);
-  if (config.jsonOut) {
-    fs.mkdirSync(path.dirname(path.resolve(config.jsonOut)), { recursive: true });
-    fs.writeFileSync(config.jsonOut, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  }
   const markdown = markdownReport(report);
-  if (config.markdownOut) {
-    fs.mkdirSync(path.dirname(path.resolve(config.markdownOut)), { recursive: true });
-    fs.writeFileSync(config.markdownOut, markdown, "utf8");
-  }
-  console.log(markdown);
+  writeReportArtifacts(report, markdown, activeArtifacts);
   const failThreshold = SEVERITY_ORDER[config.rules.failOn];
   const blocking = report.findings.filter((finding) => SEVERITY_ORDER[finding.severity] >= failThreshold);
-  if (report.coverage.failed) process.exit(3);
-  process.exit(blocking.length ? 1 : 0);
+  const exitCode = report.coverage.failed ? 3 : (blocking.length ? 1 : 0);
+  if (config.humanReadableStdout) {
+    console.log(markdown);
+  } else {
+    emitReceipt(resultReceipt(report, exitCode, config, blocking));
+  }
+  removeUnusedDefaultArtifacts(fallbackArtifacts, activeArtifacts);
+  process.exit(exitCode);
 }
 
 main().catch((error) => {
-  console.error(`formal-web-ui-verification setup error: ${error.stack || error.message}`);
+  const failure = setupFailureArtifacts(error, activeArtifacts, fallbackArtifacts);
+  activeArtifacts = failure.artifacts;
+  emitReceipt({
+    tool: "formal-web-ui-verification",
+    runId: failure.report.runId,
+    status: "setup-failure",
+    exitCode: 2,
+    artifacts: artifactReceipt(failure.artifacts),
+    artifactStatus: failure.artifacts ? "written" : "unavailable",
+  });
+  if (failure.artifacts) removeUnusedDefaultArtifacts(fallbackArtifacts, failure.artifacts);
   process.exit(2);
 });

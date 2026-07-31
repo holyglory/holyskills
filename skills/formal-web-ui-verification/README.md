@@ -23,9 +23,24 @@ node skills/formal-web-ui-verification/scripts/formal_web_ui_verify.mjs \
   --url http://127.0.0.1:3000/ \
   --viewport mobile=390x844 \
   --viewport desktop=1440x900 \
-  --json-out /tmp/formal-web-ui.json \
   --fail-on critical
 ```
+
+The default invocation creates a unique external artifact directory (normally
+under the system temporary root), writes complete `report.json` and `report.md`
+files, and prints one bounded JSON receipt with the exit code, coverage, counts,
+directory, and filenames. Use
+`--json-out` and `--markdown-out` to select known artifact paths; supplying one
+derives the other. Setup/configuration failures use the same bounded receipt and
+machine-readable artifact contract when a safe destination is available.
+
+Full Markdown stdout is available only through the explicit human-terminal
+compatibility flag `--human-readable-stdout`. Do not use that flag for agent
+runs.
+
+The formerly published `--receipt-only` flag and boolean config `receiptOnly`
+remain accepted as deprecated no-op compatibility inputs. Neither changes the
+safe default, and `receiptOnly: false` cannot enable full stdout.
 
 Exit codes:
 
