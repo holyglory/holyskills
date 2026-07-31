@@ -5,12 +5,13 @@ complete truthful end-to-end behavior, informed choices, outcome-aware efficienc
 cannot reward reduced scope or verification,
 production-grade foundations, canonical ownership, scoped persistent memory for user-indicated
 mistakes, realistic verification, audits that begin only
-after their target implementation exists, complete diagnostic passes before batch repair,
+after their target implementation exists, explicit user activation for exhaustive repository and
+implemented-UI audits, complete diagnostic passes before batch repair,
 unacceptable under-engineering and informed approval before every expansion beyond the requested
 result or credible need, security controls grounded in user-confirmed project assumptions,
 relevant bounded agent context, proportionate runtime effort, and
 interfaces whose
-visible hierarchy matches the task and promised content (D-20260714-03, D-20260713-03,
+visible hierarchy matches the task and promised content (D-20260801-01, D-20260714-03, D-20260713-03,
 D-20260713-04, D-20260714-04, D-20260720-01, D-20260731-01, D-20260731-02,
 D-20260729-01,
 D-20260728-02, D-20260728-01, D-20260726-01, D-20260710-03,
@@ -18,6 +19,24 @@ D-20260710-05). Inferred: repeated choices indicate a taste for compact low-nois
 stable ordering and grouping, visible exceptions, contextual actions, and durable state rather than
 volatile cleverness (D-20260707-01, D-20260707-02, D-20260707-07, D-20260707-08); apply these
 patterns by default while treating them as inference when a new context materially differs.
+
+## [D-20260801-01 — UI implementation audit requires explicit user invocation](DecisionDetails/D-20260801-01.md)
+
+Decision: `ui-implementation-audit` is an explicit-only workflow. It runs only when the user invokes
+the direct runtime command—`$ui-implementation-audit` in Codex or `/ui-implementation-audit` in
+Claude Code. Ordinary UI implementation, review, testing, visual checking, or gap-finding requests
+do not select it implicitly. Its canonical contract states this gate, its Codex entry prompt names
+the skill, and each runtime's native metadata disables implicit invocation.
+
+Why: These exhaustive audits create large queues, workers, rendered evidence, and reports, so a
+semantic match is not sufficient authorization to incur their cost. Options: selected explicit
+skill invocation with enforceable metadata and contract tests over narrower trigger prose, implicit
+selection after an applicability check, or removing the skill. The selected option preserves
+deliberate access without routine context or accidental execution. Prior attempts: D-20260731-01
+gated only the two full-repository audits and missed the similarly expensive implemented-UI audit. Intent: reserve the
+implemented-UI audit for a conscious user request while leaving ordinary UI implementation and
+focused verification direct and lightweight. Revisit only if: the workflow becomes materially
+bounded enough for implicit use and the user explicitly changes its activation policy.
 
 ## [D-20260731-02 — Security controls use user-confirmed project assumptions](DecisionDetails/D-20260731-02.md)
 

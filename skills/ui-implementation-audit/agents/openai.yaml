@@ -2,3 +2,5 @@ interface:
   display_name: "UI Implementation Audit"
   short_description: "Audit an existing implemented UI end to end"
   default_prompt: "Use $ui-implementation-audit only after confirming a substantive repo-owned executable UI, dispatch Codex workers with fork_turns=none and Light/runtime-low effort, keep complete source/visual evidence in cold audit artifacts, and return only a compact outcome and artifact index."
+policy:
+  allow_implicit_invocation: false

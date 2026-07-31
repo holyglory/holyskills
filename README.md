@@ -24,9 +24,10 @@ Holy Skills does not import, clone, pin, build, or test that repository.
 - `full-repo-test-coverage-audit`: a structural test-assurance audit with exact
   target decisions, validated test references, and optional empirical coverage
   ingestion.
-- `ui-implementation-audit`: a source- and evidence-bound audit used only once
-  a substantive product UI surface exists, covering rendered behavior,
-  journeys, handlers, backend paths, permissions, persistence, and tests.
+- `ui-implementation-audit`: an explicit-invocation-only, source- and
+  evidence-bound audit used once a substantive product UI surface exists,
+  covering rendered behavior, journeys, handlers, backend paths, permissions,
+  persistence, and tests.
 - `user-journey-docs-audit`: a lexical and structural documentation audit for
   product intent, users, journeys, feature/UI inventories, edge cases,
   implementation expectations, tests, and usability acceptance criteria.

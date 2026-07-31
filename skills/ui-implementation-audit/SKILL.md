@@ -1,11 +1,20 @@
 ---
 name: ui-implementation-audit
-description: Audit an existing substantive product UI implementation against mockups and journeys with deterministic source batches, real hashed rendered evidence, formal-verifier JSON, and end-to-end action traces. Use only after manually confirming and naming at least one repo-owned executable screen, component, or native view. Do not use before UI implementation, or for plans, mockups, screenshots, design prototypes, assets/styles, Storybook/tests, untouched framework scaffolds, or backend-only repos. A partial implementation qualifies once one real target surface exists; audit its missing planned screens and behavior as gaps.
+description: Run an exhaustive audit of an existing substantive product UI implementation against mockups and journeys with deterministic source batches, real hashed rendered evidence, formal-verifier JSON, and end-to-end action traces. Invoke only through the runtime's explicit skill command (`$ui-implementation-audit` in Codex or `/ui-implementation-audit` in Claude Code); ordinary UI implementation, review, testing, visual checking, or gap-finding requests must not trigger it. After explicit invocation, use only after manually confirming and naming at least one repo-owned executable screen, component, or native view. Do not use before UI implementation, or for plans, mockups, screenshots, design prototypes, assets/styles, Storybook/tests, untouched framework scaffolds, or backend-only repos. A partial implementation qualifies once one real target surface exists; audit its missing planned screens and behavior as gaps.
+disable-model-invocation: true
 ---
 
 # UI Implementation Audit
 
 ## Overview
+
+This exhaustive workflow is explicit-only. Run it only when the user invokes
+the runtime's direct skill command: `$ui-implementation-audit` in Codex or
+`/ui-implementation-audit` in Claude Code. Ordinary UI implementation, review,
+testing, visual checking, or gap-finding requests must not activate it
+implicitly. Explicit invocation authorizes the read-only audit workflow and its
+required workers and artifacts, not product implementation or unrelated
+repository changes.
 
 Run a read-only, manifest-verified audit of whether the implemented UI matches
 the intended UI shown in mockups/assets and described by user journey

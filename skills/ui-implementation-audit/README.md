@@ -6,6 +6,11 @@ requirements. It combines source-level UI batching with rendered desktop/mobile
 visual checks and produces a prioritized implementation plan for missing UI,
 interaction, implementation, and test gaps.
 
+This exhaustive skill is explicit-only: invoke `$ui-implementation-audit` in
+Codex or `/ui-implementation-audit` in Claude Code. Ordinary UI implementation,
+review, testing, visual checking, or gap-finding requests must not activate it
+implicitly.
+
 Rendered evidence is real and bound: `visual_evidence.json` records confined artifact paths, hashes, MIME, dimensions, route, state, viewport, capture tool, and formal-verifier JSON. UI action rows also bind handlers, backend/API, permissions, persistence, and tests through real `path#symbol` references or report them missing.
 
 This skill has a hard applicability gate. At least one substantive, repo-owned

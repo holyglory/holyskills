@@ -1259,11 +1259,40 @@ def main() -> int:
         visual_prompt_text = (out / audit_meta["visual_comparison_prompt"]).read_text(encoding="utf-8")
         check(str((out / "visual_evidence.json").resolve()) in visual_prompt_text, "visual worker should receive exact evidence-manifest path")
         skill_contract = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        folded_skill_contract = " ".join(skill_contract.split()).casefold()
+        skill_frontmatter = skill_contract.split("---", 2)[1]
+        check(
+            "this exhaustive workflow is explicit-only" in folded_skill_contract
+            and "`$ui-implementation-audit` in codex" in folded_skill_contract
+            and "`/ui-implementation-audit` in claude code" in folded_skill_contract,
+            "ui-implementation-audit contract must name each runtime's explicit invocation",
+        )
+        check(
+            "ordinary ui implementation, review, testing, visual checking, or gap-finding requests must not activate it implicitly"
+            in folded_skill_contract,
+            "ordinary UI work must not trigger ui-implementation-audit implicitly",
+        )
+        check(
+            "disable-model-invocation: true" in skill_frontmatter,
+            "ui-implementation-audit frontmatter must disable Claude Code model invocation",
+        )
         check('fork_turns="none"' in skill_contract, "skill must require context-light Codex forks")
         check("Light" in skill_contract and 'reasoning_effort="low"' in skill_contract, "skill must map visible Light to runtime low")
         check(
             "final-report.md" in skill_contract and "filename-bearing `REPORT_SAVED`" in skill_contract,
             "skill must keep complete results in cold artifacts with filename-bearing receipts",
+        )
+        agent_metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        check(
+            "\npolicy:\n  allow_implicit_invocation: false\n" in f"\n{agent_metadata}",
+            "ui-implementation-audit metadata must disable implicit invocation",
+        )
+        check(
+            any(
+                line.strip().startswith("default_prompt:") and "$ui-implementation-audit" in line
+                for line in agent_metadata.splitlines()
+            ),
+            "ui-implementation-audit default prompt must explicitly invoke $ui-implementation-audit",
         )
         check(manifest["source_file_count"] == 2, "only interface source files should be queued")
         queued = {item["rel_path"] for item in manifest["source_files"]}
