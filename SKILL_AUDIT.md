@@ -1,8 +1,8 @@
 # Holy Skills Audit
 
-Date: 2026-07-14
+Date: 2026-08-01
 
-This audit covers the five canonical skills currently owned by Holy Skills.
+This audit covers the six canonical skills currently owned by Holy Skills.
 Descriptions state what source and deterministic tests establish, not what a
 name might imply. A passing self-test proves the advertised fixture classes and
 safety invariants; it does not prove that every future repository, interface,
@@ -23,7 +23,7 @@ in `DecisionHistory.md`. The supported installation path is now
 `scripts/manage_skill_links.py`: it plans and verifies explicit runtime roots,
 refuses unreviewed divergent/copy/broken/chained objects, installs direct
 absolute links, preserves replaced objects in a private transaction, and can
-roll back the entire transaction. It manages only the five directories present
+roll back the entire transaction. It manages only the six directories present
 under `skills/` and leaves unrelated third-party or independently owned skills
 untouched.
 
@@ -152,6 +152,47 @@ reflective, macro-created, metaprogrammed, or framework-discovered behavior.
 Line execution does not prove assertions are meaningful. Manual targets,
 scenario review, and mutation-quality review remain separate needs.
 
+### `install-delivery-efficiency-hooks`
+
+Honest description: a cross-platform agent workflow for installing the shared
+delivery-efficiency recorder into explicit Codex and Claude homes, enabling the
+Codex hooks feature when the host permits it, preserving host-native trust
+review, and proving fresh hook/task/token correlation with a bounded receipt.
+It invokes the recorder's canonical transactional installer; it is not another
+recorder, settings writer, package manager, or trust authority.
+
+Improvements present:
+
+- separate macOS, Linux, native Windows, and WSL prerequisite and state-path
+  guidance, including Linux-filesystem-only WSL state;
+- one immutable plan retains every managed target and binds exact source,
+  target, state, digest, and rollback data before apply;
+- installation, filesystem verification, host activation, restart, and fresh
+  task correlation are reported as distinct states;
+- Codex feature activation is allowed only for the exact requested home, while
+  `/hooks` review remains a visible user action and persistent trust bypass is
+  prohibited;
+- installation, retirement, feature/trust changes, and credential generation
+  or rotation require project-specific user-confirmed security assumptions;
+- the bounded status helper validates the immutable plan plus canonical and
+  installed payloads before importing recorder code, imports only a private
+  digest-matched snapshot, brackets its integrity-checked store read with
+  install verification and receiver/source rechecks, and rejects unbound,
+  empty, wrong-source, cross-task, historical, or concurrent-drift evidence;
+- rollback proof is limited to recorder-managed actions and separately restores
+  a Codex feature enabled by the workflow only from a confirmed disabled state;
+- realistic contract mutations plus source-drift, transaction-race,
+  tool-owned-temp-alias, and fresh-versus-historical event fixtures prove the
+  self-test catches the advertised safety boundaries.
+
+What can improve: prerequisite distribution commands and host UI change outside
+this repository and must be rechecked against current official sources. The CI
+matrix now runs the skill contract with the recorder on native Windows, Linux,
+and macOS plus a gated WSL runner, but those jobs are evidence only after they
+complete for the revision; a simulated platform branch is not native proof.
+User trust prompts and runtime restarts cannot truthfully be automated when the
+host reserves them to the operator.
+
 ### `ui-implementation-audit`
 
 Honest description: an interface-source and rendered-evidence audit against
@@ -216,7 +257,7 @@ separate extraction before inventory.
 
 | Gate | Required result | Evidence or boundary |
 | --- | --- | --- |
-| Canonical ownership | exactly five skills | No moved component path; no sixth canonical skill |
+| Canonical ownership | exactly six skills | No moved component path; no seventh canonical skill |
 | Decision history | dense direction/decision index with one linked detail per ID | Verbose-field, weak-options, unexplained-prior-attempt, context-loss-revisit, missing/orphan/traversal/symlink-detail, and unlabeled-inference must-catch fixtures; extensive detail-file false-positive control |
 | Completion ledger | canonical active-only table or absent | Terminal-row, mixed-state, contradictory-status, unknown-status, non-schema-content, duplicate-ID, and empty-ledger must-catch fixtures; active-row verification-text false-positive control |
 | Repository boundary | passed | Realistic moved-path, source-path, build path, CI checkout/pin, and unexpected-skill fixtures; history and installed-skill false-positive controls |
@@ -224,10 +265,10 @@ separate extraction before inventory.
 | Freshness detector | passed | Current, ahead, behind, diverged, dirty stale base, and unavailable remote scenarios using real Git repositories |
 | Shared harness | synchronized | Root harness hashes match all three vendored fallback copies |
 | Public artifacts | passed | Private text, credential, symlink, PNG metadata/provenance must-catch fixtures and portable controls |
-| Five repository self-tests | passed | Every canonical skill's deterministic suite runs from the repository |
-| Five standalone-copy self-tests | passed | Every skill runs after copying only its directory; audit skills reject a stale parent harness by using their vendored copy |
+| Six repository self-tests | passed | Every canonical skill's deterministic suite runs from the repository |
+| Six standalone-copy self-tests | passed | Every skill runs after copying only its directory; audit skills reject a stale parent harness by using their vendored copy |
 | Formal web runtime | passed | A locked Playwright/Chromium runtime exercises real fixture pages for repository and standalone runs |
-| Python source | passed | Root scripts, harness, and all five skill script trees compile |
+| Python source | passed | Root scripts, harness, and all six skill script trees compile |
 
 `python3 scripts/validate.py` is the complete repository gate. There is no
 native-app skip mode because Holy Skills no longer owns a native application.

@@ -104,10 +104,10 @@ without requiring a repository-owned workflow skill.
 
 ## Skill Installation Source Of Truth
 
-- This repository is the only writable canonical source for its five skills:
+- This repository is the only writable canonical source for its six skills:
   `formal-web-ui-verification`, `full-repo-audit`,
-  `full-repo-test-coverage-audit`, `ui-implementation-audit`, and
-  `user-journey-docs-audit`.
+  `full-repo-test-coverage-audit`, `install-delivery-efficiency-hooks`,
+  `ui-implementation-audit`, and `user-journey-docs-audit`.
   Do not hand-edit copies under Codex, Claude, Parall, or another runtime home.
 - Install each repo-owned skill through `scripts/manage_skill_links.py` as a
   direct symlink to `skills/<skill>`. Preserve unrelated runtime/system skills.
@@ -130,10 +130,11 @@ without requiring a repository-owned workflow skill.
 ## Delivery Efficiency Recorder
 
 - `tools/delivery-efficiency/` is the canonical source for the portable
-  delivery-efficiency runtime used by Codex and Claude Code. It is not a sixth
-  skill: keep one shared schema, privacy boundary, store, and installer, with
-  thin runtime adapters. Never create a runtime-specific ledger writer or edit
-  a generated installed copy.
+  delivery-efficiency runtime used by Codex and Claude Code. The runtime is not
+  itself a skill: `install-delivery-efficiency-hooks` orchestrates its reviewed
+  workflow without duplicating its schema, privacy boundary, store, installer,
+  or thin runtime adapters. Never create a runtime-specific ledger writer or
+  edit a generated installed copy.
 - Install and update the runtime only through its reviewed
   plan/apply/verify/rollback workflow. Installation uses a versioned copy in
   platform-native per-user state rather than a source-worktree path or skill
@@ -209,7 +210,7 @@ without requiring a repository-owned workflow skill.
 
 ## Repository Ownership Boundary
 
-- Holy Skills owns only the five skill directories listed above, the shared
+- Holy Skills owns only the six skill directories listed above, the shared
   audit harness, and the portable delivery-efficiency runtime tool. The
   coordinator, PostgreSQL protection skill, DevOps Board, and DevOps Console
   are owned by the independent DevCoordinator repository.

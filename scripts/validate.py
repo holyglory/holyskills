@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Complete validation for five HolySkills packages and the portable recorder."""
+"""Complete validation for six HolySkills packages and the portable recorder."""
 
 from __future__ import annotations
 
@@ -25,9 +25,11 @@ SKILL_NAMES = (
     "formal-web-ui-verification",
     "full-repo-audit",
     "full-repo-test-coverage-audit",
+    "install-delivery-efficiency-hooks",
     "ui-implementation-audit",
     "user-journey-docs-audit",
 )
+SKILLS_WITH_REQUIRED_README = set(SKILL_NAMES) - {"install-delivery-efficiency-hooks"}
 SKILLS = tuple(ROOT / "skills" / name for name in SKILL_NAMES)
 HARNESS_SKILL_NAMES = (
     "full-repo-audit",
@@ -100,7 +102,13 @@ def check_repository_layout() -> None:
         unexpected = sorted(actual - expected)
         raise SystemExit(f"Canonical skill set mismatch; missing={missing}, unexpected={unexpected}")
     for skill in SKILLS:
-        required = (skill / "SKILL.md", skill / "README.md", skill / "scripts" / "self_test.py")
+        required = [
+            skill / "SKILL.md",
+            skill / "agents" / "openai.yaml",
+            skill / "scripts" / "self_test.py",
+        ]
+        if skill.name in SKILLS_WITH_REQUIRED_README:
+            required.append(skill / "README.md")
         absent = [path.relative_to(ROOT).as_posix() for path in required if not path.is_file()]
         if absent:
             raise SystemExit(f"Incomplete skill {skill.name}: {', '.join(absent)}")
@@ -268,7 +276,7 @@ def main() -> int:
         print_failure_summary()
         return 1
 
-    print("validation ok (5 canonical skills + portable recorder; standalone matrix passed)")
+    print("validation ok (6 canonical skills + portable recorder; standalone matrix passed)")
     return 0
 
 

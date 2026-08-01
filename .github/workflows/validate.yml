@@ -17,8 +17,8 @@ env:
   PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
-  five-skill-validation:
-    name: Five skills and standalone matrix (${{ matrix.os }})
+  six-skill-validation:
+    name: Six skills and standalone matrix (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -79,6 +79,9 @@ jobs:
       - name: Run recorder platform contract
         run: python tools/delivery-efficiency/self_test.py --require-loopback
 
+      - name: Run hook-installation skill platform contract
+        run: python skills/install-delivery-efficiency-hooks/scripts/self_test.py
+
       - name: Run global-policy deployment contract
         run: python scripts/manage_global_policy_self_test.py
 
@@ -93,6 +96,9 @@ jobs:
 
       - name: Run WSL recorder contract
         run: python3 tools/delivery-efficiency/self_test.py --require-platform wsl --require-loopback
+
+      - name: Run WSL hook-installation skill contract
+        run: python3 skills/install-delivery-efficiency-hooks/scripts/self_test.py
 
       - name: Run WSL global-policy deployment contract
         run: python3 scripts/manage_global_policy_self_test.py

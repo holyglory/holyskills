@@ -1,6 +1,6 @@
 # Holy Skills
 
-Holy Skills is the canonical public source for five portable Codex and Claude
+Holy Skills is the canonical public source for six portable Codex and Claude
 Code skills and one shared delivery-efficiency recorder. It contains audit,
 verification, documentation, and observational agent-runtime tooling; it does
 not own or deploy local-service coordination products.
@@ -24,6 +24,10 @@ Holy Skills does not import, clone, pin, build, or test that repository.
 - `full-repo-test-coverage-audit`: a structural test-assurance audit with exact
   target decisions, validated test references, and optional empirical coverage
   ingestion.
+- `install-delivery-efficiency-hooks`: a cross-platform installation workflow
+  for recorder prerequisites, transactional Codex and Claude hook deployment,
+  supported feature activation, required host review, restart, and fresh-task
+  telemetry proof.
 - `ui-implementation-audit`: an explicit-invocation-only, source- and
   evidence-bound audit used once a substantive product UI surface exists,
   covering rendered behavior, journeys, handlers, backend paths, permissions,
@@ -38,10 +42,10 @@ vendored copy so its directory remains independently installable and testable.
 
 ## Layout
 
-- `skills/`: the five canonical skill packages.
+- `skills/`: the six canonical skill packages.
 - `full_repo_harness/`: shared audit discovery, evidence, batching, queue, and
   verification code.
-- `scripts/validate.py`: the complete five-skill and standalone-copy gate.
+- `scripts/validate.py`: the complete six-skill and standalone-copy gate.
 - `scripts/manage_skill_links.py`: transactional direct-link installation and
   rollback for explicit runtime roots.
 - `scripts/manage_global_policy.py`: digest-approved plan/apply/verify/rollback
@@ -69,7 +73,7 @@ vendored copy so its directory remains independently installable and testable.
   installer for Codex homes and Claude `settings.json` targets, and
   platform/privacy/crash tests.
 - `SKILL_AUDIT.md`: honest capabilities, improvements, and residual limits for
-  all five skills.
+  all six skills.
 - `DecisionHistory.md`: compact major-decision and project-direction index.
 - `DecisionDetails/`: one cold supporting record per indexed decision.
 - `UserIssueLedgers/`: compact persistent prevention rules separated by
@@ -169,9 +173,11 @@ results, raw errors, secrets, credentials, account data, and personal data do
 not enter its durable schema. Source identifiers are converted in memory to
 installation-keyed opaque IDs.
 
-The runtime is deliberately not a sixth skill. A skill activates after model
-work has begun and cannot own request receipt. Installation therefore copies a
-hash-bound version into native per-user state without relying on symlinks or
+The runtime is deliberately not itself a skill. The
+`install-delivery-efficiency-hooks` skill orchestrates prerequisite discovery,
+the recorder's reviewed installer, host activation, and bounded verification;
+it does not duplicate the runtime or own request receipt. Installation copies
+a hash-bound version into native per-user state without relying on symlinks or
 administrator privileges. Native Windows and WSL use separate stores; WSL
 state must remain on its Linux filesystem rather than `/mnt/*` or `\\wsl$`.
 
@@ -191,6 +197,16 @@ Raw findings, hypotheses, audit limitations, and resolved evidence remain
 outside the ledger.
 
 ## Install the delivery-efficiency recorder
+
+After installing the repository skills as direct links, invoke
+`$install-delivery-efficiency-hooks` in Codex or
+`/install-delivery-efficiency-hooks` in Claude Code. The skill inventories each
+explicit runtime home, installs missing requested prerequisites through current
+official channels, runs the immutable plan/apply/verify workflow, enables the
+Codex hooks feature when supported and authorized, and proves fresh task-bound
+events. It cannot silently grant host trust: when Codex requires `/hooks`
+review, the user must inspect and approve the installed command before the
+skill can report that target active.
 
 The recorder requires Python 3.9 or newer and otherwise uses only the standard
 library. Run installation from the canonical checkout and name every Codex and
@@ -478,7 +494,7 @@ that acceptance decision.
 
 ## Install as direct links
 
-This repository is the only writable source for its five skills. Never edit an
+This repository is the only writable source for its six skills. Never edit an
 installed copy. Discover every runtime's actual skills root and pass each one
 explicitly; do not infer desktop or sandbox homes from the shell's `$HOME`.
 
@@ -654,13 +670,13 @@ The complete repository gate is:
 python3 scripts/validate.py
 ```
 
-It proves the exact five-skill layout, the recorder schema/privacy/storage and
+It proves the exact six-skill layout, the recorder schema/privacy/storage and
 adapter contracts, universal-policy semantics, compact
 decision-history integrity, open-only completion-ledger state, freshness and
 dependency-boundary and self-hosted-CI detector recall, vendored-harness synchronization,
 skill-link and global-policy transaction/rollback behavior, public-artifact policy, interaction-label
-parity, all five in-repository self-tests, recorder concurrency/crash/install
-tests, Python compilation, all five standalone copied skill tests, and a copied
+parity, all six in-repository self-tests, recorder concurrency/crash/install
+tests, Python compilation, all six standalone copied skill tests, and a copied
 recorder test. CI installs a locked
 Playwright runtime solely because the remaining formal web verifier requires a
 real Chromium run. The workflow defines a separate Python 3.9/3.13 recorder

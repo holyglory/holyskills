@@ -78,6 +78,12 @@ def main() -> int:
         clean = checker.audit_repository(temporary)
         check(clean["ok"] is True, f"history and optional installed-skill support must pass: {clean['findings']}")
 
+        missing = temporary / "skills" / "install-delivery-efficiency-hooks" / "SKILL.md"
+        missing.unlink()
+        report = checker.audit_repository(temporary)
+        check("canonical-skill-set" in rules(report), "a missing canonical skill must be caught")
+        write(missing, "---\nname: install-delivery-efficiency-hooks\n---\n")
+
         unlinked_history = temporary / "DecisionDetails" / "D-20260701-02.md"
         write(unlinked_history, "Historical source path apps/DevOpsBoard was never linked.\n")
         report = checker.audit_repository(temporary)
@@ -157,7 +163,7 @@ def main() -> int:
 
         write(temporary / "skills" / "unexpected-skill" / "SKILL.md", "---\nname: unexpected-skill\n---\n")
         report = checker.audit_repository(temporary)
-        check("canonical-skill-set" in rules(report), "an unexpected sixth canonical skill must be caught")
+        check("canonical-skill-set" in rules(report), "an unexpected seventh canonical skill must be caught")
 
         print("repository boundary self-test ok")
         return 0

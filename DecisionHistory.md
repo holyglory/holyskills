@@ -11,7 +11,8 @@ unacceptable under-engineering and informed approval before every expansion beyo
 result or credible need, security controls grounded in user-confirmed project assumptions,
 relevant bounded agent context, proportionate runtime effort, and
 interfaces whose
-visible hierarchy matches the task and promised content (D-20260801-01, D-20260714-03, D-20260713-03,
+visible hierarchy matches the task and promised content (D-20260801-02, D-20260801-01,
+D-20260714-03, D-20260713-03,
 D-20260713-04, D-20260714-04, D-20260720-01, D-20260731-01, D-20260731-02,
 D-20260729-01,
 D-20260728-02, D-20260728-01, D-20260726-01, D-20260710-03,
@@ -19,6 +20,24 @@ D-20260710-05). Inferred: repeated choices indicate a taste for compact low-nois
 stable ordering and grouping, visible exceptions, contextual actions, and durable state rather than
 volatile cleverness (D-20260707-01, D-20260707-02, D-20260707-07, D-20260707-08); apply these
 patterns by default while treating them as inference when a new context materially differs.
+
+## [D-20260801-02 — Hook installation is a portable orchestration skill](DecisionDetails/D-20260801-02.md)
+
+Decision: Add `install-delivery-efficiency-hooks` as the sixth canonical skill for installing
+prerequisites, invoking the shared recorder's reviewed plan/apply/verify workflow, activating
+supported Codex and Claude hooks, and proving fresh task-bound telemetry on macOS, Linux, native
+Windows, and WSL. The recorder remains one non-skill runtime under `tools/delivery-efficiency/`.
+
+Why: Installation is repeatable agent work, while request receipt and recording must stay outside
+model-started skill execution. Options: selected one thin orchestration skill over rejected manual
+README-only setup, a duplicate runtime-specific installer, or converting the recorder itself into a
+skill because it makes safe deployment discoverable without splitting schema, storage, privacy, or
+rollback ownership. Prior attempts: D-20260728-02 correctly kept recording outside the skill
+lifecycle but missed a reusable workflow for prerequisites, host activation, and fresh-task proof.
+Intent: let any supported Codex or Claude user install the same recorder safely while preserving
+explicit runtime homes, platform separation, and native host trust. Revisit only if: both hosts
+provide a stronger common package and activation mechanism with equivalent review, rollback,
+privacy, and correlation evidence.
 
 ## [D-20260801-01 — UI implementation audit requires explicit user invocation](DecisionDetails/D-20260801-01.md)
 
@@ -135,7 +154,8 @@ lifecycle, with a shared privacy/schema/storage core, thin Codex and Claude adap
 per-user installations, and separate native Windows, WSL, Linux, and macOS state.
 
 Why: Recording must begin before a skill can activate and remain comparable across agent runtimes
-and operating systems. Options: selected one portable runtime tool over a sixth skill, manual logs,
+and operating systems. Options: selected one portable runtime tool over making the recorder itself
+a skill, manual logs,
 or separate runtime-specific recorders because one core can own authoritative append and privacy
 semantics while adapters preserve native event provenance. Prior attempts: policy alone exposed an
 instrumentation gap and the existing symlink installer could not run natively on Windows. Intent:
