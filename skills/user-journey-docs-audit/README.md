@@ -10,10 +10,13 @@ confirmed product truth. Native SwiftUI, XAML, AppKit/UIKit, Compose, Flutter,
 and QML source can expose undocumented UI surfaces, but user confirmation or
 product documentation remains required.
 
-Use it before UI implementation, redesign, or a full-repo interface audit when
-the app idea, target users, journey set, feature set, UI element set, screen
-decision needs, device constraints, implementation expectations, tests, or
-acceptance criteria are unclear.
+Use it when an existing repository or supplied documentation set is the audit
+target and the user explicitly asks for documentation-completeness,
+journey-readiness, or UI-handoff-readiness findings. Do not use it for
+greenfield discovery, brainstorming, domain or data modeling, database/system
+specification, ordinary requirements discussion, general critique, or
+co-writing a new specification. “Do not start coding” does not make a request
+a documentation audit.
 
 ## What It Audits
 

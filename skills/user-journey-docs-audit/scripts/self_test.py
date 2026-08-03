@@ -65,6 +65,53 @@ def run_report_verify(path: Path, *, expect: int) -> None:
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="user-journey-docs-audit-self-test-"))
     try:
+        skill_contract = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        frontmatter = skill_contract.split("---", 2)[1]
+        for needle in [
+            "Audit an existing repository or supplied product/journey documentation set",
+            "Use only when the user explicitly asks to audit, assess, score, validate, or find",
+            "greenfield product discovery",
+            "database or system specification",
+            "co-writing a new specification",
+            "“roast” an idea",
+            "“do not start coding” is not an audit trigger",
+        ]:
+            check(needle in frontmatter, f"selector-visible trigger contract should contain {needle!r}")
+
+        for needle in [
+            "## Applicability Gate",
+            "An existing repository or supplied documentation set is the object being evaluated.",
+            "stop before running inventory scripts",
+            "design a database for part numbering, serial numbers, and document identification",
+            "Help me brainstorm users and workflows for a new product.",
+            "Review this numbering scheme and propose a better domain model.",
+        ]:
+            check(needle in skill_contract, f"applicability contract should contain {needle!r}")
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        for needle in [
+            "existing repository or supplied documentation set is the audit",
+            "database/system",
+            "co-writing a new specification",
+            "“Do not start coding” does not make a request",
+        ]:
+            check(needle in readme, f"README trigger guidance should contain {needle!r}")
+
+        agent_metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        check(
+            'short_description: "Audit existing docs for journey readiness"' in agent_metadata,
+            "agent metadata should identify existing documentation as the audit target",
+        )
+        check(
+            any(
+                line.strip().startswith("default_prompt:")
+                and "$user-journey-docs-audit" in line
+                and "existing product and journey documentation" in line
+                for line in agent_metadata.splitlines()
+            ),
+            "default prompt should explicitly invoke the skill against existing documentation",
+        )
+
         for rel_path, required_text in REQUIRED_REFERENCES.items():
             reference = ROOT / rel_path
             check(reference.is_file(), f"required reference is missing: {rel_path}")

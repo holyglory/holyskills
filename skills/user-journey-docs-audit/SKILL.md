@@ -1,6 +1,6 @@
 ---
 name: user-journey-docs-audit
-description: Run a lexical and structural audit of product and journey documentation for app idea clarity, user context, journey decision models, information relevance, feature inventory, UI handoff constraints, edge cases, implementation expectations, test expectations, and usability acceptance criteria. Use when an agent (Codex, Claude Code) needs to determine whether docs define user intent and decision needs well enough to design, build, test, and improve an application or prepare reliable inputs for ui-implementation-audit; policy files and source hints are not product truth, and the user must be interviewed when purpose, users, journeys, feature intent, or UI assumptions remain ambiguous.
+description: Audit an existing repository or supplied product/journey documentation set for app-idea clarity, user context, journey decision models, information relevance, feature inventory, UI handoff constraints, edge cases, implementation expectations, test expectations, and usability acceptance criteria. Use only when the user explicitly asks to audit, assess, score, validate, or find documentation-completeness or UI-readiness gaps in that existing documentation, or deliberately invokes this named skill. Do not use for greenfield product discovery, brainstorming, domain or data modeling, database or system specification, ordinary requirements discussion, or co-writing a new specification from a conversational brief. General requests to critique, improve, suggest changes to, or “roast” an idea do not qualify unless the user specifically requests a journey-documentation readiness audit; “do not start coding” is not an audit trigger.
 ---
 
 # User Journey Docs Audit
@@ -8,6 +8,31 @@ description: Run a lexical and structural audit of product and journey documenta
 ## Overview
 
 Audit whether a repo's docs are sufficient to drive excellent product and UI work. This skill is not a source-code feature audit and must not prescribe layout on its own. It checks whether Markdown/product/development docs explain the app idea, users, contexts, complete journey set, complete feature set, UI elements, decisions users make, information needed for those decisions, action frequency, edge cases, implementation expectations, test expectations, and acceptance criteria well enough that designers, engineers, QA, support, and agents can build a rich, easy-to-use app without guessing.
+
+## Applicability Gate
+
+Run this audit only when both conditions are true:
+
+1. An existing repository or supplied documentation set is the object being evaluated.
+2. The user explicitly asks for a documentation-completeness, journey-readiness, or UI-handoff-readiness audit, or deliberately invokes this named skill.
+
+A draft supplied in chat qualifies only when the user asks to assess it against
+the journey-documentation readiness rubric. A request for general critique,
+domain advice, requirements discovery, or specification writing does not
+qualify merely because the prompt mentions users, journeys, interfaces,
+acceptance criteria, or work before coding.
+
+If either condition is absent, stop before running inventory scripts, loading
+audit references, interviewing under this rubric, or imposing the audit report
+shape. Handle the request directly or select a more applicable skill.
+
+Trigger examples:
+
+- **Run:** “Audit the existing product and journey docs in this repository for UI implementation readiness.”
+- **Run:** “Assess these supplied journey requirements for documentation gaps and score their readiness.”
+- **Do not run:** “We are about to design a database for part numbering, serial numbers, and document identification. Do not start coding; let’s discuss the specification, roast the idea, suggest improvements, and write the spec.”
+- **Do not run:** “Help me brainstorm users and workflows for a new product.”
+- **Do not run:** “Review this numbering scheme and propose a better domain model.”
 
 The inventory is a lexical/structural detector, not semantic proof. It
 classifies policy, decision-history, operational-skill, product, and journey
