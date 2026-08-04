@@ -28,6 +28,9 @@ from delivery_efficiency.platforms import (
 )
 from delivery_efficiency.storage import DedupeConflictError, LedgerIntegrityError, Recorder
 
+TARGET_A = "target_v1_" + "a" * 32
+TARGET_B = "target_v1_" + "b" * 32
+
 
 def _observation(index: int = 0, *, event: str = "task.start") -> Dict[str, Any]:
     identity = {
@@ -39,6 +42,7 @@ def _observation(index: int = 0, *, event: str = "task.start") -> Dict[str, Any]
         "turn": "turn-secret-{}".format(index),
         "agent": "agent-secret-{}".format(index),
         "span": None,
+        "target": None,
     }
     payload = {
         "source_event": "prompt_submit",
@@ -180,6 +184,15 @@ def _otel_usage_observation(session: str, index: int) -> Dict[str, Any]:
     return observation
 
 
+def _exact_otel_usage_observation(
+    session: str, turn: str, index: int
+) -> Dict[str, Any]:
+    observation = _otel_usage_observation(session, index)
+    observation["source_identity"]["task"] = turn
+    observation["source_identity"]["turn"] = turn
+    return observation
+
+
 def _read_events(state_dir: Path):
     raw = (state_dir / "EfficiencyLedger.jsonl").read_bytes()
     assert raw.endswith(b"\n")
@@ -269,6 +282,7 @@ def test_contract_privacy_dedupe_and_span() -> None:
             "session_id",
             "turn_id",
             "agent_id",
+            "target_id",
         }
         assert all(value is None or value.startswith("id_") for value in event["identity"].values())
         latest = recorder.latest_task("project-secret-7")
@@ -504,6 +518,104 @@ def test_declaration_binding_and_otel_correlation() -> None:
         assert ambiguous_event["identity"]["task_id"] is None
 
 
+def test_codex_runtime_target_correlation_and_privacy() -> None:
+    with tempfile.TemporaryDirectory(prefix="delivery-efficiency-target-") as temporary:
+        state = Path(temporary).resolve()
+        recorder = Recorder(state)
+
+        starts = []
+        for index, session, turn, target in (
+            (410, "target-session-a", "target-turn-a", TARGET_A),
+            (420, "target-session-b", "target-turn-b", TARGET_B),
+        ):
+            start = _observation(index)
+            start["source_identity"].update(
+                {
+                    "lineage": session,
+                    "task": turn,
+                    "session": session,
+                    "turn": turn,
+                    "target": target,
+                }
+            )
+            starts.append(recorder.record(start, source_key="target-start-{}".format(index)))
+
+        usage_b = recorder.record(
+            _exact_otel_usage_observation("target-session-b", "target-turn-b", 421),
+            source_key="target-usage-b",
+        )
+        usage_a = recorder.record(
+            _exact_otel_usage_observation("target-session-a", "target-turn-a", 411),
+            source_key="target-usage-a",
+        )
+        events = _read_events(state)
+        by_id = {event["event_id"]: event for event in events}
+        start_a = by_id[starts[0].event_id]
+        start_b = by_id[starts[1].event_id]
+        assert by_id[usage_a.event_id]["identity"]["target_id"] == start_a["identity"]["target_id"]
+        assert by_id[usage_b.event_id]["identity"]["target_id"] == start_b["identity"]["target_id"]
+        assert start_a["identity"]["target_id"] != start_b["identity"]["target_id"]
+
+        declaration_observation = _declaration_observation()
+        declaration_observation["source_identity"]["session"] = "target-session-a"
+        declaration = recorder.record_declaration(
+            declaration_observation,
+            source_key="target-declaration-a",
+            source_session="target-session-a",
+        )
+        declaration_event = next(
+            event
+            for event in _read_events(state)
+            if event["event_id"] == declaration.event_id
+        )
+        assert declaration_event["identity"]["target_id"] == start_a["identity"]["target_id"]
+
+        forged_declaration = _declaration_observation()
+        forged_declaration["source_identity"].update(
+            {"session": "target-session-a", "target": TARGET_A}
+        )
+        _assert_rejected(
+            lambda: recorder.record_declaration(
+                forged_declaration,
+                source_key="target-declaration-forged",
+                source_session="target-session-a",
+            ),
+            ContractValidationError,
+        )
+
+        mismatched = recorder.record(
+            _exact_otel_usage_observation("target-session-a", "target-turn-b", 430),
+            source_key="target-usage-mismatch",
+        )
+        mismatch_event = next(
+            event for event in _read_events(state) if event["event_id"] == mismatched.event_id
+        )
+        assert mismatch_event["identity"]["target_id"] is None
+
+        conflicting = _observation(431, event="runtime.turn_stopped")
+        conflicting["source_identity"].update(
+            {
+                "lineage": "target-session-a",
+                "task": "target-turn-a",
+                "session": "target-session-a",
+                "turn": "target-turn-a",
+                "target": TARGET_B,
+            }
+        )
+        conflicting["payload"]["source_event"] = "turn_stop"
+        _assert_rejected(
+            lambda: recorder.record(conflicting, source_key="target-conflict"),
+            ContractValidationError,
+        )
+
+        recorder.close()
+        for path in state.iterdir():
+            if path.is_file():
+                raw = path.read_bytes()
+                assert TARGET_A.encode("ascii") not in raw
+                assert TARGET_B.encode("ascii") not in raw
+
+
 def test_crash_recovery_without_duplicate() -> None:
     with tempfile.TemporaryDirectory(prefix="delivery-efficiency-recovery-") as temporary:
         state = Path(temporary).resolve()
@@ -620,7 +732,7 @@ def test_schema_file_alignment() -> None:
     schema_path = (
         Path(__file__).resolve().parent.parent
         / "contract"
-        / "adapter-event-v1.1.schema.json"
+        / "adapter-event-v1.2.schema.json"
     )
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     with tempfile.TemporaryDirectory(prefix="delivery-efficiency-schema-") as temporary:
@@ -636,7 +748,7 @@ def test_schema_file_alignment() -> None:
 
 
 def test_mixed_schema_upgrade_preserves_legacy_rows() -> None:
-    """An immutable v1.0 row remains readable beside newly written v1.1."""
+    """Immutable v1.0 and v1.1 rows remain readable beside new v1.2 rows."""
 
     with tempfile.TemporaryDirectory(prefix="delivery-efficiency-mixed-schema-") as temporary:
         state = Path(temporary).resolve()
@@ -703,11 +815,59 @@ def test_mixed_schema_upgrade_preserves_legacy_rows() -> None:
         legacy_line = (encoded + "\n").encode("utf-8")
         assert (state / "EfficiencyLedger.jsonl").read_bytes() == legacy_line
 
-        recorder.record(_observation(981), source_key="post-upgrade-v1.1")
+        previous = copy.deepcopy(legacy)
+        previous.update(
+            {
+                "schema_version": "1.1",
+                "recorder_version": "0.2.2",
+                "event_id": "6" * 32,
+                "sequence": "2",
+                "adapter": {"name": "codex-hooks", "version": "0.2.2"},
+                "payload": copy.deepcopy(observation["payload"]),
+            }
+        )
+        validate_durable_event(previous)
+        assert recorder._current_identity(previous["identity"])["target_id"] is None
+        previous_encoded = canonical_json(previous)
+        connection = recorder._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT INTO events "
+                "(sequence, event_id, source_key_hmac, observation_hmac, event_name, "
+                "project_id, session_id, task_id, event_json, event_hmac, exported) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                (
+                    2,
+                    previous["event_id"],
+                    recorder._hmac_hex("source-key:previous-fixture", b"previous"),
+                    recorder._hmac_hex("observation", b"previous"),
+                    previous["event"],
+                    opaque,
+                    opaque,
+                    opaque,
+                    previous_encoded,
+                    recorder._hmac_hex(
+                        "event-json", previous_encoded.encode("utf-8")
+                    ),
+                ),
+            )
+            recorder._set_metadata(connection, "next_sequence", "3")
+            connection.commit()
+        finally:
+            connection.close()
+        recorder.project_pending()
+
+        recorder.record(_observation(981), source_key="post-upgrade-v1.2")
         events = recorder.read_verified_events()
-        assert [event["schema_version"] for event in events] == ["1.0", SCHEMA_VERSION]
+        assert [event["schema_version"] for event in events] == [
+            "1.0",
+            "1.1",
+            SCHEMA_VERSION,
+        ]
         assert events[0] == legacy
-        assert events[1]["recorder_version"] == RECORDER_VERSION
+        assert events[1] == previous
+        assert events[2]["recorder_version"] == RECORDER_VERSION
         assert (state / "EfficiencyLedger.jsonl").read_bytes().startswith(legacy_line)
         recorder.close()
 
@@ -718,6 +878,7 @@ def main() -> int:
         test_contract_privacy_dedupe_and_span,
         test_concurrent_writers_and_cross_process_dedupe,
         test_declaration_binding_and_otel_correlation,
+        test_codex_runtime_target_correlation_and_privacy,
         test_crash_recovery_without_duplicate,
         test_partial_line_crash_recovery,
         test_corrupt_tail_and_history_fail_closed,

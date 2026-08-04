@@ -19,6 +19,7 @@ REQUIRED_SECTIONS = (
     "Deliver the complete agreed scope",
     "Finish diagnostic cycles before batch fixing",
     "Keep behavior truthful",
+    "Prohibit unimplemented product behavior",
     "Learn from agent-made mistakes",
     "Verify real behavior",
     "Measure delivery efficiency truthfully",
@@ -127,12 +128,18 @@ def find_policy_violations(text: str) -> list[str]:
                 "more punishable",
                 "reasonable over-engineering",
                 "silent scope expansion",
-                "every potential over-engineering expansion",
+                "potential material over-engineering expansion",
                 "requested result",
                 "credible project need",
                 "ask the user",
                 "explicit approval",
-                "highly informative question",
+                "only when an unresolved answer could plausibly change",
+                "meaningful rework or over-engineering",
+                "concise by default",
+                "detail proportional to the impact",
+                "routine invocation of one reviewed skill or tool",
+                "preserves its established scope and security posture",
+                "does not trigger an expansion interview",
                 "disposable test data",
                 "single-user environment",
             ),
@@ -151,10 +158,12 @@ def find_policy_violations(text: str) -> list[str]:
             "the engineering asymmetry must explicitly prohibit silent scope expansion",
             r"(?:never|must\s+not|do\s+not).{0,40}authorize.{0,40}silent\s+scope\s+expansion",
         )
-        expansion_question = _bullet_starting_with(context, r"Before\s+acting\s+on\s+every")
+        expansion_question = _bullet_starting_with(
+            context, r"Before\s+acting\s+on\s+a\s+potential\s+material"
+        )
         if not expansion_question:
             violations.append(
-                "every potential engineering expansion must trigger an informative user question before action"
+                "material engineering expansions must use a proportional impact-based approval gate"
             )
         else:
             _require_terms(
@@ -162,7 +171,7 @@ def find_policy_violations(text: str) -> list[str]:
                 expansion_question,
                 "engineering-expansion question contract",
                 (
-                    "potential over-engineering expansion",
+                    "potential material over-engineering expansion",
                     "requested result",
                     "credible project need",
                     "security",
@@ -173,20 +182,23 @@ def find_policy_violations(text: str) -> list[str]:
                     "data-safety",
                     "ask the user",
                     "explicit approval",
-                    "highly informative question",
+                    "only when an unresolved answer could plausibly change",
+                    "scope",
+                    "controls",
                     "concrete proposal",
-                    "evidence",
-                    "scenario",
-                    "assessed likelihood",
-                    "expected benefit",
                     "cost",
                     "complexity",
                     "ongoing maintenance",
-                    "risks of doing it and not doing it",
-                    "realistic alternatives",
                     "reversibility",
+                    "meaningful rework or over-engineering",
+                    "concise by default",
+                    "detail proportional to the impact",
                     "clear recommendation",
-                    "do not begin the expansion until the user approves it",
+                    "only to the extent they affect the choice",
+                    "do not begin a material expansion until the user approves it",
+                    "routine invocation of one reviewed skill or tool",
+                    "preserves its established scope and security posture",
+                    "does not trigger an expansion interview",
                 ),
             )
             _require_pattern(
@@ -194,7 +206,8 @@ def find_policy_violations(text: str) -> list[str]:
                 expansion_question,
                 "expansion approval must precede action",
                 r"before\s+acting.{0,500}ask\s+the\s+user.{0,120}explicit\s+approval"
-                r".{0,900}do\s+not\s+begin\s+the\s+expansion\s+until\s+the\s+user\s+approves",
+                r".{0,1200}do\s+not\s+begin\s+a\s+material\s+expansion\s+until\s+the"
+                r"\s+user\s+approves",
             )
 
     security = bodies["Ground security-posture decisions in confirmed assumptions"]
@@ -212,6 +225,11 @@ def find_policy_violations(text: str) -> list[str]:
                 "read-only discovery",
                 "identify material assumptions or questions",
                 "does not select, apply, alter, or omit",
+                "routine execution of one reviewed skill or tool",
+                "preserves its documented controls and established security posture",
+                "is not a new security-posture decision",
+                "does not reopen the assumptions record or trigger a blanket interview",
+                "use existing confirmed assumptions and task context first",
                 "project-specific",
                 "user-confirmed assumptions",
                 "every security-posture decision and resulting implemented security measure",
@@ -226,24 +244,27 @@ def find_policy_violations(text: str) -> list[str]:
                 "explicitly unnecessary gates",
                 "acceptable risks",
                 "review triggers",
-                "is absent",
-                "stop before the security-posture decision or implementation",
-                "elaborate, plain-language baseline question",
-                "covering every assumption area",
+                "is absent or insufficient",
+                "concrete pending security-posture decision",
+                "stop before that decision or implementation only when",
+                "wrong answer could select an unnecessary control",
+                "omit a necessary control",
+                "expand the work",
+                "meaningful rework",
+                "smallest concise set of unresolved material questions",
                 "create the file",
                 "confirmed answers",
-                "exists but is insufficient for the current decision",
-                "ask only about unresolved assumptions material to that decision",
-                "update the file",
-                "do not repeat already resolved areas",
-                "before resuming security work",
+                "do not repeat resolved areas",
+                "full baseline only when the concrete decision materially depends on every assumption area",
+                "unassessed areas that do not affect the current decision",
                 "never invent or infer a project assumption",
                 "unconfirmed template",
                 "record unknowns explicitly",
                 "unconfirmed assumption cannot justify",
+                "unknown immaterial to the concrete decision does not require a question",
                 "never default to blanket hardening",
                 "cumulative",
-                "every potential expansion",
+                "material expansion",
                 "requested result",
                 "credible project need",
                 "explicit approval before action",
@@ -268,25 +289,25 @@ def find_policy_violations(text: str) -> list[str]:
         _require_pattern(
             violations,
             security,
-            "an absent assumptions file must trigger the complete baseline question",
-            r"is\s+absent.{0,160}stop\s+before.{0,180}baseline\s+question"
-            r".{0,120}every\s+assumption\s+area.{0,160}create\s+the\s+file"
-            r".{0,100}confirmed\s+answers",
+            "absent or insufficient assumptions must trigger only a material proportional question",
+            r"is\s+absent\s+or\s+insufficient.{0,180}stop\s+before.{0,180}only"
+            r"\s+when.{0,220}wrong\s+answer.{0,300}smallest\s+concise\s+set\s+of"
+            r"\s+unresolved\s+material\s+questions.{0,180}(?:create|update).{0,80}the"
+            r"\s+file.{0,100}confirmed\s+answers",
         )
         _require_pattern(
             violations,
             security,
-            "an insufficient assumptions file must trigger only material unresolved questions",
-            r"exists\s+but\s+is\s+insufficient.{0,160}ask\s+only\s+about\s+unresolved"
-            r"\s+assumptions\s+material.{0,180}update\s+the\s+file.{0,180}do\s+not"
-            r"\s+repeat\s+already\s+resolved\s+areas",
+            "a complete baseline must be conditional on concrete decision materiality",
+            r"cover\s+the\s+full\s+baseline\s+only\s+when\s+the\s+concrete\s+decision"
+            r"\s+materially\s+depends\s+on\s+every\s+assumption\s+area",
         )
         _require_pattern(
             violations,
             security,
             "unknown security assumptions must be explicit and cannot justify posture decisions",
-            r"record\s+unknowns\s+explicitly.{0,100}(?:unknown|unconfirmed\s+assumption)"
-            r".{0,80}cannot\s+justify\s+adding,\s+changing,\s+weakening,\s+removing,"
+            r"record\s+unknowns\s+explicitly.{0,120}(?:unknown|unconfirmed\s+assumption)"
+            r".{0,100}cannot\s+justify\s+adding,\s+changing,\s+weakening,\s+removing,"
             r"\s+or\s+intentionally\s+omitting",
         )
         _require_pattern(
@@ -294,7 +315,7 @@ def find_policy_violations(text: str) -> list[str]:
             security,
             "the security-assumptions gate and expansion approval must remain cumulative",
             r"assumption\s+gate\s+and\s+the\s+informed-approval\s+rule.{0,180}cumulative"
-            r".{0,260}explicit\s+approval\s+before\s+action.{0,160}never\s+satisfies\s+or"
+            r".{0,300}explicit\s+approval\s+before\s+action.{0,160}never\s+satisfies\s+or"
             r"\s+waives\s+the\s+other",
         )
 
@@ -397,6 +418,104 @@ def find_policy_violations(text: str) -> list[str]:
                 "mockups",
                 "production behavior",
             ),
+        )
+
+    product_behavior = bodies["Prohibit unimplemented product behavior"]
+    if product_behavior:
+        _require_terms(
+            violations,
+            product_behavior,
+            "implemented-product-behavior contract",
+            (
+                "every visible, enabled control",
+                "buttons, links, tabs, menus, filters, forms, row actions, keyboard shortcuts, and clickable cards",
+                "end to end through the rendered interface",
+                "expected observable result",
+                "does not prove promised navigation, persistence, integration",
+                "downstream behavior",
+                "generated mockup",
+                "enabled product UI",
+                "no empty handlers",
+                "no-op links",
+                "fake success",
+                "mock-data prototype",
+                "synthetic data",
+                "works truthfully within its declared boundary",
+                "each missing or partial agreed behavior",
+                "project-root `CompletionLedger.md`",
+                "generic future-production item is insufficient",
+                "affected journeys",
+                "screens and responsive variants",
+                "files",
+                "user impact",
+                "unblock condition",
+                "required rendered end-to-end verification",
+                "specification explicitly requires communicating future availability",
+                "semantically disabled",
+                "visibly labelled unavailable",
+                "specifically ledgered",
+                "delivery remains incomplete until implementation or explicit removal from agreed scope",
+                "out-of-scope future information is noninteractive content",
+                "never report complete with agreed behavior missing, simulated, inert",
+                "Mandatory interaction inventory",
+                "one evidence pass",
+                "only agreed screens, journeys, states, and responsive variants",
+                "before fixing non-critical gaps",
+                "neither expands scope nor invokes or authorizes a broader exhaustive audit",
+                "every visible interactive element",
+                "conditional controls",
+                "map each element to its journey",
+                "verify the downstream result",
+                "success, cancellation, validation failure, permission failure",
+                "recovery where applicable",
+                "reload when persistence is promised",
+                "finish the pass",
+                "batch-fix",
+                "zero enabled controls without real behavior",
+                "zero requested journeys without rendered end-to-end evidence",
+                "zero request-related completion-ledger entries",
+                "Code inspection, routes, rendering, screenshots, visual comparison, and geometry checks",
+                "do not constitute interaction verification",
+            ),
+        )
+        _require_pattern(
+            violations,
+            product_behavior,
+            "every enabled visible control must work end to end with an observable result",
+            r"every\s+visible,\s+enabled\s+control.{0,220}must\s+perform.{0,120}end\s+to\s+end"
+            r".{0,180}observable\s+result",
+        )
+        _require_pattern(
+            violations,
+            product_behavior,
+            "each missing UI behavior needs specific journey, surface, impact, and verification detail",
+            r"entry\s+naming.{0,80}affected\s+journeys.{0,100}screens\s+and\s+responsive"
+            r"\s+variants.{0,100}controls.{0,80}files.{0,80}missing\s+behavior.{0,80}user"
+            r"\s+impact.{0,80}unblock\s+condition.{0,100}rendered\s+end-to-end\s+verification",
+        )
+        _require_pattern(
+            violations,
+            product_behavior,
+            "future controls require an explicit specification, disabled state, label, and ledger entry",
+            r"unimplemented\s+control\s+may\s+appear\s+only\s+when\s+the\s+specification"
+            r".{0,180}semantically\s+disabled.{0,220}visibly\s+labelled\s+unavailable"
+            r".{0,100}(?:specifically\s+ledgered|completion-ledger\s+entry)",
+        )
+        _require_pattern(
+            violations,
+            product_behavior,
+            "the interaction inventory must stay within agreed UI scope and not authorize a broader audit",
+            r"only\s+agreed\s+screens,\s+journeys,\s+states,\s+and\s+responsive"
+            r"\s+variants.{0,180}neither\s+expands\s+scope\s+nor\s+invokes"
+            r"\s+or\s+authorizes\s+a\s+broader\s+exhaustive\s+audit",
+        )
+        _require_pattern(
+            violations,
+            product_behavior,
+            "UI completion requires zero inert controls, unverified journeys, and related ledger entries",
+            r"completion\s+requires\s+zero\s+enabled\s+controls\s+without\s+real\s+behavior"
+            r".{0,160}zero\s+requested\s+journeys\s+without\s+rendered\s+end-to-end\s+evidence"
+            r".{0,160}zero\s+request-related\s+completion-ledger\s+entries",
         )
 
     mistakes = bodies["Learn from agent-made mistakes"]
@@ -611,6 +730,12 @@ def find_policy_violations(text: str) -> list[str]:
         (r"(?i)\bsilent\s+scope\s+expansion\s+is\s+(?:acceptable|allowed|authorized|permitted)\b", "silent scope expansion must remain prohibited"),
         (r"(?i)(?<!never )(?<!do not )(?<!must not )\b(?:implement|perform|begin|proceed\s+with|automatically\s+add).{0,100}(?:security|privacy|backup|migration|preservation|data[- ]safety|hardening|infrastructure).{0,120}\bwithout\s+(?:asking|approval)\b", "risk-control expansion must not proceed without user approval"),
         (r"(?i)\b(?:automatically|always)\s+(?:add|implement|perform|create|preserve|migrate|back\s*up|harden).{0,160}(?:even\s+(?:if|when).{0,80}(?:unrequested|not\s+(?:requested|required|needed))|without\s+(?:evidence|a\s+credible\s+(?:project\s+)?need))", "hypothetical engineering must not expand scope automatically"),
+        (r"(?i)\b(?:every|any)\s+(?:potential\s+)?(?:over-engineering\s+)?expansion\b.{0,180}\b(?:must|always|requires?|triggers?)\b.{0,100}\b(?:question|interview|approval)\b", "immaterial potential expansions must not trigger blanket questions"),
+        (r"(?i)\b(?:always|must)\s+(?:ask|include|present)\b.{0,140}\b(?:every|all)\b.{0,80}\b(?:question|factor|detail|baseline\s+area)s?\b.{0,140}\b(?:regardless\s+of|whether\s+or\s+not)\b.{0,100}\b(?:material|affect|change)\b", "decision questions must not require fixed exhaustive detail"),
+        (r"(?i)\b(?:if|when)\s+`?security-assumptions\.md`?\s+is\s+(?:absent|missing)\b.{0,160}\b(?:always|must|requires?)\b.{0,100}\b(?:full|complete)\s+baseline\b", "an absent assumptions file must not trigger an unconditional full baseline"),
+        (r"(?i)\b(?:only|sole)\s+(?:unresolved\s+)?(?:material\s+)?assumption\b.{0,180}\b(?:must|always|requires?)\b.{0,100}\b(?:full|complete)\s+baseline\b", "one material assumption must not trigger an unrelated full baseline"),
+        (r"(?i)\broutine\s+(?:invocation|use|execution)\b.{0,140}\b(?:reviewed\s+)?(?:skill|tool)\b.{0,140}\b(?:must|always|requires?|triggers?)\b.{0,100}\b(?:full\s+baseline|blanket\s+interview|security\s+interview)\b", "routine posture-preserving tool use must not trigger a security interview"),
+        (r"(?i)\b(?:implement|apply|begin|continue|proceed\s+with)\b.{0,140}\b(?:security(?:-posture)?\s+)?control\b.{0,160}\b(?:despite|with)\b.{0,80}\bunresolved\s+material\s+assumption\b", "a material control decision must not proceed on an unresolved material assumption"),
         (r"(?i)(?<!never )(?<!do not )(?<!must not )\b(?:if|when)\s+`?security-assumptions\.md`?\s+is\s+(?:absent|missing|unavailable|incomplete|insufficient).{0,180}\b(?:implement|apply|begin|continue|proceed\s+with)\b.{0,180}\b(?:before\s+(?:asking|confirmation)|document|record|update).{0,80}\b(?:later|afterward|after\s+implementation)\b", "missing security assumptions must stop implementation before controls are applied"),
         (r"(?i)\b(?:agent|agents|we|you)\s+(?:may|can|should|must|will)\s+(?:infer|assume|presume)\b.{0,140}\b(?:security\s+assumptions?|threat\s+model|credible\s+adversar(?:y|ies)|misuse|trust\s+boundaries?|maximum\s+threat|multi[- ]tenant|internet[- ]facing)\b", "security assumptions and threats must be user-confirmed, not inferred"),
         (r"(?im)(?:^|(?<=[.!?]))\s*(?:-\s*)?(?:weaken|remove|disable|omit|intentionally\s+omit)\b.{0,120}\b(?:security(?:-posture)?\s+(?:control|gate|measure)|authentication\s+control|authorization\s+control|access-control\s+gate)\b.{0,120}\bwithout\s+(?:reading|citing|confirmed|user-confirmed)\b", "weakened, removed, or omitted controls require confirmed security assumptions"),
@@ -625,6 +750,19 @@ def find_policy_violations(text: str) -> list[str]:
         (r"(?i)(?<!never )(?<!do not )(?<!must not )\bstore\s+(?:prompts|tool payloads).{0,80}`?EfficiencyLedger", "telemetry must not retain private model content"),
         (r"(?i)(?<!never )(?<!do not )(?<!must not )\bretain\s+(?:resolved|completed|closed).{0,80}`?CompletionLedger", "the completion ledger must remain active-only"),
         (r"(?i)\bcollection(?!.{0,80}\b(?:must not|never|do not)\b).{0,100}\bform\s+first\b", "collection destinations must not lead with forms"),
+        (r"(?i)\b(?:placeholder|future|simulated|no-op|inert)\s+controls?\s+(?:may|can|should)\s+(?:remain|be|appear)\s+(?:enabled|clickable|actionable|focusable)\b", "placeholder, future, simulated, no-op, or inert controls must not remain enabled"),
+        (r"(?i)\b(?:may|can|should)\s+report.{0,100}\bcomplete\b.{0,180}\b(?:inert|missing|simulated|unimplemented|future\s+control)\b", "UI with inert or unimplemented agreed behavior must not be reported complete"),
+        (r"(?i)\b(?:interaction\s+)?inventory\b[^.\n]{0,100}\b(?:is|remains|may\s+be|can\s+be)\s+(?:optional|skipped|omitted|unnecessary)\b", "the agreed UI interaction inventory must not be optional or skippable"),
+        (r"(?i)\b(?:may|can|should)\s+(?:skip|omit)\s+(?:the\s+)?(?:interaction\s+)?inventory\b", "the agreed UI interaction inventory must not be optional or skippable"),
+        (r"(?i)\b(?:representative|sampled?|subset\s+of)\s+controls?\b[^.\n]{0,120}\b(?:is|are|provides?|gives?|counts?\s+as)\s+(?:sufficient|enough|complete)\b", "representative controls must not substitute for the complete agreed UI inventory"),
+        (r"(?i)\bonly\s+(?:a\s+)?(?:representative\s+)?(?:sample|subset)\s+of\s+controls?\s+(?:needs?|must|should)\s+(?:to\s+)?be\s+(?:exercised|tested|verified)\b", "representative controls must not substitute for the complete agreed UI inventory"),
+        (r"(?i)\b(?:generic|catch-all|future-production)\s+(?:(?:completion[- ]ledger|ledger)\s+)?(?:item|entry)\b[^.\n]{0,100}\b(?:is|are|may\s+be|can\s+be)\s+(?:sufficient|enough|acceptable)\b", "generic completion-ledger entries must not conceal distinct missing UI behavior"),
+        (r"(?i)\b(?:single|one)\s+(?:generic|catch-all|future-production)\s+(?:(?:completion[- ]ledger|ledger)\s+)?(?:item|entry)\s+(?:may|can|should)\s+(?:cover|combine|hide|represent)\s+(?:all|multiple)\s+missing\s+(?:UI\s+)?behaviors?\b", "generic completion-ledger entries must not conceal distinct missing UI behavior"),
+        (r"(?i)\bfuture\s+controls?\b[^.;\n]{0,100}\b(?:need\s+not|do\s+not\s+need\s+to)\s+(?:be\s+|have\s+(?:an?\s+)?)?(?:disabled|labelled|labeled|unavailable|ledgered|tracked|disabled\s+state|unavailable\s+label|completion[- ]ledger\s+entry|ledger\s+entry)\b", "future controls must retain the disabled, unavailable, and ledger gates"),
+        (r"(?i)\bfuture\s+controls?\b[^.;\n]{0,100}\bmay\s+(?:omit|skip)\s+(?:the\s+)?(?:disabled\s+state|unavailable\s+label|completion[- ]ledger\s+entry|ledger\s+entry)\b", "future controls must retain the disabled, unavailable, and ledger gates"),
+        (r"(?i)\binteraction\s+inventory\b[^.\n]{0,140}\b(?:automatically|by\s+itself)\s+(?:invokes?|authorizes?|requires?)\b[^.\n]{0,100}\b(?:broader|repository-wide|exhaustive)\s+audit\b", "the scoped interaction inventory must not authorize a broader audit"),
+        (r"(?i)\b(?:route\s+coverage|screenshots?|visual\s+comparison|geometry\s+checks?)\b[^.;\n]{0,120}(?<!not )(?<!never )(?<!cannot )(?<!can't )(?<!fail to )(?<!fails to )(?<!failed to )(?<!insufficient to )(?<!inadequate to )\b(?:constitutes?|proves?|counts?\s+as|(?:is|are)\s+sufficient)\b[^.;\n]{0,80}\binteraction\s+verification\b", "static or visual evidence alone must not count as interaction verification"),
+        (r"(?i)\b(?:code\s+inspection|component\s+rendering|handler|route)\b[^.;\n]{0,120}(?<!not )(?<!never )(?<!cannot )(?<!can't )(?<!fail to )(?<!fails to )(?<!failed to )(?<!insufficient to )(?<!inadequate to )\b(?:constitutes?|proves?|counts?\s+as|(?:is|are)\s+sufficient)\b[^.;\n]{0,80}\b(?:interaction\s+verification|working\s+behavior)\b", "implementation structure alone must not prove product interaction"),
     )
     for pattern, label in contradictory_instructions:
         if re.search(pattern, text, flags=re.DOTALL):

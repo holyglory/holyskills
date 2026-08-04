@@ -157,9 +157,11 @@ scenario review, and mutation-quality review remain separate needs.
 Honest description: a cross-platform agent workflow for installing the shared
 delivery-efficiency recorder into explicit Codex and Claude homes, enabling the
 Codex hooks feature when the host permits it, preserving host-native trust
-review, and proving fresh hook/task/token correlation with a bounded receipt.
-It invokes the recorder's canonical transactional installer; it is not another
-recorder, settings writer, package manager, or trust authority.
+review, and proving fresh per-home Codex hook/task/token correlation with one
+bounded concurrent watch and filename-bearing receipt. Claude activation stays
+host-owned and independent. The skill invokes the recorder's canonical
+transactional installer; it is not another recorder, settings writer, package
+manager, or trust authority.
 
 Improvements present:
 
@@ -167,18 +169,42 @@ Improvements present:
   guidance, including Linux-filesystem-only WSL state;
 - one immutable plan retains every managed target and binds exact source,
   target, state, digest, and rollback data before apply;
-- installation, filesystem verification, host activation, restart, and fresh
+- one agent-owned, digest-bound detached worker snapshots the reviewed runtime,
+  proves its ready state, waits for exact affected process incarnations to
+  exit, invokes the existing transaction, and saves a private filename-bearing
+  terminal receipt; direct apply, verify, and rollback commands are recovery
+  interfaces rather than the normal user journey;
+- managed hooks migrate once to a strictly validating version-neutral launcher;
+  later compatible upgrades preserve the established credential and loopback
+  port and leave byte-identical host configuration untouched;
+- recorder `0.2.4` writes schema `1.2` while immutable schema `1.0` and `1.1`
+  events remain validated and reportable without rewriting legacy rows;
+- installation, filesystem verification, Codex host trust, and fresh per-home
   task correlation are reported as distinct states;
 - Codex feature activation is allowed only for the exact requested home, while
   `/hooks` review remains a visible user action and persistent trust bypass is
   prohibited;
-- installation, retirement, feature/trust changes, and credential generation
-  or rotation require project-specific user-confirmed security assumptions;
-- the bounded status helper validates the immutable plan plus canonical and
-  installed payloads before importing recorder code, imports only a private
-  digest-matched snapshot, brackets its integrity-checked store read with
-  install verification and receiver/source rechecks, and rejects unbound,
+- each reviewed Codex home receives a stable versioned reference that becomes
+  an installation-keyed opaque target identity; paths, friendly labels,
+  credentials, and derivation inputs do not enter durable telemetry;
+- one agent-owned watch captures its own baseline and checks all selected Codex
+  homes concurrently while the user only trusts each exact hook and starts one
+  ordinary fresh task per instance; it requires no client quitting for serial
+  proof, process isolation, sequence handling, or repeated Terminal commands,
+  while preserving any one-time restart that the host requires after install;
+- first installation, retirement, feature/trust changes, and credential
+  generation or rotation use project-specific user-confirmed security
+  assumptions, while a verified non-rotating repair that preserves established
+  controls reuses the recorded posture without a blanket interview;
+- the bounded status helper and watch validate the immutable plan plus
+  canonical and installed payloads before importing recorder code, import only
+  a private digest-matched snapshot, bracket integrity-checked store reads with
+  install verification and receiver/source rechecks, and reject unbound,
   empty, wrong-source, cross-task, historical, or concurrent-drift evidence;
+- the watch writes its bounded private result outside the source worktree and
+  emits exactly one `REPORT_SAVED` line naming the file and aggregate
+  active/pending result; timeouts and legacy family-only evidence remain honest
+  non-success reports rather than activating named homes;
 - rollback proof is limited to recorder-managed actions and separately restores
   a Codex feature enabled by the workflow only from a confirmed disabled state;
 - realistic contract mutations plus source-drift, transaction-race,
@@ -190,8 +216,9 @@ this repository and must be rechecked against current official sources. The CI
 matrix now runs the skill contract with the recorder on native Windows, Linux,
 and macOS plus a gated WSL runner, but those jobs are evidence only after they
 complete for the revision; a simulated platform branch is not native proof.
-User trust prompts and runtime restarts cannot truthfully be automated when the
-host reserves them to the operator.
+Codex trust prompts remain operator-owned. Claude activation stays host-owned
+and independent, and per-home target attribution is Codex-only in recorder
+`0.2.3` and newer with schema `1.2`.
 
 ### `ui-implementation-audit`
 

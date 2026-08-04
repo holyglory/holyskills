@@ -50,6 +50,39 @@ Prefer an already established package manager. Do not install a new package
 manager merely to install one prerequisite without presenting that additional
 choice to the user.
 
+## Agent-owned deferred handoff
+
+The normal install and upgrade path is software-owned. After the agent creates
+and the user approves the immutable plan, the agent discovers every live
+same-user process for the reload-required targets and invokes `install defer`
+with the reviewed journal/digest and one repeatable `--target-pid` per exact
+process. The user never opens Terminal, copies a command, finds a PID, or runs
+apply, verify, status, cancel, or rollback.
+
+`install defer` does not return an armed result until its detached worker has
+validated the private request, plan digest, exclusive job ownership, and every
+target process identity. Its single `DEFERRED_INSTALL_ARMED` receipt names the
+private status-report filename without exposing absolute paths or PIDs. Only
+then does the agent ask the user to close affected hosts once and wait its
+announced short settling interval before reopening once. An unaffected agent or
+host-owned observer may poll `install deferred-status`, but is optional. The
+first reopened agent must read the saved status before any other work. A
+detected premature same-image relaunch, PID reuse ambiguity, missing identity,
+drift, timeout, or worker loss fails closed and never becomes a verified
+receipt.
+
+The worker never signals or kills a process. It closes inherited standard
+streams, inherits no application credential intentionally, has a bounded
+1-through-604800-second wait (86400 seconds by default), and writes only
+canonical bounded private status. It is one-shot and nonpersistent, so an OS
+reboot ends it and requires agent-owned replan and rearm; the user only repeats
+the close/reopen boundary and never opens Terminal. When a strict receipt for
+the exact job and plan digest proves no mutation, `deferred-status` may report
+the saved categorical failure even if the reboot changed volatile filesystem
+device identity. This read-only fallback never authorizes apply, trust review,
+activation, or success. Native survival and identity behavior must be proven on
+each claimed platform; a simulated branch is not native evidence.
+
 ## macOS
 
 - Recorder state defaults to
@@ -63,6 +96,10 @@ choice to the user.
   override `HOME`; do not reuse the terminal home by assumption.
 - Claude's default user settings home is `~/.claude`, unless the exact process
   sets `CLAUDE_CONFIG_DIR`.
+- Before the ready handshake, bind each supplied PID to the same account UID,
+  executable path, and libproc process-start identity. The detached macOS
+  worker must survive the arming process and its terminal/session ending.
+  Recheck process identity and same-image relaunch immediately before apply.
 
 ## Linux
 
@@ -74,6 +111,11 @@ choice to the user.
   recorder state and runtime homes owned by the user running those clients.
 - Resolve `CODEX_HOME` and `CLAUDE_CONFIG_DIR` from the exact target process
   before falling back to `~/.codex` and `~/.claude`.
+- Bind each supplied PID to the same UID, `/proc/<pid>/stat` start time, and the
+  `/proc/<pid>/exe` path plus device/inode identity before acknowledging ready.
+  The worker runs in a detached session with closed standard streams. Treat a
+  changed PID identity as exit of the original instance, then reject a detected
+  matching-image relaunch before apply.
 
 ## WSL
 
@@ -90,6 +132,10 @@ choice to the user.
   `\\wsl$` state locations.
 - Do not point WSL hooks at a native-Windows recorder, Python executable,
   runtime home, or state directory. Configure native Windows separately.
+- Discover and bind Linux PIDs inside the exact WSL distribution. A native
+  Windows PID or process image is never WSL process evidence. Use the Linux
+  `/proc` identity and detached-session rules above and save the handoff receipt
+  only in the WSL Linux state directory.
 
 ## Native Windows
 
@@ -105,6 +151,13 @@ choice to the user.
   for Claude's Bash tool but is not required by the recorder itself.
 - Run installer arguments as a PowerShell array or ordinary quoted arguments;
   do not translate POSIX quoting literally. WSL remains a separate target.
+- Before acknowledging ready, bind each PID to the invoking user's owner SID,
+  process-creation FILETIME, and exact process image. Launch the worker without
+  a console and detached from the arming process; if the host job boundary does
+  not allow the worker to survive, fail before asking the user to close
+  anything. Recheck the exact identities and detected same-image relaunches
+  before apply. The private request and receipt remain under the selected local
+  state directory and inherit its ACL; do not claim stronger ACL hardening.
 
 ## Missing-software decision
 

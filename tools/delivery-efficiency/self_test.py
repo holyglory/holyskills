@@ -17,6 +17,7 @@ TESTS = (
     ROOT / "codex_self_test.py",
     ROOT / "claude_self_test.py",
     ROOT / "installer_self_test.py",
+    ROOT / "deferred_install_self_test.py",
     ROOT / "declarations_self_test.py",
     ROOT / "exec_runner_self_test.py",
     ROOT / "reporting_self_test.py",

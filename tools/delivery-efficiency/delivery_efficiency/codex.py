@@ -90,6 +90,7 @@ _EXPLICIT_REQUIREMENT_STATUSES = {"satisfied", "partial", "blocked", "removed"}
 _REQUIREMENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
 _REFERENCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$")
 _SAFE_CONFIG_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+:-]{0,63}$")
+_RUNTIME_TARGET = re.compile(r"^target_v1_[0-9a-f]{32}$")
 _MAX_DECLARED_REFERENCES = 32
 _SCOPE_SIZES = {
     "small",
@@ -293,6 +294,7 @@ def _identity(
     turn: Optional[str] = None,
     agent: Optional[str] = None,
     span: Optional[str] = None,
+    target: Optional[str] = None,
 ) -> Dict[str, Optional[str]]:
     return {
         "lineage": lineage,
@@ -303,6 +305,7 @@ def _identity(
         "turn": turn,
         "agent": agent,
         "span": span,
+        "target": target,
     }
 
 
@@ -554,6 +557,7 @@ def translate_hook(
     event_name: Optional[str] = None,
     surface: str = "unknown",
     runtime_version: Optional[str] = None,
+    runtime_target: Optional[str] = None,
     max_bytes: int = MAX_SOURCE_BYTES,
 ) -> List[Emission]:
     """Translate one Codex hook JSON object into allowlisted observations.
@@ -564,6 +568,11 @@ def translate_hook(
     ``runtime.turn_stopped`` and never ``task.terminal``.
     """
 
+    if runtime_target is not None and (
+        not isinstance(runtime_target, str)
+        or _RUNTIME_TARGET.fullmatch(runtime_target) is None
+    ):
+        raise MalformedSourceEvent("runtime target is not an installer-assigned opaque reference")
     data = _load_source(source, max_bytes)
     payload_event = data.get("hook_event_name")
     if event_name is None:
@@ -578,13 +587,16 @@ def translate_hook(
     turn = _safe_identifier(data.get("turn_id"))
     version = _safe_version(runtime_version if runtime_version is not None else data.get("version"))
 
+    def hook_source_key(domain: str, *parts: Any) -> str:
+        return _source_key(domain, runtime_target, *parts)
+
     if event_name == "SessionStart":
         # Startup is a session boundary, not request receipt.  Compaction is
         # explicitly a continuation and must never create a new task.
         return []
 
     if event_name == "SessionEnd":
-        identity = _identity(lineage=session, session=session)
+        identity = _identity(lineage=session, session=session, target=runtime_target)
         observation = _observation(
             adapter="codex-hooks",
             surface=surface,
@@ -601,7 +613,7 @@ def translate_hook(
                 gap_code="host-boundary-unavailable",
             ),
         )
-        return [(observation, _source_key("codex-hook", session, source_event))]
+        return [(observation, hook_source_key("codex-hook", session, source_event))]
 
     if turn is None:
         raise MalformedSourceEvent("turn hook is missing a valid turn identifier")
@@ -610,6 +622,7 @@ def translate_hook(
         task=turn,
         session=session,
         turn=turn,
+        target=runtime_target,
     )
 
     if event_name == "UserPromptSubmit":
@@ -626,7 +639,7 @@ def translate_hook(
             event="task.start",
             payload=_payload(source_event, task_kind="primary"),
         )
-        return [(observation, _source_key("codex-hook", session, turn, source_event))]
+        return [(observation, hook_source_key("codex-hook", session, turn, source_event))]
 
     if event_name in {"PreToolUse", "PostToolUse"}:
         tool_use_id = _safe_identifier(data.get("tool_use_id"), required=True)
@@ -637,6 +650,7 @@ def translate_hook(
             session=session,
             turn=turn,
             span=tool_use_id,
+            target=runtime_target,
         )
         activity = _classification(
             "unattributed", "unknown", "tool-active", "runtime-observed"
@@ -661,7 +675,7 @@ def translate_hook(
                 payload=_payload("unknown", tool_category="unknown"),
             )
             emissions.append(
-                (first, _source_key("codex-first-activity", session, turn))
+                (first, hook_source_key("codex-first-activity", session, turn))
             )
         span = _observation(
             adapter="codex-hooks",
@@ -677,7 +691,7 @@ def translate_hook(
         emissions.append(
             (
                 span,
-                _source_key("codex-hook", session, turn, source_event, tool_use_id),
+                hook_source_key("codex-hook", session, turn, source_event, tool_use_id),
             )
         )
         return emissions
@@ -691,6 +705,7 @@ def translate_hook(
             turn=turn,
             agent=agent,
             span=agent,
+            target=runtime_target,
         )
         activity = _classification(
             "unattributed", "unknown", "model-active", "runtime-observed"
@@ -711,7 +726,7 @@ def translate_hook(
                 payload=_payload("unknown", tool_category="unknown"),
             )
             emissions.append(
-                (first, _source_key("codex-first-activity", session, turn))
+                (first, hook_source_key("codex-first-activity", session, turn))
             )
         span = _observation(
             adapter="codex-hooks",
@@ -727,7 +742,7 @@ def translate_hook(
         emissions.append(
             (
                 span,
-                _source_key("codex-hook", session, turn, source_event, agent),
+                hook_source_key("codex-hook", session, turn, source_event, agent),
             )
         )
         return emissions
@@ -746,7 +761,7 @@ def translate_hook(
             event="runtime.turn_stopped",
             payload=_payload(source_event),
         )
-        return [(observation, _source_key("codex-hook", session, turn, source_event))]
+        return [(observation, hook_source_key("codex-hook", session, turn, source_event))]
 
     raise AssertionError("recognized hook event was not translated")
 

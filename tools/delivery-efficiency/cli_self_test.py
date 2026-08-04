@@ -204,6 +204,86 @@ def assert_claude_prompt_deadline_budget(root: Path) -> None:
     assert exhausted_clock.value - 100.0 == telemetry_budget
 
 
+def assert_runtime_target_validation(root: Path) -> None:
+    source = {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "runtime-target-session",
+        "turn_id": "runtime-target-turn",
+    }
+    encoded = json.dumps(source, separators=(",", ":")).encode("utf-8")
+    valid = "target_v1_" + "a" * 32
+    parsed = cli_module.build_parser().parse_args(
+        ["hook", "codex", "--runtime-target", valid]
+    )
+    assert parsed.runtime_target == valid
+
+    for supplied in (valid, None):
+        state = root / ("runtime target " + ("present" if supplied else "legacy missing"))
+        arguments = argparse.Namespace(
+            state_dir=str(state),
+            managed_id=MANAGED_ID,
+            runtime="codex",
+            runtime_target=supplied,
+        )
+        with (
+            mock.patch.object(sys, "stdin", SimpleNamespace(buffer=BytesIO(encoded))),
+            mock.patch(
+                "delivery_efficiency.codex.translate_hook",
+                return_value=[],
+            ) as translated,
+            mock.patch.object(cli_module, "ensure_receiver", return_value={}),
+            mock.patch.object(cli_module, "record_local_gap") as record_gap,
+        ):
+            assert _hook(arguments) == 0
+        assert not record_gap.called
+        assert translated.call_args.kwargs["runtime_target"] == supplied
+
+    invalid_values = (
+        "target_v1_short",
+        "target_v1_" + "A" * 32,
+        "target_v1_" + "g" * 32,
+        "/private/runtime/home",
+        "a" * 64,
+    )
+    for index, supplied in enumerate(invalid_values):
+        state = root / "invalid runtime target {}".format(index)
+        arguments = argparse.Namespace(
+            state_dir=str(state),
+            managed_id=MANAGED_ID,
+            runtime="codex",
+            runtime_target=supplied,
+        )
+        with (
+            mock.patch.object(sys, "stdin", SimpleNamespace(buffer=BytesIO(encoded))),
+            mock.patch("delivery_efficiency.codex.translate_hook") as translated,
+            mock.patch.object(cli_module, "ensure_receiver") as ensure,
+            mock.patch.object(cli_module, "record_local_gap") as record_gap,
+        ):
+            assert _hook(arguments) == 0
+        assert not translated.called
+        assert not ensure.called
+        record_gap.assert_called_once_with(state, "malformed-source-event")
+
+    claude_arguments = argparse.Namespace(
+        state_dir=str(root / "Claude runtime target refusal"),
+        managed_id=MANAGED_ID,
+        runtime="claude",
+        runtime_target=valid,
+    )
+    with (
+        mock.patch.object(sys, "stdin", SimpleNamespace(buffer=BytesIO(encoded))),
+        mock.patch("delivery_efficiency.claude.translate_hook") as translated,
+        mock.patch.object(cli_module, "ensure_receiver") as ensure,
+        mock.patch.object(cli_module, "record_local_gap") as record_gap,
+    ):
+        assert _hook(claude_arguments) == 0
+    assert not translated.called
+    assert not ensure.called
+    record_gap.assert_called_once_with(
+        Path(claude_arguments.state_dir), "malformed-source-event"
+    )
+
+
 def assert_install_apply_uses_transactional_activation(root: Path) -> None:
     """Apply must not repeat health activation after the installer commits."""
 
@@ -493,6 +573,7 @@ def main_test() -> int:
         root = Path(raw).resolve()
         assert_hook_deadline_budget(root)
         assert_claude_prompt_deadline_budget(root)
+        assert_runtime_target_validation(root)
         assert_install_apply_uses_transactional_activation(root)
         assert_cli_declaration_interfaces(root)
         unavailable_state = root / "receiver unavailable"

@@ -6,9 +6,10 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import time
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.error import HTTPError, URLError
 
 from . import (
@@ -33,6 +34,7 @@ from .runtime import (
 TOOL_ROOT = Path(__file__).resolve().parents[1]
 MAX_HOOK_BYTES = 1024 * 1024
 MANAGED_ID = "holyskills-delivery-efficiency-v1"
+_RUNTIME_TARGET_PATTERN = re.compile(r"^target_v1_[0-9a-f]{32}$")
 
 
 class UnsupportedHookRuntime(RuntimeError):
@@ -166,6 +168,13 @@ def _hook(args: argparse.Namespace) -> int:
             response = {}
         if args.managed_id is not None and args.managed_id != MANAGED_ID:
             raise ValueError("unknown managed hook id")
+        runtime_target = getattr(args, "runtime_target", None)
+        if runtime_target is not None and (
+            args.runtime != "codex"
+            or not isinstance(runtime_target, str)
+            or _RUNTIME_TARGET_PATTERN.fullmatch(runtime_target) is None
+        ):
+            raise ValueError("runtime target reference is invalid")
         if args.runtime == "codex" and args.managed_id == MANAGED_ID:
             from .exec_runner import WRAPPED_CODEX_EXEC_ENV
 
@@ -182,7 +191,14 @@ def _hook(args: argparse.Namespace) -> int:
             from .claude import translate_hook as translate_runtime_hook
         else:
             raise UnsupportedHookRuntime("unsupported hook runtime")
-        pairs = translate_runtime_hook(raw, surface=_surface(args.runtime))
+        if args.runtime == "codex":
+            pairs = translate_runtime_hook(
+                raw,
+                surface=_surface(args.runtime),
+                runtime_target=runtime_target,
+            )
+        else:
+            pairs = translate_runtime_hook(raw, surface=_surface(args.runtime))
         settings = ensure_receiver(
             state,
             timeout_seconds=_remaining_hook_budget(deadline),
@@ -364,6 +380,86 @@ def _install_action(args: argparse.Namespace) -> int:
         result["hook_trust"] = "requires-review-or-observed-hook"
     _json(result)
     return 0 if result.get("receiver_healthy", True) else 1
+
+
+def _deferred_line(marker: str, value: Mapping[str, Any]) -> None:
+    """Emit one bounded allowlisted deferred-install receipt."""
+
+    allowed = {
+        "job_id",
+        "filename",
+        "status",
+        "targets",
+        "wait_seconds",
+        "phase",
+        "sha256",
+        "bytes",
+        "verification_ok",
+        "receiver_healthy",
+        "rollback_status",
+        "failure_code",
+    }
+    public = {key: value[key] for key in sorted(allowed) if key in value}
+    print(
+        "{} {}".format(
+            marker,
+            json.dumps(public, sort_keys=True, separators=(",", ":"), ensure_ascii=True),
+        )
+    )
+
+
+def _install_defer(args: argparse.Namespace) -> int:
+    from .deferred_install import arm_deferred_install
+
+    result = arm_deferred_install(
+        Path(args.journal),
+        args.plan_digest,
+        args.target_pid,
+        args.wait_seconds,
+    )
+    armed = result.get("status") == "armed"
+    _deferred_line(
+        "DEFERRED_INSTALL_ARMED"
+        if armed
+        else "DEFERRED_INSTALL_RECEIPT_SAVED",
+        result,
+    )
+    return 0 if armed else 2
+
+
+def _install_deferred_status(args: argparse.Namespace) -> int:
+    from .deferred_install import read_deferred_install_status
+
+    result = read_deferred_install_status(
+        Path(args.journal), args.plan_digest, args.job_id
+    )
+    _deferred_line("DEFERRED_INSTALL_STATUS", result)
+    return 2 if result.get("status") in {
+        "cancelled",
+        "expired",
+        "target-race",
+        "failed-unapplied",
+        "failed-rolled-back",
+        "rollback-blocked",
+        "worker-lost",
+    } else 0
+
+
+def _install_deferred_cancel(args: argparse.Namespace) -> int:
+    from .deferred_install import cancel_deferred_install
+
+    result = cancel_deferred_install(
+        Path(args.journal), args.plan_digest, args.job_id
+    )
+    _deferred_line("DEFERRED_INSTALL_CANCEL", result)
+    return 0
+
+
+def _install_deferred_worker(args: argparse.Namespace) -> int:
+    from .deferred_install import run_deferred_install
+
+    run_deferred_install(Path(args.request), args.request_digest)
+    return 0
 
 
 def _parse_requirement(raw: str) -> Tuple[str, str, str]:
@@ -666,6 +762,8 @@ def _add_terminal_metadata_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from .deferred_install import DEFAULT_WAIT_SECONDS, MAX_WAIT_SECONDS
+
     parser = argparse.ArgumentParser(description="Holy Skills delivery-efficiency recorder")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -677,6 +775,7 @@ def build_parser() -> argparse.ArgumentParser:
     hook.add_argument("runtime", choices=("codex", "claude"))
     hook.add_argument("--state-dir")
     hook.add_argument("--managed-id")
+    hook.add_argument("--runtime-target")
     hook.set_defaults(handler=_hook)
 
     status = commands.add_parser("status", help="report settings, receiver, and store health")
@@ -729,6 +828,38 @@ def build_parser() -> argparse.ArgumentParser:
             help="reviewed SHA-256 printed by install plan",
         )
         child.set_defaults(handler=_install_action)
+    defer = install_commands.add_parser(
+        "defer",
+        help="arm a one-shot digest-bound installer that waits for exact processes",
+    )
+    defer.add_argument("--journal", required=True)
+    defer.add_argument("--plan-digest", required=True)
+    defer.add_argument("--target-pid", action="append", required=True, type=int)
+    defer.add_argument(
+        "--wait-seconds",
+        type=int,
+        default=DEFAULT_WAIT_SECONDS,
+        help=(
+            "bounded time for all reviewed target processes to exit "
+            "(default: {}; maximum: {})"
+        ).format(DEFAULT_WAIT_SECONDS, MAX_WAIT_SECONDS),
+    )
+    defer.set_defaults(handler=_install_defer)
+    for action, handler in (
+        ("deferred-status", _install_deferred_status),
+        ("deferred-cancel", _install_deferred_cancel),
+    ):
+        child = install_commands.add_parser(action)
+        child.add_argument("--journal", required=True)
+        child.add_argument("--plan-digest", required=True)
+        child.add_argument("--job-id", required=True)
+        child.set_defaults(handler=handler)
+    worker = install_commands.add_parser(
+        "deferred-worker", help=argparse.SUPPRESS
+    )
+    worker.add_argument("--request", required=True)
+    worker.add_argument("--request-digest", required=True)
+    worker.set_defaults(handler=_install_deferred_worker)
 
     declare = commands.add_parser(
         "declare", help="append bounded agent-known phase, lineage, correction, or terminal facts"

@@ -35,9 +35,15 @@ _REFERENCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$")
 _SAFE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+ -]{0,63}$")
 _SAFE_CONFIG_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+:-]{0,63}$")
 _SAFE_CLASSIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,31}$")
+_TARGET_SOURCE_RE = re.compile(r"^target_v1_[0-9a-f]{32}$")
 
 LEGACY_SCHEMA_VERSION = "1.0"
-SUPPORTED_SCHEMA_VERSIONS = {LEGACY_SCHEMA_VERSION, SCHEMA_VERSION}
+PREVIOUS_SCHEMA_VERSION = "1.1"
+SUPPORTED_SCHEMA_VERSIONS = {
+    LEGACY_SCHEMA_VERSION,
+    PREVIOUS_SCHEMA_VERSION,
+    SCHEMA_VERSION,
+}
 
 RUNTIME_FAMILIES = {"codex", "claude"}
 RUNTIME_SURFACES = {"cli-interactive", "cli-exec", "desktop", "ide", "unknown"}
@@ -144,8 +150,18 @@ GAP_CODES = {
     "unknown",
 }
 
-SOURCE_IDENTITY_KEYS = {"lineage", "task", "project", "revision", "session", "turn", "agent", "span"}
-IDENTITY_KEYS = {
+SOURCE_IDENTITY_KEYS = {
+    "lineage",
+    "task",
+    "project",
+    "revision",
+    "session",
+    "turn",
+    "agent",
+    "span",
+    "target",
+}
+LEGACY_IDENTITY_KEYS = {
     "lineage_id",
     "task_id",
     "project_id",
@@ -154,6 +170,7 @@ IDENTITY_KEYS = {
     "turn_id",
     "agent_id",
 }
+IDENTITY_KEYS = LEGACY_IDENTITY_KEYS | {"target_id"}
 OBSERVATION_KEYS = {
     "runtime",
     "adapter",
@@ -253,7 +270,7 @@ def validate_durable_event(event: Mapping[str, Any]) -> None:
     _validate_runtime(event["runtime"])
     _validate_adapter(event["adapter"])
     _validate_platform(event["platform"])
-    _validate_identity(event["identity"])
+    _validate_identity(event["identity"], schema_version=schema_version)
     _validate_classification(event["classification"])
     _validate_measurement(event["measurement"])
     _validate_coverage(event["coverage"])
@@ -350,12 +367,21 @@ def _validate_source_identity(value: Any) -> None:
         size = len(raw.encode("utf-8"))
         if size == 0 or size > MAX_SOURCE_VALUE_BYTES or "\x00" in raw:
             raise ContractValidationError("source identity value is empty or exceeds its safe bound")
+        if field == "target" and _TARGET_SOURCE_RE.fullmatch(raw) is None:
+            raise ContractValidationError(
+                "source identity target is not an installer-assigned opaque reference"
+            )
 
 
-def _validate_identity(value: Any) -> None:
+def _validate_identity(value: Any, *, schema_version: str) -> None:
     value = _mapping(value, "identity")
-    _exact_keys(value, IDENTITY_KEYS, "identity")
-    for field in sorted(IDENTITY_KEYS):
+    keys = (
+        LEGACY_IDENTITY_KEYS
+        if schema_version in {LEGACY_SCHEMA_VERSION, PREVIOUS_SCHEMA_VERSION}
+        else IDENTITY_KEYS
+    )
+    _exact_keys(value, keys, "identity")
+    for field in sorted(keys):
         if value[field] is not None:
             _pattern(value[field], _OPAQUE_RE, "identity." + field)
 
@@ -788,5 +814,5 @@ def adapter_versions_are_current(observation: Mapping[str, Any]) -> bool:
 
     return (
         observation.get("adapter", {}).get("version") == ADAPTER_VERSION
-        and RECORDER_VERSION == "0.2.1"
+        and RECORDER_VERSION == "0.2.4"
     )

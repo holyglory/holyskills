@@ -634,6 +634,7 @@ def main() -> int:
     )
     validate_normalized_observation(phase)
     assert phase["source_identity"]["span"] == "phase-1"
+    assert phase["source_identity"]["target"] is None
     values = terminal_emissions(
         session="session-1",
         runtime_family="codex",

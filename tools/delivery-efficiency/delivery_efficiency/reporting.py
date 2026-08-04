@@ -16,7 +16,8 @@ TOKEN_KEYS = ("input", "cached_input", "output", "reasoning_output", "tool", "ot
 PHASES = ("planning", "implementation", "testing", "deployment", "reporting", "unattributed")
 ACTIVITIES = ("model-active", "tool-active", "external-wait", "user-wait", "blocked-wait", "unattributed")
 ACTIVE_ACTIVITIES = ("model-active", "tool-active")
-SUPPORTED_EVENT_SCHEMA_VERSIONS = ("1.0", "1.1")
+SUPPORTED_EVENT_SCHEMA_VERSIONS = ("1.0", "1.1", "1.2")
+EXTENDED_EVENT_SCHEMA_VERSIONS = {"1.1", "1.2"}
 _CLOCK_DOMAIN_RE = re.compile(r"^clock_[0-9a-f]{32}$")
 _MONOTONIC_NS_RE = re.compile(r"^(0|[1-9][0-9]{0,29})$")
 _AUTHORITATIVE_TIMING_PROVENANCE = "runtime-observed"
@@ -381,7 +382,11 @@ def _schema_compatibility(counts: Dict[str, int]) -> str:
         return "v1.0-compatible-metadata-unavailable"
     if versions == {"1.1"}:
         return "v1.1"
-    return "mixed-v1.0-v1.1-compatible"
+    if versions == {"1.2"}:
+        return "v1.2"
+    if versions == {"1.1", "1.2"}:
+        return "mixed-v1.1-v1.2-compatible"
+    return "mixed-v1.0-current-compatible"
 
 
 def _tokens_by_phase(events: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -735,7 +740,10 @@ def _task_state_with_corrections(
         if event.get("event") != "correction":
             continue
         correction = event.get("payload", {}).get("correction")
-        if event.get("schema_version") != "1.1" or not isinstance(correction, dict):
+        if (
+            event.get("schema_version") not in EXTENDED_EVENT_SCHEMA_VERSIONS
+            or not isinstance(correction, dict)
+        ):
             legacy_unsupported += 1
             correction_items.append(
                 {
@@ -853,7 +861,7 @@ def _terminal_extensions(
             "evidence": None,
         }
     _, payload_event = terminal_state
-    if payload_event.get("schema_version") != "1.1":
+    if payload_event.get("schema_version") not in EXTENDED_EVENT_SCHEMA_VERSIONS:
         return {
             "availability": "unavailable-v1.0",
             "task_metadata": None,
@@ -870,7 +878,10 @@ def _terminal_extensions(
 
 
 def _lineage_link(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if event.get("event") != "lineage.link" or event.get("schema_version") != "1.1":
+    if (
+        event.get("event") != "lineage.link"
+        or event.get("schema_version") not in EXTENDED_EVENT_SCHEMA_VERSIONS
+    ):
         return None
     payload = event.get("payload", {})
     link = payload.get("link")
@@ -1044,6 +1055,7 @@ def summarize(events: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             {
                 "task_id": task_id,
                 "lineage_id": native_lineages.get(task_id),
+                "target_id": identity_event.get("identity", {}).get("target_id"),
                 "resolved_lineage_id": effective_lineage_id,
                 "linked_work": {
                     "availability": (
@@ -1051,7 +1063,9 @@ def summarize(events: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
                         if link is not None
                         else (
                             "unavailable-v1.0"
-                            if "1.1" not in task_schema_versions
+                            if not EXTENDED_EVENT_SCHEMA_VERSIONS.intersection(
+                                task_schema_versions
+                            )
                             else "available-v1.1-no-link"
                         )
                     ),
@@ -1139,7 +1153,7 @@ def summarize(events: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     tasks.sort(key=lambda item: item["task_id"])
     all_schema_versions = _schema_version_counts(list(unique.values()))
     return {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "event_schema_versions": all_schema_versions,
         "event_schema_compatibility": _schema_compatibility(all_schema_versions),
         "task_count": len(tasks),
@@ -1152,7 +1166,7 @@ def summarize(events: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             "phase_tokens": "sum only runtime-observed counters carrying their own runtime-observed or agent-declared phase; inferred or unknown phase claims remain unattributed and tokens are never allocated by elapsed time",
             "runtime_native_duration_sum": "arithmetic sum of runtime-observed host duration_ns values after same-span hook/OTLP deduplication; contradictory duration, definite success, definite tool category, or attribution makes affected sums unknown; not wall time or an interval union",
             "agent_active_time": "same-clock active-span unions per opaque agent plus a separate root-or-unidentified bucket; the summed per-agent value preserves concurrent work and is not interchangeable with wall time",
-            "corrections": "append-only later v1.1 corrections alter effective terminal or requirement state while retaining original and correction event references; v1.0 correction events lack target metadata and are unavailable",
+            "corrections": "append-only later v1.1+ corrections alter effective terminal or requirement state while retaining original and correction event references; v1.0 correction events lack target metadata and are unavailable",
             "recorder_overhead": "complete total only when every task event has an authoritative runtime-observed recorder_overhead_ns; otherwise total is null and observed coverage remains explicit",
             "unknown": "null; never reconstructed or zero-filled",
         },

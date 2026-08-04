@@ -43,6 +43,8 @@ CANARIES = {
     "file": "/secret/FILE-CANARY.txt",
 }
 OPAQUE_BINDING = "binding_v1_codex_{}_{}".format("a" * 32, "b" * 32)
+TARGET_A = "target_v1_" + "a" * 32
+TARGET_B = "target_v1_" + "b" * 32
 
 
 def observations(emissions):
@@ -83,6 +85,7 @@ def assert_observation_shape(testcase, observation):
             "turn",
             "agent",
             "span",
+            "target",
         },
     )
     testcase.assertEqual(
@@ -295,7 +298,9 @@ class HookTranslatorTests(unittest.TestCase):
             "version": CANARIES["email"],
         }
         original = copy.deepcopy(source)
-        emissions = translate_hook(source, surface="desktop")
+        emissions = translate_hook(
+            source, surface="desktop", runtime_target=TARGET_A
+        )
         self.assertEqual(source, original)
         self.assertEqual(len(emissions), 1)
         event = emissions[0][0]
@@ -305,9 +310,25 @@ class HookTranslatorTests(unittest.TestCase):
         self.assertEqual(event["source_identity"]["task"], "turn-456")
         self.assertEqual(event["source_identity"]["session"], "thread-123")
         self.assertEqual(event["source_identity"]["turn"], "turn-456")
+        self.assertEqual(event["source_identity"]["target"], TARGET_A)
         self.assertIsNone(event["runtime"]["version"])
         assert_observation_shape(self, event)
         assert_private(self, emissions)
+
+    def test_runtime_target_is_validated_and_scopes_hook_dedupe_keys(self):
+        source = {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "target-session",
+            "turn_id": "target-turn",
+        }
+        first = translate_hook(source, runtime_target=TARGET_A)
+        replay = translate_hook(copy.deepcopy(source), runtime_target=TARGET_A)
+        other = translate_hook(copy.deepcopy(source), runtime_target=TARGET_B)
+        self.assertEqual(first[0][1], replay[0][1])
+        self.assertNotEqual(first[0][1], other[0][1])
+        self.assertEqual(first[0][0]["source_identity"]["target"], TARGET_A)
+        with self.assertRaises(MalformedSourceEvent):
+            translate_hook(source, runtime_target="/private/codex-home")
 
     def test_compaction_and_session_start_never_create_tasks(self):
         compact = {
@@ -609,6 +630,7 @@ class OtlpTranslatorTests(unittest.TestCase):
         self.assertEqual(usage["coverage"]["tokens"], "complete")
         self.assertEqual(usage["runtime"]["surface"], "cli-exec")
         self.assertEqual(usage["runtime"]["version"], "1.2.3")
+        self.assertIsNone(usage["source_identity"]["target"])
         assert_private(self, first)
 
     def test_non_counter_prompt_and_tool_events_are_ignored(self):

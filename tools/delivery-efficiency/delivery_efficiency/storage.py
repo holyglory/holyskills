@@ -45,6 +45,7 @@ _IDENTITY_FIELD_MAP = {
     "session": "session_id",
     "turn": "turn_id",
     "agent": "agent_id",
+    "target": "target_id",
 }
 _OPAQUE_KINDS = set(SOURCE_IDENTITY_KEYS) | {"span", "parent-span"}
 _RUNTIME_SCOPED_IDENTITY_KINDS = {"lineage", "task", "session", "turn", "agent", "span"}
@@ -723,6 +724,7 @@ class Recorder:
                 connection.execute("BEGIN IMMEDIATE")
                 identity = self._bind_exact_runtime_turn(connection, snapshot, identity)
                 identity = self._bind_unique_active_otel_turn(connection, snapshot, identity)
+                identity = self._bind_codex_runtime_target(connection, snapshot, identity)
                 identity, collapse_row, source_key_hmac, event_id = self._bind_claude_session_task(
                     connection,
                     snapshot,
@@ -891,6 +893,16 @@ class Recorder:
             raise ContractValidationError("raw span source identity is only valid for span events")
         return identity
 
+    @staticmethod
+    def _current_identity(
+        identity: Mapping[str, Optional[str]],
+    ) -> Dict[str, Optional[str]]:
+        """Normalize an immutable legacy identity for a newly written event."""
+
+        current = dict(identity)
+        current.setdefault("target_id", None)
+        return current
+
     def _latest_task_identity_for_session(
         self,
         connection: sqlite3.Connection,
@@ -915,7 +927,7 @@ class Recorder:
             return None
         if not include_terminal and self._task_has_terminal(connection, task_id):
             return None
-        return dict(event["identity"])
+        return self._current_identity(event["identity"])
 
     def _task_identity_by_id(
         self,
@@ -934,7 +946,7 @@ class Recorder:
         event = self._verify_stored_event(row["event_json"], row["event_hmac"])
         if event["runtime"]["family"] != runtime_family:
             return None
-        return dict(event["identity"])
+        return self._current_identity(event["identity"])
 
     def _task_has_terminal(
         self, connection: sqlite3.Connection, task_id: str
@@ -979,7 +991,7 @@ class Recorder:
         if len(rows) != 1:
             return identity
         task_start = self._verify_stored_event(rows[0]["event_json"], rows[0]["event_hmac"])
-        return dict(task_start["identity"])
+        return self._current_identity(task_start["identity"])
 
     def _bind_exact_runtime_turn(
         self,
@@ -1019,6 +1031,81 @@ class Recorder:
             return identity
         bound = dict(identity)
         bound["task_id"] = start["identity"]["task_id"]
+        return bound
+
+    def _bind_codex_runtime_target(
+        self,
+        connection: sqlite3.Connection,
+        snapshot: Mapping[str, Any],
+        identity: Dict[str, Optional[str]],
+    ) -> Dict[str, Optional[str]]:
+        """Validate hook targets and inherit them onto safely bound Codex usage.
+
+        The target source reference exists only in a managed hook request. OTel
+        may inherit its installation-keyed opaque value from a task start only
+        after the existing task/session/turn correlation has succeeded. A
+        missing or ambiguous start remains honestly unattributed.
+        """
+
+        if snapshot["runtime"]["family"] != "codex":
+            return identity
+        adapter = snapshot["adapter"]["name"]
+        is_hook = adapter == "codex-hooks"
+        is_usage = adapter == "codex-otel" and snapshot["event"] == "usage.observed"
+        task_id = identity.get("task_id")
+        session_id = identity.get("session_id")
+        turn_id = identity.get("turn_id")
+        if not (is_hook or is_usage) or task_id is None or session_id is None:
+            return identity
+
+        rows = connection.execute(
+            "SELECT event_json, event_hmac FROM events "
+            "WHERE event_name = 'task.start' AND task_id = ? ORDER BY sequence",
+            (task_id,),
+        ).fetchall()
+        if not rows:
+            return identity
+
+        matching: List[Mapping[str, Any]] = []
+        mismatched = False
+        for row in rows:
+            start = self._verify_stored_event(row["event_json"], row["event_hmac"])
+            start_identity = start["identity"]
+            if (
+                start["runtime"]["family"] == "codex"
+                and start_identity.get("session_id") == session_id
+                and start_identity.get("turn_id") == turn_id
+            ):
+                matching.append(start)
+            else:
+                mismatched = True
+
+        if not matching:
+            return identity
+        if mismatched and is_hook:
+            raise ContractValidationError(
+                "Codex task identity crossed a session or turn boundary"
+            )
+        established_targets = {
+            start["identity"].get("target_id")
+            for start in matching
+            if start["identity"].get("target_id") is not None
+        }
+        if len(established_targets) > 1:
+            raise ContractValidationError(
+                "Codex task start has conflicting runtime targets"
+            )
+        established = next(iter(established_targets), None)
+        supplied = identity.get("target_id")
+        if is_hook and supplied is not None and established is not None:
+            if not hmac.compare_digest(supplied, established):
+                raise ContractValidationError(
+                    "Codex hook runtime target conflicts with its task start"
+                )
+        if established is None:
+            return identity
+        bound = dict(identity)
+        bound["target_id"] = established
         return bound
 
     def _latest_claude_task_start(
@@ -1320,7 +1407,7 @@ class Recorder:
                 return {
                     "event_id": event["event_id"],
                     "sequence": event["sequence"],
-                    "identity": dict(event["identity"]),
+                    "identity": self._current_identity(event["identity"]),
                     "runtime": dict(event["runtime"]),
                     "adapter": dict(event["adapter"]),
                 }

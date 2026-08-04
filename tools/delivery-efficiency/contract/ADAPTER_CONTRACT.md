@@ -1,4 +1,4 @@
-# Delivery-efficiency adapter contract v1.1
+# Delivery-efficiency adapter contract v1.2
 
 The shared recorder owns event validation, private identity derivation, clocks,
 SQLite spooling, `EfficiencyLedger.jsonl` projection, recovery, and installation
@@ -30,14 +30,16 @@ additional properties:
 
 - `adapter-event-v1.schema.json` is legacy schema `1.0`. Existing rows remain
   valid and readable, but the recorder never writes new `1.0` rows.
-- `adapter-event-v1.1.schema.json` is current schema `1.1`. Recorder `0.2.1`
-  and adapter `0.2.1` write only this shape.
+- `adapter-event-v1.1.schema.json` is legacy schema `1.1`. Existing rows remain
+  valid and readable, but the recorder never writes new `1.1` rows.
+- `adapter-event-v1.2.schema.json` is current schema `1.2`. Recorder `0.2.4`
+  with adapter `0.2.3` writes only this shape.
 
-One ledger may contain validated immutable `1.0` history followed by new `1.1`
-rows. Reporting states per-version event counts and whether metadata is
-unavailable for a `1.0` task; it does not fabricate new fields. Upgrade does
-not rewrite, reinterpret, or discard earlier bytes. An unsupported version or
-a row that mixes version shapes fails closed. Decimal strings carry counters
+One ledger may contain validated immutable `1.0` and `1.1` history followed by
+new `1.2` rows. Reporting states per-version event counts and whether metadata
+is unavailable for an older task; it does not fabricate new fields. Upgrade
+does not rewrite, reinterpret, or discard earlier bytes. An unsupported version
+or a row that mixes version shapes fails closed. Decimal strings carry counters
 and nanoseconds so a consumer cannot lose precision. `null` means unobserved;
 zero is permitted only when the authoritative source explicitly reported zero.
 
@@ -49,6 +51,21 @@ own provenance. Linked-work `task_kind` (continuation, retry, rollback, defect
 repair, or rework) is independent of stable `task_type` (implementation,
 diagnosis, review, audit, research, documentation, operations, mixed, or
 other).
+
+Schema `1.2` adds nullable durable `identity.target_id` so evidence from one
+configured runtime target cannot satisfy activation checks for another target.
+The managed Codex hook carries a bounded transient target reference whose
+format is `target_v1_` followed by 32 lowercase hexadecimal characters. The
+core derives `target_id` with its installation-local HMAC and never persists
+the source reference. Codex OTLP does not accept a target attribute: its usage
+inherits a target only after the existing exact task/session/turn correlation,
+or the existing single-active-task correlation when no turn identifier exists,
+selects one matching hook task. Missing or ambiguous correlation remains
+`null`; a hook target that conflicts with its task start fails closed. Claude,
+wrapped-exec, and agent-declaration observations supply no independent target.
+Task-bound declarations inherit the recorded task identity, including its
+target when present; unrelated Claude and wrapped-exec events remain `null`.
+Immutable `1.0` and `1.1` rows have no target field and are never rewritten.
 
 The phase and activity state are independent. Their attribution provenance is
 independent of measurement provenance. Coverage is stated per dimension and

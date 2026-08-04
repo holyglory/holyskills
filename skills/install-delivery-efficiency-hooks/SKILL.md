@@ -17,19 +17,24 @@ settings editor.
 - Name every Codex and Claude home with an explicit absolute path. Discover
   desktop, sandbox, OS-account, native-Windows, and WSL homes separately;
   never treat the invoking shell's `HOME` as proof of another runtime's home.
-- Treat recorder installation or retirement, Codex feature activation, hook
-  trust, and credential generation or rotation as security-posture decisions.
-  Before any of them, apply `security-assumptions.md` from the durable project root
-  the user selected to authorize this user-wide installation, normally the
-  canonical repository clone. Do not borrow assumptions from whichever project
-  happens to be active. The assumptions must explicitly cover every named home
-  and its use across projects. If no durable root has been selected, ask the
-  user to choose one. If its file is absent or insufficient, ask one
-  plain-language baseline covering users and operators; runtime environment and
-  ownership; asset/data sensitivity; credible adversaries and misuse; trust
-  boundaries; necessary and explicitly unnecessary gates; acceptable risks;
-  and review triggers. Record the user's confirmed answers before enabling or
-  trusting hooks; never fill gaps with a generic threat model.
+- A first recorder installation or retirement, Codex feature activation, hook
+  trust, and credential generation or rotation can change security posture. A
+  verified non-rotating repair that preserves the same named homes, endpoint
+  boundary, credential, controls, and documented posture is routine execution,
+  not a new posture decision. Apply `security-assumptions.md` from the durable
+  project root the user selected for this user-wide installation, normally the
+  canonical repository clone; do not borrow assumptions from whichever project
+  happens to be active. The record must cover every named home and its
+  cross-project use.
+  Use its confirmed answers and read-only discovery first. Ask only when a
+  concrete pending control decision depends on an unresolved assumption and a
+  wrong answer could select unnecessary controls, omit a necessary control,
+  expand the work, or cause meaningful rework. Ask the smallest concise set of
+  material questions, with detail proportional to impact; cover the full
+  baseline only when that decision materially depends on every area. If no
+  durable root has been selected and one is needed for a pending decision, ask
+  the user to choose one. Record confirmed answers before changing posture;
+  never fill gaps with a generic threat model.
 - Preserve unrelated hooks, settings, skills, telemetry exporters, and runtime
   homes. Stop on a conflicting OTel owner or edited managed block instead of
   overwriting it.
@@ -135,38 +140,130 @@ read-only command. Review and preserve those artifacts accordingly.
 
 Review the printed `journal_path`, `plan_sha256`, source and target digests,
 state directory, port provenance, target actions, and complete retained-target
-set. Do not apply a plan whose paths or ownership differ from the request.
+set. Classify which runtime targets actually require reload from the changed
+actions. A runtime requires the one shutdown/reopen boundary only when the plan
+changes its handler bytes, Python binding, OTel endpoint or credential,
+managed environment, or another host-loaded setting. A recorder-only install,
+version, or settings-root change with identical host configuration does not.
+Do not proceed with a plan whose paths, ownership, affected-target set, or
+reload classification differs from the request.
 
-## 4. Apply and verify the reviewed plan
+Recorder `0.2.4` and later route managed Codex and Claude handlers through the
+version-neutral `<state>/recorder.py` launcher. A compatible upgrade from
+recorder `0.1.2` or later preserves the same loopback host, bearer credential,
+and port when rotation was not requested; it performs bounded authenticated
+receiver retirement and rebind rather than signaling a PID. The `0.2.3` to
+`0.2.4` migration changes existing handler commands once, so those hosts need
+one reload and changed Codex hooks need one host review. A later compatible
+recorder-only upgrade must render the same host configuration, leave those
+actions unchanged, and require neither a host restart nor renewed hook trust.
+Credential changes and upgrades from a pre-`0.1.2` recorder retain the reviewed
+port-rotation behavior.
 
-Before applying an update that changes an active endpoint, credential, or
-installed runtime, stop submitting work while the old receiver remains alive,
-wait at least the configured exporter interval (five seconds by default) as a
-best-effort export opportunity, then fully exit every affected Codex and Claude
-process. This does not prove a flush. Apply from a separate shell or unaffected
-runtime. If this skill runs inside a target process, hand off the digest-bound
-commands and report restart/activation pending; never claim the same session
-adopted the new OTel environment.
+## 4. Arm the agent-owned deferred install
 
-Use the exact journal and digest emitted by planning:
+The agent owns target-process discovery. From the changed runtime actions,
+identify every live same-user Codex or Claude process that must exit, including
+background helpers. Use the privacy-bounded inventory method from step 1 and
+pass each exact live PID once; never ask the user to find a PID, inspect a
+process list, open Terminal, or copy a command. Do not persist a full command
+line or environment. Platform-specific process identity and detached-worker
+behavior are defined in
+[platform-prerequisites.md](references/platform-prerequisites.md).
+
+Stop submitting new work to the affected runtimes and leave the old receiver
+alive for at least the configured exporter interval—five seconds by default—as
+a best-effort export opportunity. This does not prove a flush. After the user
+approves the reviewed plan, the agent runs the canonical recorder itself:
 
 ```text
-<python> <repo>/tools/delivery-efficiency/recorder.py install apply
-  --journal <absolute-journal.json> --plan-digest <plan_sha256>
-<python> <repo>/tools/delivery-efficiency/recorder.py install verify
-  --journal <absolute-journal.json> --plan-digest <plan_sha256>
+<python> <repo>/tools/delivery-efficiency/recorder.py install defer
+  --journal <absolute-journal.json>
+  --plan-digest <plan_sha256>
+  --target-pid <exact-live-pid>
+  [--target-pid <another-exact-live-pid> ...]
+  [--wait-seconds 86400]
 ```
 
+`--target-pid` is repeatable and requires at least one affected live process.
+The wait defaults to 86400 seconds and accepts only 1 through 604800 seconds.
+The command creates one private digest-bound request, launches the one-shot
+worker, and waits for its ready handshake. It succeeds only by emitting exactly
+one bounded `DEFERRED_INSTALL_ARMED` receipt containing a nonsecret `job_id`,
+the private status-report `filename`, `status="armed"`, target count, and wait
+limit. It never emits a PID, path, credential, command, environment value, or
+raw error. `armed` proves only that the detached worker owns the request and
+exact process identities; it is not installation or verification success.
+
+Only after that ready receipt may the agent ask the user to fully close each
+affected Codex and Claude host once. Closing a window while its reviewed
+background process remains alive is not an exit. The detached worker never
+signals a PID. It waits for the exact captured process instances to end,
+rejects detected PID reuse or same-image relaunch races, reopens the exact
+journal with the reviewed digest, and invokes the existing transactional
+apply-and-verify path. Drift, collision, timeout, cancellation, or an
+unclassifiable process fails closed.
+
+If an unaffected agent or host-owned observer remains available, it may poll
+the saved job while the affected hosts are closed. Otherwise the first action
+of the reopened agent is to read the same saved status before doing any other
+work:
+
+```text
+<python> <repo>/tools/delivery-efficiency/recorder.py install deferred-status
+  --journal <absolute-journal.json>
+  --plan-digest <plan_sha256>
+  --job-id <job_id>
+```
+
+The command emits exactly one bounded `DEFERRED_INSTALL_STATUS` receipt naming
+the same private report filename. The private canonical report binds the job
+and plan and records one of `verified`,
+`cancelled`, `expired`, `target-race`, `failed-unapplied`,
+`failed-rolled-back`, `rollback-blocked`, or `worker-lost`, plus bounded phase,
+verification, receiver-health, rollback, and failure-code fields. It contains
+no paths, PIDs, target references, credentials, source content, commands, or
+raw exceptions. If the user cancels before apply, the agent may invoke
+`install deferred-cancel` with the same journal, digest, and job ID; never ask
+the user to run it. Cancellation after transactional apply begins does not
+interrupt or silently roll back that transaction.
+
+Keep the worker one-shot and nonpersistent. An OS reboot ends it and requires
+the agent to create a fresh plan and rearm without asking the user to open
+Terminal. If a strict receipt for the exact job and plan digest proves that no
+mutation occurred, `deferred-status` may report that saved categorical failure
+even when the reboot changed volatile filesystem device identity. Treat this
+as failure evidence only; it never authorizes apply, trust review, activation,
+or success. After the fresh armed receipt, ask the user only to repeat the
+required close/reopen boundary.
+
+After the ready receipt, tell the user to close the named affected hosts, wait
+the short settling interval announced by the agent, and reopen them once. The
+user never opens Terminal, watches a private file, or copies/runs installer
+commands in the normal path. The reopened agent must read deferred status
+before trust review, activation, or any ordinary work. Treat only a saved
+`status="verified"` receipt with `verification_ok=true` and
+`receiver_healthy=true` as permission to continue. A detectable premature
+matching relaunch fails closed as `target-race`. A nonverified receipt remains
+incomplete: explain its bounded cause and use the recovery section only when
+explicit recovery is needed. Do not fall back to publishing manual commands.
+
 Do not hand-edit `hooks.json`, `config.toml`, Claude `settings.json`, the
-installed runtime, or the cold ledger. Keep the transaction until activation
-is proven so the exact reviewed state can be rolled back.
+installed runtime, private handoff files, or the cold ledger. Keep the
+transaction until activation is proven so its exact reviewed state remains
+recoverable.
 
-## 5. Restart and activate each host
+## 5. Reopen once and complete host activation
 
-Fully exit every configured runtime process after apply, then start a new
-session. A window close that leaves a background process alive is not a
-restart. This is mandatory after a port, credential, settings, hook, or runtime
-change.
+After the ready handshake, the user closes only the runtime targets classified
+as reload-required, waits the agent-announced short settling interval, and
+reopens them once. The approve/close/reopen cycle happens once. The reopened
+agent reads the saved status receipt and requires its verified result before
+doing anything else. An optional unaffected observer may have
+confirmed it earlier, but the workflow never requires one. Do not restart an
+unchanged host merely because the recorder version or immutable install root
+changed. The new session, not the closed session, adopts changed handler,
+Python, endpoint, credential, environment, or host-loaded settings.
 
 Claude Code loads the installed user hooks at session start and has no
 Codex-style trust grant. Inspect `/hooks` and `/status` to confirm the active
@@ -185,66 +282,104 @@ claim trust from filesystem installation alone. Never invoke or recommend
 
 ## 6. Prove fresh task correlation
 
-Durable events identify runtime family, not the configured home. Verify homes
-one at a time: fully exit every other client of the same family, capture a
-baseline immediately before launching only the named target with its exact home
-environment, submit one fresh harmless prompt, wait for its normal stop, and
-then inspect only events after that baseline. If other same-family clients
-cannot be quiesced, per-home activation remains unproven.
-
-Before capturing the baseline, use the same privacy-bounded process inspection
-as inventory to confirm that no other same-family client remains. If home
-identity cannot be distinguished reliably, stop every same-family client; do
-not infer isolation from closed windows alone.
-
-Capture the baseline with the reviewed journal and digest:
+For Codex, start one agent-owned watch for every reviewed target in the plan.
+Use repeatable `--target <name>` only when the user requested a subset; without
+it the helper selects all reviewed Codex homes.
 
 ```text
 <python> <skill>/scripts/activation_status.py \
   --journal <absolute-journal.json> \
   --plan-digest <plan_sha256> \
-  --runtime <codex-or-claude>
+  --runtime codex \
+  --watch \
+  --wait-seconds 300 \
+  [--target <reviewed-name> ...]
 ```
 
-Retain the returned `max_sequence`, launch and exercise only that home, then
-request the fresh receipt:
-
-```text
-<python> <skill>/scripts/activation_status.py \
-  --journal <absolute-journal.json> \
-  --plan-digest <plan_sha256> \
-  --runtime <codex-or-claude> \
-  --after-sequence <baseline-sequence> \
-  --wait-seconds 15 \
-  --require-active
-```
+Start the watch before asking the user to act. Then tell the user only to start
+one fresh harmless task in each selected Codex instance. The instances may run
+concurrently. Do not ask the user to open Terminal, copy a sequence, quit or
+isolate another Codex app, or perform baseline choreography. The helper owns
+the post-start sequence baseline and watches all selected homes for at most 900
+seconds.
 
 The helper binds the current canonical recorder source to the reviewed journal,
 re-verifies installed targets and receiver health, reads only the recorder's
-integrity-checked authoritative snapshot, and emits no task identities or raw
-events. Success requires a new task start, a new authoritative nonempty token
-observation, and hook-only lifecycle evidence bound to the same task. For
-Claude, hook and OTLP prompt events deliberately deduplicate into one task
-start, so the receipt also requires a canonical Stop, StopFailure, or subagent
-event that OTLP alone cannot create. Recorder `status`, installed config bytes,
-unrelated task events, an unbound or empty token event, a terminal declaration,
-or a hook listed in a file is not enough. Diagnose a failure in this order:
+integrity-checked authoritative snapshot, and derives expected opaque target
+identities in memory from the exact reviewed plan and private installed
+credential. A Codex home is active only when one post-baseline task has a
+target-bound hook `task.start`, target-bound hook evidence, and a nonempty
+provider-native `codex-otel` usage observation with runtime-observed provenance
+on that same target and task. A missing, null, legacy, or different target on
+usage cannot activate the home.
 
-1. Runtime fully restarted after apply.
+The helper writes the complete bounded result under the recorder state's
+private `activation-reports/` directory and emits exactly one concise
+`REPORT_SAVED` receipt naming the file, status, active and pending counts,
+SHA-256, and byte count. The report contains reviewed target names and bounded
+counts only—never home paths, raw events, task/session/event identities, target
+references, source content, or credentials. A timeout still saves the partial
+report and returns nonzero. Treat only `status=active` with every selected
+target active as per-home proof.
+
+Installer apply, verify, and rollback remain exact. For activation
+inspection only, a changed Codex `config.toml` action's whole-file hash drift
+may conform when the target remains a safe regular no-link file, its managed
+OTel block is byte-exact—including reviewed newline encoding—for the reviewed
+installed settings, and supported single-line TOML outside that block has no
+competing OTel definition. Multiline-string syntax outside the block and every
+other action or malformed, duplicate, missing, or edited ownership remain
+fail-closed. Target-aware hook and OTel evidence requires recorder `0.2.3` and
+schema `1.2`. A legacy Codex installation may still produce honest fresh
+family-level evidence, but the report marks every requested home unproven and
+returns nonzero; never assign family events to homes by timing or user action.
+Upgrade through a new reviewed plan to obtain target-aware proof. Claude remains
+on its independent family-level workflow; do not use or claim Codex target
+attribution for Claude.
+
+Recorder `status`, installed config bytes, unrelated task events, an unbound,
+empty, null-target, or cross-target usage event, a terminal declaration, or a
+hook listed in a file is not enough. Diagnose a failure in this order:
+
+1. Every reload-required runtime reopened once after the settling interval, and
+   its reopened agent validated the verified deferred receipt before other work.
 2. Exact runtime home selected.
 3. Codex hook reviewed and trusted, or Claude settings source active.
 4. Hooks feature and higher-precedence policy/settings.
 5. Receiver health, endpoint/credential rotation, and bounded runtime gaps.
-6. Per-home process isolation and fresh task/OTLP correlation rather than
-   concurrent or historical events.
+6. Fresh same-target task/hook/OTLP correlation rather than historical,
+   family-only, null-target, or cross-target events.
 
 Do not declare complete while a requested runtime lacks fresh task-bound
 evidence. Report installed and activated targets separately, along with
 versions, the reviewed plan digest, health, verification evidence, remaining
-manual trust/restart steps, any per-home attribution limitation, and the exact
-rollback command. Keep secrets and raw telemetry out of the handoff.
+manual trust/restart steps, any per-home attribution limitation, the deferred
+receipt filename and digest, and the available recovery reference. Keep secrets
+and raw telemetry out of the handoff.
 
-## 7. Verify rollback when it is used
+## 7. Keep Claude activation independent
+
+The deferred receipt proves installation and receiver health for every target
+in its exact plan, not fresh Claude task correlation. Claude remains on its
+independent family-level activation workflow. Use its active settings sources,
+hooks, and fresh task-bound evidence; never infer Claude activation from the
+Codex concurrent watch or from successful installation alone.
+
+## 8. Recovery only: direct installer commands
+
+The commands in this section are recovery interfaces for an agent or operator
+diagnosing a failed/lost deferred job. They are never the normal user journey,
+never a fallback shown after `install defer` fails, and never instructions for
+the user to open Terminal. Reopen the exact private deferred status first. Use
+direct apply or verify only when the reviewed recovery state specifically calls
+for it:
+
+```text
+<python> <repo>/tools/delivery-efficiency/recorder.py install apply
+  --journal <absolute-journal.json> --plan-digest <plan_sha256>
+<python> <repo>/tools/delivery-efficiency/recorder.py install verify
+  --journal <absolute-journal.json> --plan-digest <plan_sha256>
+```
 
 Run rollback only against the exact reviewed transaction while its installed
 targets still match:

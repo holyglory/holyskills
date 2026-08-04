@@ -153,6 +153,7 @@ class HookTranslatorTests(unittest.TestCase):
         self.assertEqual(event["payload"]["task_kind"], "primary")
         self.assertEqual(event["source_identity"]["lineage"], SESSION)
         self.assertEqual(event["source_identity"]["session"], SESSION)
+        self.assertIsNone(event["source_identity"]["target"])
         self.assertIn(PROMPT_ID, event["source_identity"]["task"])
         self.assertEqual(
             event["source_identity"]["turn"], event["source_identity"]["task"]
@@ -680,6 +681,7 @@ class OtlpTranslatorTests(unittest.TestCase):
         self.assertEqual(usage["coverage"]["tokens"], "complete")
         self.assertEqual(usage["payload"]["source_event"], "otel_api")
         self.assertEqual(usage["source_identity"]["session"], SESSION)
+        self.assertIsNone(usage["source_identity"]["target"])
         self.assertIsNone(usage["source_identity"]["task"])
         self.assertEqual(usage["source_identity"]["turn"], PROMPT_ID)
         self.assertEqual(usage["runtime"]["version"], "2.1.220")

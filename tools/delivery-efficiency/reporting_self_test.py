@@ -140,6 +140,14 @@ def event_v11(event_id: str, sequence: int, kind: str, mono: int, **overrides):
     return value
 
 
+def event_v12(event_id: str, sequence: int, kind: str, mono: int, **overrides):
+    value = event_v11(event_id, sequence, kind, mono, **overrides)
+    value["schema_version"] = "1.2"
+    value["identity"] = dict(value["identity"])
+    value["identity"]["target_id"] = "id_" + "8" * 32
+    return value
+
+
 def set_task_identity(
     value, *, task_id: str, lineage_id: str, agent_id=None
 ):
@@ -574,9 +582,10 @@ def main() -> int:
     ]
     assert conflict["conflicting_span_count"] == "1"
 
-    # Mixed immutable v1.0 history and current v1.1 events remain reportable.
-    # V1.1 adds exact lineage, terminal metadata, corrections, and evidence;
-    # those fields remain explicitly unavailable for the v1.0 task.
+    # Mixed immutable v1.0/v1.1 history and current v1.2 events remain
+    # reportable. V1.1 adds exact lineage, terminal metadata, corrections, and
+    # evidence; v1.2 adds target identity. Those fields remain explicitly
+    # unavailable when their defining schema predates them.
     task_a = "id_" + "a" * 32
     lineage_a = "id_" + "b" * 32
     task_b = "id_" + "c" * 32
@@ -613,9 +622,9 @@ def main() -> int:
         item["measurement"]["recorder_overhead_ns"] = "1"
         return item
 
-    current_start = current(event_v11("20" * 16, 4, "task.start", 40))
+    current_start = current(event_v12("20" * 16, 4, "task.start", 40))
     link = current(
-        event_v11(
+        event_v12(
             "21" * 16,
             5,
             "lineage.link",
@@ -641,7 +650,7 @@ def main() -> int:
         measurement_provenance: str = "runtime-observed",
     ):
         item = current(
-            event_v11(
+            event_v12(
                 event_id,
                 sequence,
                 "usage.observed",
@@ -691,7 +700,7 @@ def main() -> int:
         agent_id=None,
     ):
         item = current(
-            event_v11(
+            event_v12(
                 event_id,
                 sequence,
                 kind,
@@ -754,7 +763,7 @@ def main() -> int:
     ]
 
     requirement = current(
-        event_v11(
+        event_v12(
             "40" * 16,
             16,
             "requirement.status",
@@ -789,7 +798,7 @@ def main() -> int:
         )
     )
     requirement_correction = current(
-        event_v11(
+        event_v12(
             "42" * 16,
             18,
             "correction",
@@ -808,7 +817,7 @@ def main() -> int:
         "provenance": "agent-declared",
     }
     terminal_correction = current(
-        event_v11(
+        event_v12(
             "43" * 16,
             19,
             "correction",
@@ -870,9 +879,9 @@ def main() -> int:
         terminal_correction,
     ]
     mixed_report = summarize(mixed_events)
-    assert mixed_report["schema_version"] == "1.1"
-    assert mixed_report["event_schema_compatibility"] == "mixed-v1.0-v1.1-compatible"
-    assert mixed_report["event_schema_versions"] == {"1.0": 3, "1.1": 16}
+    assert mixed_report["schema_version"] == "1.2"
+    assert mixed_report["event_schema_compatibility"] == "mixed-v1.0-current-compatible"
+    assert mixed_report["event_schema_versions"] == {"1.0": 3, "1.1": 1, "1.2": 15}
     by_task = {item["task_id"]: item for item in mixed_report["tasks"]}
     legacy_summary = by_task[task_a]
     current_summary = by_task[task_b]
@@ -881,6 +890,7 @@ def main() -> int:
     assert legacy_summary["recorder_overhead"]["total_ns"] == "9"
 
     assert current_summary["resolved_lineage_id"] == lineage_a
+    assert current_summary["target_id"] == "id_" + "8" * 32
     assert current_summary["linked_work"] == {
         "availability": "available-v1.1",
         "link_event_id": link["event_id"],

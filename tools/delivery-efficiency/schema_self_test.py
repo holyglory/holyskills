@@ -27,7 +27,7 @@ def expect_contract_error(callback, label):
     raise AssertionError(label)
 
 
-def durable_from_observation(observation, *, schema_version="1.1"):
+def durable_from_observation(observation, *, schema_version="1.2"):
     """Build one exact durable envelope without introducing private identity."""
 
     value = copy.deepcopy(observation)
@@ -35,7 +35,7 @@ def durable_from_observation(observation, *, schema_version="1.1"):
     value.update(
         {
             "schema_version": schema_version,
-            "recorder_version": "0.2.1",
+            "recorder_version": "0.2.3",
             "event_id": "a" * 32,
             "sequence": "1",
             "observed_at_utc": "2026-07-29T00:00:00Z",
@@ -50,6 +50,7 @@ def durable_from_observation(observation, *, schema_version="1.1"):
                 "session_id": "id_" + "e" * 32,
                 "turn_id": None,
                 "agent_id": None,
+                "target_id": "id_" + "f" * 32,
             },
         }
     )
@@ -78,6 +79,13 @@ def assert_versioned_semantics_and_privacy():
     contract.validate_normalized_observation(requirement)
     contract.validate_normalized_observation(terminal)
 
+    malformed_target = copy.deepcopy(requirement)
+    malformed_target["source_identity"]["target"] = "home:/private/path"
+    expect_contract_error(
+        lambda: contract.validate_normalized_observation(malformed_target),
+        "source target must be an installer-assigned opaque reference",
+    )
+
     current = durable_from_observation(requirement)
     contract.validate_durable_event(current)
 
@@ -85,9 +93,31 @@ def assert_versioned_semantics_and_privacy():
     legacy["schema_version"] = "1.0"
     legacy["recorder_version"] = "0.1.3"
     legacy["adapter"]["version"] = "0.1.0"
+    legacy["identity"].pop("target_id")
     for field in ("link", "correction", "task_metadata", "evidence", "configuration"):
         legacy["payload"].pop(field)
     contract.validate_durable_event(legacy)
+
+    previous = copy.deepcopy(current)
+    previous["schema_version"] = "1.1"
+    previous["recorder_version"] = "0.2.2"
+    previous["adapter"]["version"] = "0.2.2"
+    previous["identity"].pop("target_id")
+    contract.validate_durable_event(previous)
+
+    previous_with_target = copy.deepcopy(previous)
+    previous_with_target["identity"]["target_id"] = "id_" + "f" * 32
+    expect_contract_error(
+        lambda: contract.validate_durable_event(previous_with_target),
+        "v1.1 must retain its immutable legacy identity shape",
+    )
+
+    current_without_target = copy.deepcopy(current)
+    current_without_target["identity"].pop("target_id")
+    expect_contract_error(
+        lambda: contract.validate_durable_event(current_without_target),
+        "v1.2 must require nullable target identity",
+    )
 
     legacy_with_current_field = copy.deepcopy(legacy)
     legacy_with_current_field["payload"]["evidence"] = {
@@ -188,7 +218,12 @@ def enum(node, schema=None):
 
 def main() -> int:
     schema = json.loads(
-        (ROOT / "contract" / "adapter-event-v1.1.schema.json").read_text(encoding="utf-8")
+        (ROOT / "contract" / "adapter-event-v1.2.schema.json").read_text(encoding="utf-8")
+    )
+    previous_schema = json.loads(
+        (ROOT / "contract" / "adapter-event-v1.1.schema.json").read_text(
+            encoding="utf-8"
+        )
     )
     legacy_schema = json.loads(
         (ROOT / "contract" / "adapter-event-v1.schema.json").read_text(
@@ -196,8 +231,11 @@ def main() -> int:
         )
     )
     properties = schema["properties"]
-    assert properties["schema_version"]["const"] == contract.SCHEMA_VERSION == "1.1"
+    assert properties["schema_version"]["const"] == contract.SCHEMA_VERSION == "1.2"
+    assert previous_schema["properties"]["schema_version"]["const"] == "1.1"
     assert legacy_schema["properties"]["schema_version"]["const"] == "1.0"
+    assert "target_id" in properties["identity"]["required"]
+    assert "target_id" not in previous_schema["properties"]["identity"]["required"]
     assert enum(properties["runtime"]["properties"]["family"]) == contract.RUNTIME_FAMILIES
     assert enum(properties["runtime"]["properties"]["surface"]) == contract.RUNTIME_SURFACES
     assert enum(properties["adapter"]["properties"]["name"]) == contract.ADAPTER_NAMES
@@ -242,6 +280,9 @@ def main() -> int:
     assert all(item.get("additionalProperties") is False for item in objects(schema))
     assert all(
         item.get("additionalProperties") is False for item in objects(legacy_schema)
+    )
+    assert all(
+        item.get("additionalProperties") is False for item in objects(previous_schema)
     )
     assert_versioned_semantics_and_privacy()
     print("schema self-test ok")

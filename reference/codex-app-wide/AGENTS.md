@@ -15,12 +15,17 @@
   needed, while returning a concise failure index and artifact reference. Do
   not place raw logs in `CompletionLedger.md`, request output above a known host
   limit, or reopen an unchanged image without a concrete need.
-- Before asking the user to make a consequential choice, investigate the
-  realistic materially distinct options and explain them in plain language.
-  Cover how each works, goal fit, important capabilities and limitations,
-  costs, risks, maintenance, compatibility, future constraints, and
-  reversibility, then recommend the best fit. Do not make the user perform
-  technical discovery the agent can perform.
+- Before asking the user to make a choice, investigate with available confirmed
+  context and read-only discovery. Ask only when an unresolved answer could
+  materially change the outcome, scope, controls, cost, complexity,
+  maintenance, reversibility, or risk enough to cause meaningful additional
+  work or over-engineering. Keep the question and option analysis concise and
+  proportional to that impact. Explain the realistic materially distinct
+  options in plain language, recommend the best fit, and include only the goal
+  fit, capabilities, limitations, costs, risks, maintenance, compatibility,
+  future constraints, and reversibility that could affect the decision. Do not
+  make the user perform technical discovery the agent can perform or restate a
+  broad questionnaire for a routine invocation of one reviewed skill or tool.
 - For a third-party service, repository, library, framework, or project, give
   its exact name and role and verify material claims with current authoritative
   sources. Distinguish facts, inferences, and unknowns; cover relevant
@@ -31,16 +36,21 @@
   result is unacceptable: implementation gaps are more serious and more
   punishable than reasonable over-engineering. This asymmetry never authorizes
   silent scope expansion.
-- Before acting on every potential over-engineering expansion beyond the
+- Before acting on a potential material over-engineering expansion beyond the
   requested result or a credible project need—especially security, privacy,
   backup, migration, preservation, or data-safety work—ask the user for explicit
-  approval in a highly informative question. State the concrete proposal; the
-  evidence, scenario, and assessed likelihood; the expected benefit; cost,
-  complexity, and ongoing maintenance; the risks of doing it and not doing it;
-  realistic alternatives; reversibility; and a clear recommendation. Do not
-  begin the expansion until the user approves it. Do not preserve disposable
-  test data or harden cross-account access in a known single-user environment
-  without a requirement or contrary evidence.
+  approval only when an unresolved answer could plausibly change scope,
+  controls, cost, complexity, ongoing maintenance, reversibility, or risk enough
+  to cause meaningful rework or over-engineering. Keep the question concise by
+  default and make its detail proportional to the impact. State the concrete
+  proposal and clear recommendation; include evidence, scenario, assessed
+  likelihood, expected benefit, risks of doing it and not doing it, realistic
+  alternatives, and other material decision factors only to the extent they
+  affect the choice. Do not begin a material expansion until the user approves
+  it. A routine invocation of one reviewed skill or tool that preserves its
+  established scope and security posture does not trigger an expansion
+  interview. Do not preserve disposable test data or harden cross-account access
+  in a known single-user environment without a requirement or contrary evidence.
 - Do not replace a necessary foundation with ad-hoc plumbing for speed. Record
   a temporary bridge in `CompletionLedger.md` and replace it before readiness.
 
@@ -52,28 +62,36 @@
   changes do not trigger a security interview. Read-only discovery needed to
   identify material assumptions or questions may precede the gate, provided it
   does not select, apply, alter, or omit a security-posture control.
+- Routine execution of one reviewed skill or tool that preserves its documented
+  controls and established security posture is not a new security-posture
+  decision and does not reopen the assumptions record or trigger a blanket
+  interview. Use existing confirmed assumptions and task context first.
 - Every security-posture decision and resulting implemented security measure
   must cite the applicable project-specific, user-confirmed assumptions in that
   file. Generic best practices, templates, defaults, and agent guesses are not
-  confirmed project facts. For the current decision, the assumptions address
-  users and operators; deployment or runtime environment and ownership; assets
-  and data sensitivity; credible adversaries and misuse; trust boundaries;
-  necessary gates; explicitly unnecessary gates; acceptable risks; and review
-  triggers.
-- If `security-assumptions.md` is absent, stop before the security-posture
-  decision or implementation. Ask the user an elaborate, plain-language
-  baseline question covering every assumption area above, then create the file
-  with the confirmed answers before resuming security work. If the file exists
-  but is insufficient for the current decision, ask only about unresolved
-  assumptions material to that decision, update the file with the newly
-  confirmed answers, and do not repeat already resolved areas.
+  confirmed project facts. For a concrete decision, identify which of these
+  areas could materially affect it: users and operators; deployment or runtime
+  environment and ownership; assets and data sensitivity; credible adversaries
+  and misuse; trust boundaries; necessary gates; explicitly unnecessary gates;
+  acceptable risks; and review triggers.
+- If `security-assumptions.md` is absent or insufficient for a concrete pending
+  security-posture decision, stop before that decision or implementation only
+  when an unresolved assumption is material and a wrong answer could select an
+  unnecessary control, omit a necessary control, expand the work, or cause
+  meaningful rework. Use already confirmed requirements and read-only discovery
+  first, then ask the smallest concise set of unresolved material questions,
+  update or create the file with the confirmed answers, and do not repeat
+  resolved areas. Cover the full baseline only when the concrete decision
+  materially depends on every assumption area. Unassessed areas that do not
+  affect the current decision may remain explicitly out of scope or unknown.
 - Never invent or infer a project assumption, or treat an unconfirmed template
   or default as fact. Record unknowns explicitly; an unknown or otherwise
   unconfirmed assumption cannot justify adding, changing, weakening, removing,
-  or intentionally omitting a control. Never default to blanket hardening.
-- This assumption gate and the informed-approval rule for every potential
-  expansion beyond the requested result or a credible project need are
-  cumulative. Assumption-backed security work that would expand scope still
+  or intentionally omitting a control. An unknown immaterial to the concrete
+  decision does not require a question. Never default to blanket hardening.
+- This assumption gate and the informed-approval rule for a material expansion
+  beyond the requested result or a credible project need are cumulative.
+  Assumption-backed security work that would materially expand scope still
   requires the user's explicit approval before action; satisfying either gate
   never satisfies or waives the other.
 
@@ -152,6 +170,50 @@
   result work end to end. Show unavailable data or behavior honestly.
 - Keep mockups, fixtures, and synthetic examples isolated to design or test
   contexts; never leak them into production behavior or completion claims.
+
+## Prohibit unimplemented product behavior
+
+- Every visible, enabled control—including buttons, links, tabs, menus, filters,
+  forms, row actions, keyboard shortcuts, and clickable cards—must perform its
+  stated action end to end through the rendered interface and produce the
+  expected observable result. A handler, route, render, toast, log, or local-only
+  change does not prove promised navigation, persistence, integration, or other
+  downstream behavior.
+- Never expose a generated mockup, decorative affordance, placeholder,
+  simulation, or future affordance as enabled product UI; no empty handlers,
+  no-op links, or fake success. A mock-data prototype may use synthetic data,
+  but every visible interaction works truthfully within its declared boundary.
+- Immediately put each missing or partial agreed behavior in a specific
+  project-root `CompletionLedger.md` entry naming affected journeys, screens and
+  responsive variants, controls, files, missing behavior, user impact, unblock
+  condition, and required rendered end-to-end verification. A generic
+  future-production item is insufficient.
+- An unimplemented control may appear only when the specification explicitly
+  requires communicating future availability. It is semantically disabled and
+  non-actionable, visibly labelled unavailable, and specifically ledgered; the
+  delivery remains incomplete until implementation or explicit removal from
+  agreed scope. Out-of-scope future information is noninteractive content, not a
+  control. Never report complete with agreed behavior missing, simulated, inert,
+  or represented by a request-related completion-ledger entry.
+
+### Mandatory interaction inventory
+
+Before reporting UI complete, finish one evidence pass over only agreed screens,
+journeys, states, and responsive variants before fixing non-critical gaps. This
+gate neither expands scope nor invokes or authorizes a broader exhaustive audit.
+
+1. Inventory every visible interactive element, including conditional controls.
+2. Map each element to its journey, action, and expected observable result.
+3. Invoke it through the rendered interface and verify the downstream result.
+4. Exercise success, cancellation, validation failure, permission failure, and
+   recovery where applicable, plus reload when persistence is promised.
+5. Record gaps as found; finish the pass, batch-fix by cause, then rerun it.
+6. Completion requires zero enabled controls without real behavior, zero
+   requested journeys without rendered end-to-end evidence, and zero
+   request-related completion-ledger entries.
+
+Code inspection, routes, rendering, screenshots, visual comparison, and geometry
+checks may support evidence but do not constitute interaction verification.
 
 ## Learn from agent-made mistakes
 

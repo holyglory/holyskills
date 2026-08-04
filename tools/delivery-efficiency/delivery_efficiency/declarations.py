@@ -76,6 +76,7 @@ def _identity(
         "turn": None,
         "agent": agent,
         "span": span,
+        "target": None,
     }
 
 

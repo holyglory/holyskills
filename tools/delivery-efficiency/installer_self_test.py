@@ -9,9 +9,11 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -23,6 +25,7 @@ if str(TOOL_ROOT) not in sys.path:
 
 from delivery_efficiency import installer  # noqa: E402
 from delivery_efficiency import runtime  # noqa: E402
+from delivery_efficiency import server  # noqa: E402
 from delivery_efficiency import (  # noqa: E402
     CLAUDE_HOOK_TELEMETRY_BUDGET_SECONDS,
     CLAUDE_ORDINARY_HOOK_TELEMETRY_BUDGET_SECONDS,
@@ -60,12 +63,13 @@ class InstallerTestCase(unittest.TestCase):
             encoding="utf-8",
         )
         (package / "__init__.py").write_text(
-            "RECORDER_VERSION = '0.2.1'\nSCHEMA_VERSION = '1.1'\nADAPTER_VERSION = '0.2.1'\n",
+            "RECORDER_VERSION = '0.2.4'\nSCHEMA_VERSION = '1.2'\nADAPTER_VERSION = '0.2.3'\n",
             encoding="utf-8",
         )
         (package / "cli.py").write_text("def main(): return 0\n", encoding="utf-8")
         (contract / "adapter-event-v1.schema.json").write_text("{}\n", encoding="utf-8")
         (contract / "adapter-event-v1.1.schema.json").write_text("{}\n", encoding="utf-8")
+        (contract / "adapter-event-v1.2.schema.json").write_text("{}\n", encoding="utf-8")
         # Prove test-only payloads are deliberately excluded from the immutable copy.
         (package / "ignored_self_test.py").write_text("raise RuntimeError('must not install')\n", encoding="utf-8")
 
@@ -89,7 +93,7 @@ class InstallerTestCase(unittest.TestCase):
             process.communicate(timeout=2)
 
     def test_current_source_uses_unused_immutable_version(self) -> None:
-        self.assertEqual(installer.RECORDER_VERSION, "0.2.1")
+        self.assertEqual(installer.RECORDER_VERSION, "0.2.4")
         occupied = self.state / "installs" / "0.1.2"
         (occupied / "delivery_efficiency").mkdir(parents=True)
         (occupied / "contract").mkdir()
@@ -101,8 +105,130 @@ class InstallerTestCase(unittest.TestCase):
             "{}\n", encoding="utf-8"
         )
         plan = self._plan()
-        self.assertEqual(Path(plan.journal["target"]["install_root"]).name, "0.2.1")
+        self.assertEqual(Path(plan.journal["target"]["install_root"]).name, "0.2.4")
         self.assertEqual((occupied / "recorder.py").read_text(), "old immutable payload\n")
+
+    def test_runtime_target_refs_are_stable_distinct_and_path_hiding(self) -> None:
+        token = "a" * 64
+        second_home = self.root / "second runtime home"
+        second_home.mkdir()
+        first = installer._runtime_target_ref(token, "codex", self.home)
+        repeated = installer._runtime_target_ref(token, "codex", self.home)
+        second = installer._runtime_target_ref(token, "codex", second_home)
+        other_runtime = installer._runtime_target_ref(token, "claude", self.home)
+
+        self.assertRegex(first, r"^target_v1_[0-9a-f]{32}$")
+        self.assertEqual(first, repeated)
+        self.assertEqual(len({first, second, other_runtime}), 3)
+        for reference in (first, second, other_runtime):
+            self.assertNotIn(token, reference)
+            self.assertNotIn(str(self.home), reference)
+            self.assertNotIn(self.home.name, reference)
+        self.assertNotEqual(
+            first,
+            installer._runtime_target_ref("b" * 64, "codex", self.home),
+        )
+        with self.assertRaises(installer.InstallerError):
+            installer._runtime_target_ref(token, "other", self.home)
+        with self.assertRaises(installer.InstallerError):
+            installer._runtime_target_ref(token, "codex", Path("relative-home"))
+
+    def test_each_codex_home_gets_its_exact_posix_and_windows_runtime_target(self) -> None:
+        second_home = self.root / "second Codex home & %"
+        second_home.mkdir()
+        token = "c" * 64
+        plan = installer.plan_install(
+            self.source,
+            self.state,
+            {"codex-main": self.home, "codex-second": second_home},
+            python_executable=Path(sys.executable).resolve(),
+            auth_token=token,
+            listen_port=4381,
+        )
+        installer.apply_install(plan)
+
+        observed = set()
+        for home in (self.home, second_home):
+            value = json.loads((home / "hooks.json").read_text(encoding="utf-8"))
+            managed = [
+                handler
+                for group in value["hooks"]["UserPromptSubmit"]
+                for handler in group["hooks"]
+                if installer._handler_is_managed(handler)
+            ]
+            self.assertEqual(len(managed), 1)
+            expected = installer._runtime_target_ref(token, "codex", home)
+            posix_arguments = shlex.split(managed[0]["command"])
+            self.assertEqual(posix_arguments[1], str(self.state / "recorder.py"))
+            self.assertNotIn("/installs/", posix_arguments[1].replace("\\", "/"))
+            self.assertEqual(posix_arguments[-2:], ["--runtime-target", expected])
+            encoded = managed[0]["commandWindows"].rsplit(" ", 1)[1]
+            decoded = base64.b64decode(encoded).decode("utf-16le")
+            self.assertIn(str(self.state / "recorder.py"), decoded)
+            self.assertIn("'--runtime-target' '{}'".format(expected), decoded)
+            self.assertNotIn(str(home), expected)
+            observed.add(expected)
+        self.assertEqual(len(observed), 2)
+
+    def test_022_handler_upgrade_and_rollback_are_exact(self) -> None:
+        previous_version = "0.2.2"
+        previous_port = 4382
+        token = "d" * 64
+        old_install = self.state / "installs" / previous_version
+        self.state.mkdir(parents=True)
+        previous_settings = {
+            "schema_version": installer.SETTINGS_SCHEMA_VERSION,
+            "recorder_version": previous_version,
+            "listen_host": "127.0.0.1",
+            "listen_port": previous_port,
+            "auth_token": token,
+            "install_root": str(old_install),
+            "python_executable": str(Path(sys.executable).resolve()),
+            "platform": installer._platform_info(),
+        }
+        settings_bytes = installer._json_bytes(previous_settings)
+        inventory_bytes = installer._managed_targets_bytes(
+            [{"runtime": "codex", "name": "codex-main", "home": str(self.home)}]
+        )
+        legacy_handler = installer._hook_handler(
+            Path(sys.executable).resolve(),
+            old_install,
+            self.state,
+        )
+        hooks_bytes = installer._render_hooks(b"", legacy_handler, None)
+        config_bytes = installer._managed_otel_block(previous_port, token).encode("utf-8")
+        (self.state / "settings.json").write_bytes(settings_bytes)
+        (self.state / "managed-targets.json").write_bytes(inventory_bytes)
+        (self.home / "hooks.json").write_bytes(hooks_bytes)
+        (self.home / "config.toml").write_bytes(config_bytes)
+
+        plan = self._plan()
+        installer.apply_install(plan)
+        installer.verify_install(plan)
+        upgraded = json.loads((self.home / "hooks.json").read_text(encoding="utf-8"))
+        command = upgraded["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+        expected = installer._runtime_target_ref(token, "codex", self.home)
+        self.assertEqual(shlex.split(command)[-2:], ["--runtime-target", expected])
+
+        installer.rollback_install(plan)
+        self.assertEqual((self.state / "settings.json").read_bytes(), settings_bytes)
+        self.assertEqual((self.state / "managed-targets.json").read_bytes(), inventory_bytes)
+        self.assertEqual((self.home / "hooks.json").read_bytes(), hooks_bytes)
+        self.assertEqual((self.home / "config.toml").read_bytes(), config_bytes)
+
+    def test_runtime_target_handler_tampering_fails_closed(self) -> None:
+        plan = self._plan(auth_token="e" * 64, listen_port=4383)
+        installer.apply_install(plan)
+        hooks_path = self.home / "hooks.json"
+        original = hooks_path.read_text(encoding="utf-8")
+        expected = installer._runtime_target_ref("e" * 64, "codex", self.home)
+        tampered = original.replace(expected, "target_v1_" + "f" * 32)
+        self.assertNotEqual(tampered, original)
+        hooks_path.write_text(tampered, encoding="utf-8")
+        with self.assertRaisesRegex(installer.InstallerConflict, "edited outside"):
+            self._plan(persist=False)
+        with self.assertRaises(installer.InstallerError):
+            installer.rollback_install(plan)
 
     def test_claude_runtime_gate_requires_verified_non_chunked_release(self) -> None:
         # Anthropic records the non-chunked OTLP/HTTP export fix in v2.1.212.
@@ -287,6 +413,7 @@ class InstallerTestCase(unittest.TestCase):
             destination: Path,
             *,
             anchor: object,
+            mutation_guard: object = None,
         ) -> None:
             if (
                 Path(source) == hooks_path
@@ -297,7 +424,12 @@ class InstallerTestCase(unittest.TestCase):
                 # an unrelated writer changing it at the capture syscall boundary.
                 hooks_path.write_bytes(competing)
                 raced["value"] = True
-            real_atomic_move_no_replace(source, destination, anchor=anchor)
+            real_atomic_move_no_replace(
+                source,
+                destination,
+                anchor=anchor,
+                mutation_guard=mutation_guard,
+            )
 
         with mock.patch.object(
             installer,
@@ -481,6 +613,320 @@ class InstallerTestCase(unittest.TestCase):
         persisted = json.loads(plan.journal_path.read_text(encoding="utf-8"))
         self.assertEqual(persisted["status"], "apply-failed-rolled-back")
 
+    def test_apply_mutation_guard_rejects_before_any_forward_mutation(self) -> None:
+        hooks_before = b'{"description":"guarded original","hooks":{}}\n'
+        config_before = b'model = "guarded-kept"\n'
+        (self.home / "hooks.json").write_bytes(hooks_before)
+        (self.home / "config.toml").write_bytes(config_before)
+        plan = self._plan(auth_token="1" * 64)
+        guard_calls = []
+
+        def reject_before_applying() -> None:
+            self.assertIsNotNone(plan.transaction_anchor)
+            self.assertIsNotNone(plan.parent_anchors)
+            guard_calls.append(plan.journal["status"])
+            raise RuntimeError("deterministic pre-mutation guard rejection")
+
+        with self.assertRaisesRegex(RuntimeError, "pre-mutation guard rejection"):
+            installer.apply_install(
+                plan,
+                mutation_guard=reject_before_applying,
+                require_planned=True,
+            )
+
+        self.assertEqual(guard_calls, ["planned"])
+        self.assertEqual((self.home / "hooks.json").read_bytes(), hooks_before)
+        self.assertEqual((self.home / "config.toml").read_bytes(), config_before)
+        self.assertFalse((self.state / "settings.json").exists())
+        self.assertFalse((self.state / "recorder.py").exists())
+        self.assertFalse((self.state / "managed-targets.json").exists())
+        self.assertFalse(Path(plan.journal["target"]["install_root"]).exists())
+        persisted = json.loads(plan.journal_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["status"], "planned")
+
+    def test_apply_guard_flip_during_staging_blocks_final_publication(self) -> None:
+        plan = self._plan(auth_token="6" * 64)
+        install_action = next(
+            action
+            for action in plan.journal["actions"]
+            if action["kind"] == "install-tree"
+        )
+        stage_path = Path(install_action["stage_path"])
+        install_root = Path(install_action["path"])
+        real_prepare = installer._prepare_action_stage
+        guard_live = {"value": True}
+        flipped = {"value": False}
+        rejected = {"value": False}
+
+        def prepare_then_invalidate(
+            active_plan: installer.InstallPlan,
+            action: dict[str, object],
+            *,
+            source: object = None,
+            data: object = None,
+        ) -> None:
+            real_prepare(active_plan, action, source=source, data=data)
+            if action["kind"] == "install-tree" and not flipped["value"]:
+                self.assertTrue(stage_path.is_dir())
+                self.assertFalse(install_root.exists())
+                flipped["value"] = True
+                guard_live["value"] = False
+
+        def require_live_guard() -> None:
+            if guard_live["value"]:
+                return
+            self.assertTrue(stage_path.is_dir())
+            self.assertFalse(install_root.exists())
+            self.assertEqual(
+                json.loads(plan.journal_path.read_text(encoding="utf-8"))["status"],
+                "applying",
+            )
+            rejected["value"] = True
+            raise RuntimeError("guard invalidated while staging absent target")
+
+        with mock.patch.object(
+            installer,
+            "_prepare_action_stage",
+            side_effect=prepare_then_invalidate,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "staging absent target"):
+                installer.apply_install(
+                    plan,
+                    mutation_guard=require_live_guard,
+                    require_planned=True,
+                )
+
+        self.assertTrue(flipped["value"])
+        self.assertTrue(rejected["value"])
+        self.assertFalse(install_root.exists())
+        self.assertEqual(installer._classify_action_path(stage_path, install_action), "after")
+        self.assertFalse((self.state / "settings.json").exists())
+        self.assertFalse((self.state / "recorder.py").exists())
+        self.assertFalse((self.state / "managed-targets.json").exists())
+        self.assertFalse((self.home / "hooks.json").exists())
+        self.assertFalse((self.home / "config.toml").exists())
+        persisted = json.loads(plan.journal_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["status"], "apply-failed-rolled-back")
+        self.assertEqual(persisted["error"], "RuntimeError")
+
+    def test_apply_guard_flip_during_staging_blocks_existing_target_capture(self) -> None:
+        hooks_before = b'{"description":"staging race original","hooks":{}}\n'
+        config_before = b'model = "staging-race-kept"\n'
+        hooks_path = self.home / "hooks.json"
+        config_path = self.home / "config.toml"
+        hooks_path.write_bytes(hooks_before)
+        config_path.write_bytes(config_before)
+        hooks_mode = hooks_path.stat().st_mode & 0o777
+        config_mode = config_path.stat().st_mode & 0o777
+        plan = self._plan(auth_token="7" * 64)
+        hooks_action = next(
+            action for action in plan.journal["actions"] if action["kind"] == "hooks"
+        )
+        stage_path = Path(hooks_action["stage_path"])
+        before_path = Path(hooks_action["before_path"])
+        real_prepare = installer._prepare_action_stage
+        guard_live = {"value": True}
+        flipped = {"value": False}
+        rejected = {"value": False}
+
+        def prepare_then_invalidate(
+            active_plan: installer.InstallPlan,
+            action: dict[str, object],
+            *,
+            source: object = None,
+            data: object = None,
+        ) -> None:
+            real_prepare(active_plan, action, source=source, data=data)
+            if action["kind"] == "hooks" and not flipped["value"]:
+                self.assertTrue(stage_path.is_file())
+                self.assertEqual(hooks_path.read_bytes(), hooks_before)
+                self.assertFalse(before_path.exists())
+                flipped["value"] = True
+                guard_live["value"] = False
+
+        def require_live_guard() -> None:
+            if guard_live["value"]:
+                return
+            self.assertTrue(stage_path.is_file())
+            self.assertEqual(hooks_path.read_bytes(), hooks_before)
+            self.assertFalse(before_path.exists())
+            rejected["value"] = True
+            raise RuntimeError("guard invalidated while staging existing target")
+
+        with mock.patch.object(
+            installer,
+            "_prepare_action_stage",
+            side_effect=prepare_then_invalidate,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "staging existing target"):
+                installer.apply_install(
+                    plan,
+                    mutation_guard=require_live_guard,
+                    require_planned=True,
+                )
+
+        self.assertTrue(flipped["value"])
+        self.assertTrue(rejected["value"])
+        self.assertEqual(hooks_path.read_bytes(), hooks_before)
+        self.assertEqual(config_path.read_bytes(), config_before)
+        if os.name != "nt":
+            self.assertEqual(hooks_path.stat().st_mode & 0o777, hooks_mode)
+            self.assertEqual(config_path.stat().st_mode & 0o777, config_mode)
+        self.assertEqual(installer._classify_action_path(stage_path, hooks_action), "after")
+        self.assertFalse(before_path.exists())
+        self.assertFalse((self.state / "settings.json").exists())
+        self.assertFalse((self.state / "recorder.py").exists())
+        self.assertFalse((self.state / "managed-targets.json").exists())
+        self.assertFalse(Path(plan.journal["target"]["install_root"]).exists())
+        persisted = json.loads(plan.journal_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["status"], "apply-failed-rolled-back")
+        self.assertEqual(persisted["error"], "RuntimeError")
+
+    def test_apply_mid_batch_mutation_guard_failure_rolls_back_exact_bytes(self) -> None:
+        hooks_before = b'{"description":"mid-batch original","hooks":{}}\n'
+        config_before = b'model = "mid-batch-kept"\n'
+        (self.home / "hooks.json").write_bytes(hooks_before)
+        (self.home / "config.toml").write_bytes(config_before)
+        hooks_mode = (self.home / "hooks.json").stat().st_mode & 0o777
+        config_mode = (self.home / "config.toml").stat().st_mode & 0o777
+        plan = self._plan(auth_token="2" * 64)
+        guard_calls = 0
+
+        def fail_after_hooks_mutation() -> None:
+            nonlocal guard_calls
+            self.assertIsNotNone(plan.transaction_anchor)
+            self.assertIsNotNone(plan.parent_anchors)
+            guard_calls += 1
+            if guard_calls == 11:
+                persisted = json.loads(plan.journal_path.read_text(encoding="utf-8"))
+                self.assertEqual(persisted["status"], "applying")
+                self.assertNotEqual((self.home / "hooks.json").read_bytes(), hooks_before)
+                self.assertEqual((self.home / "config.toml").read_bytes(), config_before)
+                self.assertTrue((self.state / "settings.json").is_file())
+                self.assertTrue(Path(plan.journal["target"]["install_root"]).is_dir())
+                raise RuntimeError("deterministic mid-batch guard rejection")
+
+        with self.assertRaisesRegex(RuntimeError, "mid-batch guard rejection"):
+            installer.apply_install(
+                plan,
+                mutation_guard=fail_after_hooks_mutation,
+                require_planned=True,
+            )
+
+        self.assertEqual(guard_calls, 11)
+        self.assertEqual((self.home / "hooks.json").read_bytes(), hooks_before)
+        self.assertEqual((self.home / "config.toml").read_bytes(), config_before)
+        if os.name != "nt":
+            self.assertEqual((self.home / "hooks.json").stat().st_mode & 0o777, hooks_mode)
+            self.assertEqual((self.home / "config.toml").stat().st_mode & 0o777, config_mode)
+        self.assertFalse((self.state / "settings.json").exists())
+        self.assertFalse((self.state / "recorder.py").exists())
+        self.assertFalse((self.state / "managed-targets.json").exists())
+        self.assertFalse(Path(plan.journal["target"]["install_root"]).exists())
+        persisted = json.loads(plan.journal_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["status"], "apply-failed-rolled-back")
+        self.assertEqual(persisted["error"], "RuntimeError")
+
+    def test_apply_require_planned_rejects_applied_before_reuse(self) -> None:
+        plan = self._plan(auth_token="3" * 64)
+        installer.apply_install(plan)
+        installed_bytes = {
+            path: path.read_bytes()
+            for path in (
+                self.state / "settings.json",
+                self.state / "recorder.py",
+                self.state / "managed-targets.json",
+                self.home / "hooks.json",
+                self.home / "config.toml",
+            )
+        }
+        guard = mock.Mock()
+        activation = installer._activate_receiver
+        activation.reset_mock()
+
+        with self.assertRaisesRegex(installer.InstallerConflict, "must be planned.*applied"):
+            installer.apply_install(
+                plan,
+                mutation_guard=guard,
+                require_planned=True,
+            )
+
+        guard.assert_not_called()
+        activation.assert_not_called()
+        for path, expected in installed_bytes.items():
+            self.assertEqual(path.read_bytes(), expected)
+
+    def test_apply_require_planned_rejects_applying_before_recovery(self) -> None:
+        plan = self._plan(auth_token="4" * 64)
+        installer._journal_update(plan, "applying", plan.journal["actions"], None)
+        guard = mock.Mock()
+
+        with mock.patch.object(installer, "_recover_interrupted_apply") as recover:
+            with self.assertRaisesRegex(
+                installer.InstallerConflict,
+                "must be planned.*applying",
+            ):
+                installer.apply_install(
+                    plan,
+                    mutation_guard=guard,
+                    require_planned=True,
+                )
+
+        guard.assert_not_called()
+        recover.assert_not_called()
+        persisted = json.loads(plan.journal_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["status"], "applying")
+        self.assertFalse((self.state / "settings.json").exists())
+
+    def test_apply_mutation_guard_boundaries_and_default_callers_are_compatible(self) -> None:
+        plan = self._plan(auth_token="5" * 64)
+        observed_statuses = []
+
+        def observe_boundary() -> None:
+            self.assertIsNotNone(plan.transaction_anchor)
+            self.assertIsNotNone(plan.parent_anchors)
+            observed_statuses.append(
+                json.loads(plan.journal_path.read_text(encoding="utf-8"))["status"]
+            )
+
+        result = installer.apply_install(
+            plan,
+            mutation_guard=observe_boundary,
+            require_planned=True,
+        )
+        changed_actions = [
+            action for action in plan.journal["actions"] if action["changed"]
+        ]
+        namespace_boundaries = sum(
+            1 + int(action["before_exists"]) for action in changed_actions
+        )
+        expected_guard_calls = 3 + len(changed_actions) + namespace_boundaries
+        self.assertEqual(len(observed_statuses), expected_guard_calls)
+        self.assertEqual(observed_statuses[0], "planned")
+        self.assertEqual(
+            observed_statuses[1:],
+            ["applying"] * (expected_guard_calls - 1),
+        )
+        self.assertTrue(result["receiver_healthy"])
+
+        installed_bytes = {
+            path: path.read_bytes()
+            for path in (
+                self.state / "settings.json",
+                self.state / "recorder.py",
+                self.state / "managed-targets.json",
+                self.home / "hooks.json",
+                self.home / "config.toml",
+            )
+        }
+        activation = installer._activate_receiver
+        activation.reset_mock()
+        reused = installer.apply_install(plan)
+        self.assertTrue(reused["receiver_healthy"])
+        activation.assert_called_once_with(self.state)
+        for path, expected in installed_bytes.items():
+            self.assertEqual(path.read_bytes(), expected)
+
     def test_post_publication_failure_reconciles_and_rolls_back_hooks(self) -> None:
         hooks_path = self.home / "hooks.json"
         config_path = self.home / "config.toml"
@@ -495,8 +941,15 @@ class InstallerTestCase(unittest.TestCase):
             active_plan: installer.InstallPlan,
             action: dict[str, object],
             anchor: object,
+            *,
+            mutation_guard: object = None,
         ) -> None:
-            real_publish(active_plan, action, anchor)
+            real_publish(
+                active_plan,
+                action,
+                anchor,
+                mutation_guard=mutation_guard,
+            )
             if (
                 action["kind"] == "hooks"
                 and Path(str(action["path"])) == hooks_path
@@ -609,6 +1062,94 @@ class InstallerTestCase(unittest.TestCase):
             ):
                 self.real_activate_receiver(self.state)
 
+    def test_compatible_receiver_retires_and_rebinds_same_port_authenticated(self) -> None:
+        state = self.root / "authenticated same-port state"
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.bind(("127.0.0.1", 0))
+                port = int(probe.getsockname()[1])
+        except PermissionError:
+            self.skipTest("host policy denied loopback bind")
+        token = "8" * 64
+        current_settings = runtime.create_settings(
+            state,
+            listen_port=port,
+            install_root=TOOL_ROOT,
+            python_executable=Path(sys.executable).resolve(),
+            platform_info=installer._platform_info(),
+            auth_token=token,
+        )
+        previous_settings = dict(current_settings)
+        previous_settings["recorder_version"] = "0.2.3"
+        runtime._private_write(
+            state / "settings.json", installer._json_bytes(previous_settings)
+        )
+        with mock.patch.object(server, "RECORDER_VERSION", "0.2.3"):
+            previous_receiver = server.Receiver(state)
+
+        def serve_previous() -> None:
+            try:
+                previous_receiver.serve_forever(poll_interval=0.05)
+            finally:
+                previous_receiver.server_close()
+
+        thread = threading.Thread(target=serve_previous, daemon=True)
+        thread.start()
+        spawned_processes = []
+        real_popen = runtime.subprocess.Popen
+
+        def capture_spawn(*arguments: object, **keywords: object):
+            process = real_popen(*arguments, **keywords)
+            spawned_processes.append(process)
+            return process
+
+        try:
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and not runtime.receiver_is_healthy(
+                previous_settings, timeout_seconds=0.2
+            ):
+                time.sleep(0.02)
+            self.assertTrue(runtime.receiver_is_healthy(previous_settings))
+
+            runtime._private_write(
+                state / "settings.json", installer._json_bytes(current_settings)
+            )
+            with mock.patch.object(
+                runtime.subprocess, "Popen", side_effect=capture_spawn
+            ):
+                selected = runtime.ensure_receiver(state, timeout_seconds=5.0)
+            self.assertEqual(selected, current_settings)
+            self.assertTrue(runtime.receiver_is_healthy(current_settings))
+            thread.join(timeout=3.0)
+            self.assertFalse(thread.is_alive())
+        finally:
+            runtime.request_receiver_retirement(
+                current_settings, timeout_seconds=0.5
+            )
+            runtime.request_receiver_retirement(
+                previous_settings, timeout_seconds=0.5
+            )
+            if thread.is_alive():
+                previous_receiver.shutdown()
+                thread.join(timeout=3.0)
+            for process in spawned_processes:
+                try:
+                    process.wait(timeout=3.0)
+                except subprocess.TimeoutExpired:
+                    process.terminate()
+                    process.wait(timeout=3.0)
+
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                    pass
+            except OSError:
+                break
+            time.sleep(0.02)
+        else:
+            self.fail("replacement receiver did not retire from the preserved port")
+
     def test_exact_rollback_and_rollback_drift_guard(self) -> None:
         hooks_before = b'{"description":"exact bytes","hooks":{}}\n'
         config_before = b'# preserve formatting\nmodel="x"\n'
@@ -648,6 +1189,7 @@ class InstallerTestCase(unittest.TestCase):
             destination: Path,
             *,
             anchor: object,
+            mutation_guard: object = None,
         ) -> None:
             if Path(source) == inventory_path and not raced["value"]:
                 # `_atomic_remove_if_matches` has completed its final expected
@@ -655,7 +1197,12 @@ class InstallerTestCase(unittest.TestCase):
                 # immediately before it is atomically moved into quarantine.
                 inventory_path.write_bytes(competing)
                 raced["value"] = True
-            real_atomic_move_no_replace(source, destination, anchor=anchor)
+            real_atomic_move_no_replace(
+                source,
+                destination,
+                anchor=anchor,
+                mutation_guard=mutation_guard,
+            )
 
         with mock.patch.object(
             installer,
@@ -699,6 +1246,7 @@ class InstallerTestCase(unittest.TestCase):
             destination: Path,
             *,
             anchor: object,
+            mutation_guard: object = None,
         ) -> None:
             if Path(source) == hooks_path and not raced["value"]:
                 # Inventory and config are earlier reverse actions. Race only
@@ -707,7 +1255,12 @@ class InstallerTestCase(unittest.TestCase):
                 self.assertFalse(config_path.exists())
                 hooks_path.write_bytes(competing)
                 raced["value"] = True
-            real_atomic_move_no_replace(source, destination, anchor=anchor)
+            real_atomic_move_no_replace(
+                source,
+                destination,
+                anchor=anchor,
+                mutation_guard=mutation_guard,
+            )
 
         first_error = None
         with mock.patch.object(
@@ -799,8 +1352,14 @@ class InstallerTestCase(unittest.TestCase):
             destination: Path,
             *,
             anchor: object,
+            mutation_guard: object = None,
         ) -> None:
-            real_atomic_move_no_replace(source, destination, anchor=anchor)
+            real_atomic_move_no_replace(
+                source,
+                destination,
+                anchor=anchor,
+                mutation_guard=mutation_guard,
+            )
             if (
                 Path(source) == config_path
                 and Path(destination) == config_after
@@ -894,8 +1453,14 @@ class InstallerTestCase(unittest.TestCase):
             destination: Path,
             *,
             anchor: object,
+            mutation_guard: object = None,
         ) -> None:
-            real_atomic_move_no_replace(source, destination, anchor=anchor)
+            real_atomic_move_no_replace(
+                source,
+                destination,
+                anchor=anchor,
+                mutation_guard=mutation_guard,
+            )
             if (
                 Path(source) == target
                 and Path(destination) == after
@@ -1326,8 +1891,14 @@ class InstallerTestCase(unittest.TestCase):
             destination: Path,
             *,
             anchor: object,
+            mutation_guard: object = None,
         ) -> None:
-            real_move(source, destination, anchor=anchor)
+            real_move(
+                source,
+                destination,
+                anchor=anchor,
+                mutation_guard=mutation_guard,
+            )
             if destination == install_root and not detached_once["value"]:
                 os.replace(transaction, detached)
                 transaction.mkdir()
@@ -1374,8 +1945,14 @@ class InstallerTestCase(unittest.TestCase):
             destination: Path,
             *,
             anchor: object,
+            mutation_guard: object = None,
         ) -> None:
-            real_move(source, destination, anchor=anchor)
+            real_move(
+                source,
+                destination,
+                anchor=anchor,
+                mutation_guard=mutation_guard,
+            )
             if source == first_target and not detached_once["value"]:
                 os.replace(transaction, detached)
                 transaction.mkdir()
@@ -1429,8 +2006,14 @@ class InstallerTestCase(unittest.TestCase):
             destination: Path,
             *,
             anchor: object,
+            mutation_guard: object = None,
         ) -> None:
-            real_move(source, destination, anchor=anchor)
+            real_move(
+                source,
+                destination,
+                anchor=anchor,
+                mutation_guard=mutation_guard,
+            )
             if not detached_once["value"]:
                 os.replace(transaction, detached)
                 transaction.mkdir()
@@ -1938,6 +2521,8 @@ class InstallerTestCase(unittest.TestCase):
             active_plan: installer.InstallPlan,
             action: dict[str, object],
             anchor: object,
+            *,
+            mutation_guard: object = None,
         ) -> None:
             stage = Path(str(action["stage_path"]))
             target = Path(str(action["path"]))
@@ -1951,7 +2536,12 @@ class InstallerTestCase(unittest.TestCase):
                 with self.assertRaises(OSError):
                     with stage.open("r+b"):
                         pass
-            real_publish(active_plan, action, anchor)
+            real_publish(
+                active_plan,
+                action,
+                anchor,
+                mutation_guard=mutation_guard,
+            )
             current = installer._filesystem_identity(target.lstat())
             self.assertEqual(current["device"], captured["device"])
             self.assertEqual(current["inode"], captured["inode"])
@@ -2214,6 +2804,128 @@ class InstallerTestCase(unittest.TestCase):
         self.assertNotIn(arguments[0], windows)
         self.assertRegex(encoded, r"^[A-Za-z0-9+/]+=*$")
 
+    def test_plan_repairs_end_marker_displaced_by_codex_features_writer(self) -> None:
+        token = "8" * 64
+        port = 4376
+        (self.home / "config.toml").write_text('model = "kept"\n', encoding="utf-8")
+        installed = self._plan(auth_token=token, listen_port=port)
+        installer.apply_install(installed)
+
+        config_path = self.home / "config.toml"
+        managed = config_path.read_bytes()
+        marker = (installer.MANAGED_END + "\n").encode("utf-8")
+        displaced = (
+            b"# preserved host feature activation\n"
+            b"\n"
+            b"[features]\n"
+            b'enabled = ["hooks"]\n'
+        )
+        drifted = managed.replace(marker, displaced + marker, 1)
+        config_path.write_bytes(drifted)
+
+        normalized = managed.replace(marker, marker + displaced, 1)
+        repair = self._plan(persist=False)
+        config_spec = repair.journal["codex_homes"][0]["config"]
+        self.assertEqual(config_path.read_bytes(), drifted)
+        self.assertEqual(config_spec["before"]["sha256"], installer._sha256(drifted))
+        self.assertEqual(config_spec["after_sha256"], installer._sha256(normalized))
+
+        retirement = installer.plan_install(
+            self.source,
+            self.state,
+            {},
+            retire_codex_homes={"codex-main": self.home},
+            python_executable=Path(sys.executable).resolve(),
+            persist=False,
+        )
+        retired_config_spec = retirement.journal["retired_codex_homes"][0]["config"]
+        managed_block = installer._managed_otel_block(port, token).encode("utf-8")
+        expected_retired = managed.replace(managed_block, displaced, 1)
+        self.assertEqual(config_path.read_bytes(), drifted)
+        self.assertEqual(
+            retired_config_spec["after_sha256"],
+            installer._sha256(expected_retired),
+        )
+
+        previous_token = "7" * 64
+        previous_port = 4375
+        crlf_marker = installer.MANAGED_END + "\r\n"
+        previous_block = installer._managed_otel_block(
+            previous_port,
+            previous_token,
+            "\r\n",
+        )
+        crlf_displaced = "# kept\r\n[features]\r\nenabled = [\"hooks\"]\r\n"
+        previous_drift = previous_block.replace(
+            crlf_marker,
+            crlf_displaced + crlf_marker,
+            1,
+        )
+        upgraded = installer._render_otel_config(
+            previous_drift.encode("utf-8"),
+            listen_port=port,
+            auth_token=token,
+            previous_port=previous_port,
+            previous_token=previous_token,
+        )
+        self.assertEqual(
+            upgraded,
+            (
+                installer._managed_otel_block(port, token, "\r\n")
+                + crlf_displaced
+            ).encode("utf-8"),
+        )
+
+        installer.save_plan(repair)
+        installer.apply_install(repair)
+        self.assertEqual(config_path.read_bytes(), normalized)
+
+    def test_displaced_end_marker_repair_refuses_otel_edits_and_owners(self) -> None:
+        token = "6" * 64
+        port = 4377
+        managed = installer._managed_otel_block(port, token)
+        marker = installer.MANAGED_END + "\n"
+        payload = managed[: -len(marker)]
+        conflicting = {
+            "scalar still in otel": (
+                payload
+                + 'log_user_prompt = true\n[features]\nenabled = ["hooks"]\n'
+                + marker
+            ),
+            "interleaved otel payload": managed.replace(
+                "log_user_prompt = false\n",
+                '[features]\nenabled = ["hooks"]\nlog_user_prompt = false\n',
+                1,
+            ),
+            "later otel owner": (
+                payload
+                + '[features]\nenabled = ["hooks"]\n[otel.extra]\nexporter = "none"\n'
+                + marker
+            ),
+            "assignment before table": (
+                payload
+                + 'enabled = ["hooks"]\n[features]\n'
+                + marker
+            ),
+            "malformed table header": (
+                payload
+                + '["features]\nenabled = ["hooks"]\n'
+                + marker
+            ),
+        }
+        for label, config in conflicting.items():
+            with self.subTest(label=label), self.assertRaisesRegex(
+                installer.InstallerConflict,
+                "managed Codex otel block was edited",
+            ):
+                installer._render_otel_config(
+                    config.encode("utf-8"),
+                    listen_port=port,
+                    auth_token=token,
+                    previous_port=port,
+                    previous_token=token,
+                )
+
     def test_existing_or_malformed_otel_configuration_is_never_overwritten(self) -> None:
         conflicting = (
             '[otel]\nexporter = "none"\n',
@@ -2466,7 +3178,7 @@ class InstallerTestCase(unittest.TestCase):
         self.assertNotEqual(relative_failure.returncode, 0)
         self.assertIn("install_root must be absolute", relative_failure.stderr)
         invalid = json.loads(original_settings)
-        invalid["recorder_version"] = "9.9.9"
+        invalid["recorder_version"] = "9.9"
         settings_path.write_text(json.dumps(invalid), encoding="utf-8")
         version_failure = subprocess.run(
             [str(Path(sys.executable).resolve()), str(launcher)],
@@ -2476,7 +3188,63 @@ class InstallerTestCase(unittest.TestCase):
             text=True,
         )
         self.assertNotEqual(version_failure.returncode, 0)
-        self.assertIn("version does not match", version_failure.stderr)
+        self.assertIn("recorder_version is invalid", version_failure.stderr)
+
+        invalid = json.loads(original_settings)
+        invalid["recorder_version"] = "9.9.9"
+        settings_path.write_text(json.dumps(invalid), encoding="utf-8")
+        path_failure = subprocess.run(
+            [str(Path(sys.executable).resolve()), str(launcher)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertNotEqual(path_failure.returncode, 0)
+        self.assertIn("outside the versioned state location", path_failure.stderr)
+
+        next_install = self.state / "installs" / "0.2.5"
+        next_install.mkdir(parents=True)
+        (next_install / "recorder.py").write_text(
+            "import os\nprint(os.environ.get('HOLYSKILLS_DELIVERY_EFFICIENCY_STATE_DIR', 'missing'))\n",
+            encoding="utf-8",
+        )
+        next_settings = json.loads(original_settings)
+        next_settings["recorder_version"] = "0.2.5"
+        next_settings["install_root"] = str(next_install)
+        settings_path.write_text(json.dumps(next_settings), encoding="utf-8")
+        next_execution = subprocess.run(
+            [str(Path(sys.executable).resolve()), str(launcher)],
+            cwd=str(self.root),
+            env=hostile_environment,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(next_execution.returncode, 0, next_execution.stderr)
+        self.assertEqual(next_execution.stdout, str(self.state) + "\n")
+        self.assertEqual(launcher.read_bytes(), installer.stable_launcher_bytes())
+
+        linked_install = self.state / "installs" / "0.2.6"
+        try:
+            linked_install.symlink_to(next_install, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pass
+        else:
+            linked_settings = json.loads(original_settings)
+            linked_settings["recorder_version"] = "0.2.6"
+            linked_settings["install_root"] = str(linked_install)
+            settings_path.write_text(json.dumps(linked_settings), encoding="utf-8")
+            linked_failure = subprocess.run(
+                [str(Path(sys.executable).resolve()), str(launcher)],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            self.assertNotEqual(linked_failure.returncode, 0)
+            self.assertIn("install_root is missing or unsafe", linked_failure.stderr)
         settings_path.write_bytes(original_settings)
         if os.name != "nt":
             settings_path.chmod(0o600)
@@ -2571,11 +3339,12 @@ class ClaudeHomeInstallerTests(unittest.TestCase):
         contract.mkdir()
         (self.source / "recorder.py").write_text("print('runtime')\n", encoding="utf-8")
         (package / "__init__.py").write_text(
-            "RECORDER_VERSION = '0.2.1'\nSCHEMA_VERSION = '1.1'\nADAPTER_VERSION = '0.2.1'\n",
+            "RECORDER_VERSION = '0.2.4'\nSCHEMA_VERSION = '1.2'\nADAPTER_VERSION = '0.2.3'\n",
             encoding="utf-8",
         )
         (contract / "adapter-event-v1.schema.json").write_text("{}\n", encoding="utf-8")
         (contract / "adapter-event-v1.1.schema.json").write_text("{}\n", encoding="utf-8")
+        (contract / "adapter-event-v1.2.schema.json").write_text("{}\n", encoding="utf-8")
 
     def tearDown(self) -> None:
         self.claude_probe.stop()
@@ -2618,6 +3387,7 @@ class ClaudeHomeInstallerTests(unittest.TestCase):
                 session_start_handler = managed[0]
             self.assertNotIn("commandWindows", managed[0])
             self.assertEqual(managed[0]["command"], str(Path(sys.executable).resolve()))
+            self.assertEqual(managed[0]["args"][0], str(self.state / "recorder.py"))
             self.assertEqual(managed[0]["args"][1:3], ["hook", "claude"])
             self.assertEqual(managed[0]["args"][-2:], ["--managed-id", installer.MANAGED_ID])
             if event == "SessionStart":
@@ -2729,6 +3499,184 @@ class ClaudeHomeInstallerTests(unittest.TestCase):
         installer.apply_install(second)
         self.assertEqual((self.claude_home / "settings.json").read_bytes(), after_first)
         self.assertTrue(all(not action["changed"] for action in second.journal["actions"]))
+
+    def test_023_upgrade_preserves_receiver_and_migrates_handlers_once(self) -> None:
+        previous_version = "0.2.3"
+        previous_port = 4363
+        token = "c" * 64
+        interpreter = Path(sys.executable).resolve()
+        previous_install = self.state / "installs" / previous_version
+        previous_settings = {
+            "schema_version": installer.SETTINGS_SCHEMA_VERSION,
+            "recorder_version": previous_version,
+            "listen_host": "127.0.0.1",
+            "listen_port": previous_port,
+            "auth_token": token,
+            "install_root": str(previous_install),
+            "python_executable": str(interpreter),
+            "platform": installer._platform_info(),
+        }
+        runtime_target = installer._runtime_target_ref(token, "codex", self.codex_home)
+        previous_codex_handler = installer._hook_handler(
+            interpreter,
+            previous_install,
+            self.state,
+            runtime_target,
+        )
+        previous_codex_hooks = installer._render_hooks(
+            b"", previous_codex_handler, None
+        )
+        previous_codex_config = installer._managed_otel_block(
+            previous_port, token
+        ).encode("utf-8")
+        previous_claude_handlers = installer._claude_hook_handlers(
+            interpreter, previous_install, self.state
+        )
+        previous_claude_settings = installer._json_bytes(
+            {
+                "model": "opus",
+                "hooks": {
+                    event: [{"hooks": [handler]}]
+                    for event, handler in previous_claude_handlers.items()
+                },
+                "env": {
+                    "EDITOR": "vim",
+                    **installer._managed_claude_env_for_version(
+                        previous_port, token, previous_version
+                    ),
+                },
+            }
+        )
+        previous_inventory = installer._managed_targets_bytes(
+            [
+                {
+                    "runtime": "claude",
+                    "name": "claude-user",
+                    "home": str(self.claude_home),
+                },
+                {
+                    "runtime": "codex",
+                    "name": "codex-main",
+                    "home": str(self.codex_home),
+                },
+            ]
+        )
+        self.state.mkdir(parents=True)
+        (self.state / "settings.json").write_bytes(installer._json_bytes(previous_settings))
+        (self.state / "managed-targets.json").write_bytes(previous_inventory)
+        (self.codex_home / "hooks.json").write_bytes(previous_codex_hooks)
+        (self.codex_home / "config.toml").write_bytes(previous_codex_config)
+        (self.claude_home / "settings.json").write_bytes(previous_claude_settings)
+
+        plan = self._plan(codex_homes={"codex-main": self.codex_home})
+        self.assertEqual(plan.auth_token, token)
+        self.assertEqual(plan.journal["receiver"]["listen_port"], previous_port)
+        self.assertEqual(
+            plan.journal["receiver"]["listen_port_provenance"],
+            "compatible-upgrade-port-preserved",
+        )
+        self.assertEqual(
+            plan.journal["receiver"]["lifecycle_handoff"],
+            "authenticated-same-port-retirement",
+        )
+        self.assertEqual(plan.journal["receiver"]["auth_token_lifecycle"], "preserved")
+        self.assertTrue(plan.journal["receiver"]["managed_binding_change"])
+
+        actions = {(item["kind"], item["name"]): item for item in plan.journal["actions"]}
+        self.assertTrue(actions[("hooks", "codex-main")]["bytes_changed"])
+        self.assertTrue(actions[("claude-settings", "claude-user")]["bytes_changed"])
+        self.assertFalse(actions[("otel-config", "codex-main")]["bytes_changed"])
+
+        installer.apply_install(plan)
+        codex_value = json.loads(
+            (self.codex_home / "hooks.json").read_text(encoding="utf-8")
+        )
+        codex_handler = codex_value["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+        self.assertEqual(
+            shlex.split(codex_handler["command"])[1],
+            str(self.state / "recorder.py"),
+        )
+        claude_value = self._settings_value()
+        for event in installer.CLAUDE_HOOK_EVENTS:
+            managed = [
+                handler
+                for group in claude_value["hooks"][event]
+                for handler in group["hooks"]
+                if installer._handler_is_managed(handler)
+            ]
+            self.assertEqual(managed[0]["args"][0], str(self.state / "recorder.py"))
+        self.assertEqual(claude_value["env"]["EDITOR"], "vim")
+
+        idempotent = self._plan(codex_homes={"codex-main": self.codex_home})
+        self.assertTrue(all(not action["changed"] for action in idempotent.journal["actions"]))
+
+        installer.rollback_install(plan)
+        self.assertEqual(
+            (self.state / "settings.json").read_bytes(),
+            installer._json_bytes(previous_settings),
+        )
+        self.assertEqual((self.state / "managed-targets.json").read_bytes(), previous_inventory)
+        self.assertEqual((self.codex_home / "hooks.json").read_bytes(), previous_codex_hooks)
+        self.assertEqual((self.codex_home / "config.toml").read_bytes(), previous_codex_config)
+        self.assertEqual((self.claude_home / "settings.json").read_bytes(), previous_claude_settings)
+
+    def test_stable_to_next_upgrade_does_not_rewrite_host_configuration(self) -> None:
+        first = self._plan(
+            codex_homes={"codex-main": self.codex_home},
+            auth_token="d" * 64,
+            listen_port=4364,
+        )
+        installer.apply_install(first)
+        host_paths = (
+            self.codex_home / "hooks.json",
+            self.codex_home / "config.toml",
+            self.claude_home / "settings.json",
+        )
+        before = {
+            path: (path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns)
+            for path in host_paths
+        }
+        source_version = self.source / "delivery_efficiency" / "__init__.py"
+        source_version.write_text(
+            "RECORDER_VERSION = '0.2.5'\nSCHEMA_VERSION = '1.2'\nADAPTER_VERSION = '0.2.3'\n",
+            encoding="utf-8",
+        )
+
+        with mock.patch.object(installer, "RECORDER_VERSION", "0.2.5"):
+            upgrade = self._plan(codex_homes={"codex-main": self.codex_home})
+            self.assertEqual(upgrade.auth_token, first.auth_token)
+            self.assertEqual(upgrade.journal["receiver"]["listen_port"], 4364)
+            self.assertEqual(
+                upgrade.journal["receiver"]["lifecycle_handoff"],
+                "authenticated-same-port-retirement",
+            )
+            self.assertFalse(upgrade.journal["receiver"]["managed_binding_change"])
+            actions = {
+                (item["kind"], item["name"]): item
+                for item in upgrade.journal["actions"]
+            }
+            for key in (
+                ("launcher", "stable"),
+                ("hooks", "codex-main"),
+                ("otel-config", "codex-main"),
+                ("claude-settings", "claude-user"),
+                ("managed-targets", "inventory"),
+            ):
+                self.assertFalse(actions[key]["changed"], key)
+            self.assertTrue(actions[("install-tree", "runtime")]["changed"])
+            self.assertTrue(actions[("settings", "recorder")]["changed"])
+
+            installer.apply_install(upgrade)
+            installer.verify_install(upgrade)
+            for path in host_paths:
+                self.assertEqual(
+                    (path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns),
+                    before[path],
+                    path,
+                )
+            installer.rollback_install(upgrade)
+
+        installer.rollback_install(first)
 
     def test_legacy_claude_handlers_migrate_to_the_low_overhead_event_set(self) -> None:
         interpreter = Path(sys.executable).resolve()
@@ -2907,7 +3855,11 @@ class ClaudeHomeInstallerTests(unittest.TestCase):
         (self.claude_home / "settings.json").write_bytes(previous_claude_bytes)
 
         upgrade = self._plan()
-        self.assertNotEqual(upgrade.journal["receiver"]["listen_port"], previous_port)
+        self.assertEqual(upgrade.journal["receiver"]["listen_port"], previous_port)
+        self.assertEqual(
+            upgrade.journal["receiver"]["lifecycle_handoff"],
+            "authenticated-same-port-retirement",
+        )
         installer.apply_install(upgrade)
         installer.verify_install(upgrade)
         upgraded = self._settings_value()

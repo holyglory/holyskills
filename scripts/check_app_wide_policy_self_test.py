@@ -83,6 +83,41 @@ def main() -> int:
             "missing security assumptions must stop implementation",
         ),
         (
+            "unconditional absent-file baseline",
+            policy
+            + "\nIf security-assumptions.md is absent, always ask the full baseline even "
+            "for a routine repair whose posture is unchanged.\n",
+            "must not trigger an unconditional full baseline",
+        ),
+        (
+            "routine reviewed tool reopens assumptions",
+            policy
+            + "\nRoutine invocation of a reviewed tool always triggers a full baseline "
+            "security interview even when its posture is preserved.\n",
+            "routine posture-preserving tool use must not trigger a security interview",
+        ),
+        (
+            "one assumption triggers unrelated baseline",
+            policy
+            + "\nThe only material assumption is whether the service is remote, but it "
+            "must trigger a full baseline before the control decision.\n",
+            "one material assumption must not trigger an unrelated full baseline",
+        ),
+        (
+            "fixed exhaustive question",
+            policy
+            + "\nAlways present every decision detail whether or not it can materially "
+            "affect the choice.\n",
+            "decision questions must not require fixed exhaustive detail",
+        ),
+        (
+            "unresolved material control assumption",
+            policy
+            + "\nProceed with the security control despite an unresolved material "
+            "assumption.\n",
+            "material control decision must not proceed on an unresolved material assumption",
+        ),
+        (
             "inferred threat model",
             policy
             + "\nAgents should infer an internet-facing threat model when project facts "
@@ -170,13 +205,11 @@ def main() -> int:
             "silent scope expansion must remain prohibited",
         ),
         (
-            "material-only expansion question",
-            policy.replace(
-                "Before acting on every potential over-engineering expansion",
-                "Before acting on a material over-engineering expansion",
-                1,
-            ),
-            "every potential engineering expansion",
+            "blanket question for every potential expansion",
+            policy
+            + "\nEvery potential over-engineering expansion must trigger a comprehensive "
+            "question, even when no answer can change the work.\n",
+            "immaterial potential expansions must not trigger blanket questions",
         ),
         (
             "restart at first gap",
@@ -201,7 +234,7 @@ def main() -> int:
         (
             "missing expansion approval",
             policy.replace(
-                "Do not\n  begin the expansion until the user approves it",
+                "Do not begin a material expansion until the user approves\n  it",
                 "The agent may begin the expansion while waiting for a response",
                 1,
             ),
@@ -278,6 +311,94 @@ def main() -> int:
             "collection destinations must not lead with forms",
         ),
         (
+            "missing implemented-product-behavior contract",
+            replace_section(
+                policy,
+                "Prohibit unimplemented product behavior",
+                "- Render each requested screen and verify its routes and screenshots.",
+            ),
+            "implemented-product-behavior contract",
+        ),
+        (
+            "enabled placeholder control",
+            policy + "\nPlaceholder controls may remain enabled until backend work begins.\n",
+            "must not remain enabled",
+        ),
+        (
+            "complete UI with inert behavior",
+            policy + "\nThe agent may report the interface complete with inert agreed controls.\n",
+            "must not be reported complete",
+        ),
+        (
+            "optional interaction inventory",
+            policy + "\nThe interaction inventory is optional for ordinary UI work.\n",
+            "must not be optional or skippable",
+        ),
+        (
+            "agent may skip interaction inventory",
+            policy + "\nAgents may skip the interaction inventory for ordinary UI work.\n",
+            "must not be optional or skippable",
+        ),
+        (
+            "representative controls replace inventory",
+            policy + "\nTesting representative controls is sufficient for UI completion.\n",
+            "must not substitute for the complete agreed UI inventory",
+        ),
+        (
+            "representative subset replaces inventory",
+            policy + "\nOnly a representative subset of controls needs to be exercised.\n",
+            "must not substitute for the complete agreed UI inventory",
+        ),
+        (
+            "generic UI gap ledger",
+            policy + "\nA generic future-production completion-ledger item is acceptable.\n",
+            "must not conceal distinct missing UI behavior",
+        ),
+        (
+            "catch-all ledger covers UI gaps",
+            policy + "\nA single catch-all ledger entry may cover all missing UI behavior.\n",
+            "must not conceal distinct missing UI behavior",
+        ),
+        (
+            "unlabelled future control",
+            policy + "\nFuture controls need not be labelled unavailable.\n",
+            "must retain the disabled, unavailable, and ledger gates",
+        ),
+        (
+            "clickable future control",
+            policy + "\nFuture controls may remain clickable while marked as planned.\n",
+            "must not remain enabled",
+        ),
+        (
+            "interaction inventory authorizes audit",
+            policy + "\nThe interaction inventory automatically authorizes a broader exhaustive audit.\n",
+            "must not authorize a broader audit",
+        ),
+        (
+            "complete with tracked future control",
+            policy
+            + "\nThe agent may report the UI complete while a future control remains "
+            "unimplemented in the completion ledger.\n",
+            "must not be reported complete",
+        ),
+        (
+            "screenshots substitute for interaction",
+            policy + "\nScreenshots count as interaction verification for visible controls.\n",
+            "must not count as interaction verification",
+        ),
+        (
+            "screenshots substitute despite later negation",
+            policy
+            + "\nScreenshots prove interaction verification, so rendered interaction is "
+            "not needed.\n",
+            "must not count as interaction verification",
+        ),
+        (
+            "handler substitutes for interaction",
+            policy + "\nA handler proves working behavior without exercising the control.\n",
+            "must not prove product interaction",
+        ),
+        (
             "missing content-first UI",
             replace_section(
                 policy,
@@ -301,38 +422,45 @@ def main() -> int:
         result = messages(candidate)
         check(expected in result, f"{name} fixture did not trigger {expected!r}: {result}")
 
-    missing_question_details = (
+    missing_proportional_question_terms = (
         (
-            "risk-control domains",
-            "especially security, privacy,\n  backup, migration, preservation, or data-safety work",
-            "especially optional engineering work",
-            "security",
-        ),
-        ("concrete proposal", "concrete proposal", "general idea", "concrete proposal"),
-        (
-            "evidence scenario and likelihood",
-            "evidence, scenario, and assessed likelihood",
-            "general context",
-            "assessed likelihood",
-        ),
-        ("expected benefit", "expected benefit", "possible outcome", "expected benefit"),
-        (
-            "cost complexity and maintenance",
-            "cost,\n  complexity, and ongoing maintenance",
-            "delivery notes",
-            "ongoing maintenance",
+            "wrong-answer materiality threshold",
+            "only when an unresolved answer could plausibly change",
+            "whenever the agent notices an optional idea",
+            "only when an unresolved answer could plausibly change",
         ),
         (
-            "doing and not-doing risks",
-            "risks of doing it and not doing it",
-            "general risks",
-            "risks of doing it and not doing it",
+            "meaningful rework threshold",
+            "meaningful rework or over-engineering",
+            "any amount of work",
+            "meaningful rework or over-engineering",
         ),
-        ("realistic alternatives", "realistic alternatives", "other ideas", "realistic alternatives"),
-        ("reversibility", "reversibility", "future handling", "reversibility"),
-        ("clear recommendation", "clear recommendation", "summary", "clear recommendation"),
+        (
+            "concise default",
+            "concise by\n  default",
+            "comprehensive by\n  default",
+            "concise by default",
+        ),
+        (
+            "impact-proportional detail",
+            "detail proportional to the impact",
+            "same exhaustive detail for every choice",
+            "detail proportional to the impact",
+        ),
+        (
+            "decision-factor boundary",
+            "only to the extent they\n  affect the choice",
+            "whether or not they affect the choice",
+            "only to the extent they affect the choice",
+        ),
+        (
+            "reviewed-tool false-positive boundary",
+            "does not trigger an expansion\n  interview",
+            "always triggers an expansion\n  interview",
+            "does not trigger an expansion interview",
+        ),
     )
-    for name, old, new, expected in missing_question_details:
+    for name, old, new, expected in missing_proportional_question_terms:
         candidate = replace_last(policy, old, new)
         result = messages(candidate)
         check(
@@ -358,6 +486,39 @@ def main() -> int:
     check(
         not MODULE.find_policy_violations(explicit_safeguards),
         "explicit negative safeguards must not be treated as contradictory instructions",
+    )
+
+    truthful_prototype = policy + (
+        "\nA mock-data prototype may use a synthetic catalog while every enabled filter, "
+        "form, cancellation path, and validation error works within the declared prototype "
+        "boundary. It is reported as a prototype, not as production integration.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(truthful_prototype),
+        "truthful synthetic prototype interactions must remain valid",
+    )
+
+    specified_future_control = policy + (
+        "\nThe specification asks the interface to communicate a future export action. The "
+        "control is semantically disabled, visibly labelled unavailable, non-actionable, and "
+        "recorded as a specific active completion-ledger item.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(specified_future_control),
+        "an explicitly specified disabled future control must remain valid",
+    )
+
+    negative_interaction_safeguards = policy + (
+        "\nScreenshots fail to prove interaction verification, and a handler is insufficient "
+        "to prove working behavior. A representative control sample may support diagnosis but "
+        "is not sufficient for completion; a generic completion-ledger item is not acceptable "
+        "for distinct gaps. Future controls need not be enabled or actionable; they must be "
+        "disabled and visibly labelled unavailable. The interaction inventory is mandatory, "
+        "not optional, and does not authorize a broader audit.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(negative_interaction_safeguards),
+        "negative UI safeguards must not trigger positive-weakening detectors",
     )
 
     credible_in_scope_backup = policy + (
@@ -410,6 +571,36 @@ def main() -> int:
     check(
         not MODULE.find_policy_violations(assumption_backed_expansion),
         "confirmed assumptions must not replace expansion approval",
+    )
+
+    reviewed_non_rotating_repair = policy + (
+        "\nA reviewed non-rotating recorder repair preserves the named homes, endpoint "
+        "boundary, credential, controls, and documented posture. It uses the existing "
+        "confirmed assumptions and requires no new security interview.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(reviewed_non_rotating_repair),
+        "posture-preserving reviewed tool execution must pass without an interview",
+    )
+
+    one_material_question = policy + (
+        "\nThe sole unresolved material assumption is whether another OS account uses the "
+        "runtime. Ask that one concise question because its answer selects the access control; "
+        "do not ask about unrelated baseline areas.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(one_material_question),
+        "one concise decision-material security question must pass",
+    )
+
+    justified_full_baseline = policy + (
+        "\nA new remotely operated multi-user service has no assumptions record, and the "
+        "pending architecture and control set materially depend on every baseline area. Ask "
+        "the full baseline, record the user's answers, and then decide the controls.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(justified_full_baseline),
+        "a full baseline must pass when every area is material to the concrete decision",
     )
 
     explicit_security_safeguards = policy + (

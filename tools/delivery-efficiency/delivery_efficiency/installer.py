@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import errno
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -36,7 +37,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 
 from . import (
     CLAUDE_HOOK_TIMEOUT_SECONDS,
@@ -97,6 +98,10 @@ CLAUDE_LEGACY_HOOK_EVENTS = (
 CLAUDE_MANAGED_ENV_KEY = "CLAUDE_CODE_ENABLE_TELEMETRY"
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _LOWER_HEX_64 = re.compile(r"^[0-9a-f]{64}$")
+_RUNTIME_TARGET_PATTERN = re.compile(r"^target_v1_[0-9a-f]{32}$")
+_RUNTIME_TARGET_DOMAIN = b"holyskills-delivery-efficiency:runtime-target:v1"
+_RUNTIME_TARGET_MIN_VERSION = (0, 2, 3)
+_STABLE_HOOK_LAUNCHER_MIN_VERSION = (0, 2, 4)
 _WINDOWS_RETRY_ERRORS = {5, 32, 33}
 _MAX_CONFIG_BYTES = 4 * 1024 * 1024
 _MAX_MANAGED_TARGETS = 1024
@@ -111,6 +116,10 @@ class InstallerError(RuntimeError):
 
 class InstallerConflict(InstallerError):
     """An existing configuration cannot be safely owned or merged."""
+
+
+class InstallerTransactionIdentityConflict(InstallerConflict):
+    """The held transaction directory no longer has its reviewed identity."""
 
 
 class InstallerDrift(InstallerError):
@@ -671,7 +680,7 @@ def _settings_value(
 
 
 def stable_launcher_bytes() -> bytes:
-    """Return the path-independent launcher copied directly under state_root."""
+    """Return the version-neutral launcher copied directly under state_root."""
 
     template = '''#!/usr/bin/env python3
 """Stable entry point for the installed Holy Skills delivery recorder."""
@@ -679,14 +688,45 @@ def stable_launcher_bytes() -> bytes:
 import json
 import os
 from pathlib import Path
+import re
 import runpy
+import stat
 
 
-EXPECTED_VERSION = "__RECORDER_VERSION__"
-STATE_ROOT = Path(__file__).resolve().parent
+VERSION_PATTERN = re.compile(r"^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")
+REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+
+
+def is_link_or_reparse(path):
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return False
+    return stat.S_ISLNK(metadata.st_mode) or bool(
+        getattr(metadata, "st_file_attributes", 0) & REPARSE_POINT
+    )
+
+
+def has_link_component(path):
+    absolute = Path(os.path.abspath(str(path)))
+    parts = absolute.parts
+    if not parts:
+        return True
+    current = Path(parts[0])
+    for part in parts[1:]:
+        current = current / part
+        if is_link_or_reparse(current):
+            return True
+    return False
+
+
+LAUNCHER_PATH = Path(os.path.abspath(__file__))
+if has_link_component(LAUNCHER_PATH) or not LAUNCHER_PATH.is_file():
+    raise SystemExit("delivery-efficiency launcher topology is unsafe")
+STATE_ROOT = LAUNCHER_PATH.parent
 SETTINGS_PATH = STATE_ROOT / "settings.json"
 
-if SETTINGS_PATH.is_symlink() or not SETTINGS_PATH.is_file():
+if has_link_component(SETTINGS_PATH) or not SETTINGS_PATH.is_file():
     raise SystemExit("delivery-efficiency settings are missing or unsafe")
 raw = SETTINGS_PATH.read_bytes()
 if len(raw) > 65536:
@@ -695,32 +735,65 @@ try:
     settings = json.loads(raw.decode("utf-8"))
 except (UnicodeDecodeError, json.JSONDecodeError):
     raise SystemExit("delivery-efficiency settings are not valid UTF-8 JSON")
-if not isinstance(settings, dict) or settings.get("recorder_version") != EXPECTED_VERSION:
-    raise SystemExit("delivery-efficiency settings version does not match the launcher")
+if not isinstance(settings, dict) or settings.get("schema_version") != 1:
+    raise SystemExit("delivery-efficiency settings schema is unsupported")
+version = settings.get("recorder_version")
+if not isinstance(version, str) or VERSION_PATTERN.fullmatch(version) is None:
+    raise SystemExit("delivery-efficiency recorder_version is invalid")
 install_value = settings.get("install_root")
 if not isinstance(install_value, str):
     raise SystemExit("delivery-efficiency install_root is invalid")
 install_root = Path(install_value)
 if not install_root.is_absolute():
     raise SystemExit("delivery-efficiency install_root must be absolute")
-expected_root = STATE_ROOT / "installs" / EXPECTED_VERSION
+expected_root = STATE_ROOT / "installs" / version
 if os.path.normcase(os.path.abspath(str(install_root))) != os.path.normcase(os.path.abspath(str(expected_root))):
     raise SystemExit("delivery-efficiency install_root is outside the versioned state location")
-if (STATE_ROOT / "installs").is_symlink() or install_root.is_symlink() or not install_root.is_dir():
+if has_link_component(install_root) or not install_root.is_dir():
     raise SystemExit("delivery-efficiency install_root is missing or unsafe")
 entry = install_root / "recorder.py"
-if entry.is_symlink() or not entry.is_file():
+if has_link_component(entry) or not entry.is_file():
     raise SystemExit("delivery-efficiency installed entry point is missing or unsafe")
 os.environ["HOLYSKILLS_DELIVERY_EFFICIENCY_STATE_DIR"] = str(STATE_ROOT)
 runpy.run_path(str(entry), run_name="__main__")
 '''
-    return template.replace("__RECORDER_VERSION__", RECORDER_VERSION).encode("utf-8")
+    return template.encode("utf-8")
 
 
-def _hook_arguments(python_executable: Path, install_root: Path, state_root: Path) -> List[str]:
-    return [
+def _runtime_target_ref(
+    auth_token: str,
+    runtime: str,
+    canonical_home: Union[str, os.PathLike[str]],
+) -> str:
+    """Derive non-secret, path-hiding correlation metadata for one runtime home."""
+
+    token = _validate_token(auth_token)
+    if runtime not in {"codex", "claude"}:
+        raise InstallerError("runtime target family is unsupported")
+    home = Path(canonical_home)
+    if not home.is_absolute():
+        raise InstallerError("runtime target home must be an absolute canonical path")
+    normalized_home = _normalized_path_text(home)
+    message = b"\x00".join(
+        (
+            _RUNTIME_TARGET_DOMAIN,
+            runtime.encode("ascii"),
+            normalized_home.encode("utf-8"),
+        )
+    )
+    digest = hmac.new(bytes.fromhex(token), message, hashlib.sha256).hexdigest()
+    return "target_v1_" + digest[:32]
+
+
+def _hook_arguments(
+    python_executable: Path,
+    entry_root: Path,
+    state_root: Path,
+    runtime_target: Optional[str] = None,
+) -> List[str]:
+    arguments = [
         str(python_executable),
-        str(install_root / "recorder.py"),
+        str(entry_root / "recorder.py"),
         "hook",
         "codex",
         "--state-dir",
@@ -728,6 +801,13 @@ def _hook_arguments(python_executable: Path, install_root: Path, state_root: Pat
         "--managed-id",
         MANAGED_ID,
     ]
+    if runtime_target is not None:
+        if not isinstance(runtime_target, str) or not _RUNTIME_TARGET_PATTERN.fullmatch(
+            runtime_target
+        ):
+            raise InstallerError("runtime target reference is invalid")
+        arguments.extend(("--runtime-target", runtime_target))
+    return arguments
 
 
 def build_posix_hook_command(arguments: Sequence[str]) -> str:
@@ -757,8 +837,18 @@ def build_windows_hook_command(arguments: Sequence[str]) -> str:
     return "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}".format(encoded)
 
 
-def _hook_handler(python_executable: Path, install_root: Path, state_root: Path) -> Dict[str, Any]:
-    arguments = _hook_arguments(python_executable, install_root, state_root)
+def _hook_handler(
+    python_executable: Path,
+    entry_root: Path,
+    state_root: Path,
+    runtime_target: Optional[str] = None,
+) -> Dict[str, Any]:
+    arguments = _hook_arguments(
+        python_executable,
+        entry_root,
+        state_root,
+        runtime_target,
+    )
     return {
         "type": "command",
         "command": build_posix_hook_command(arguments),
@@ -776,10 +866,10 @@ def _handler_is_managed(handler: Any) -> bool:
     return isinstance(arguments, list) and MANAGED_ID in arguments
 
 
-def _claude_hook_arguments(python_executable: Path, install_root: Path, state_root: Path) -> List[str]:
+def _claude_hook_arguments(python_executable: Path, entry_root: Path, state_root: Path) -> List[str]:
     return [
         str(python_executable),
-        str(install_root / "recorder.py"),
+        str(entry_root / "recorder.py"),
         "hook",
         "claude",
         "--state-dir",
@@ -791,7 +881,7 @@ def _claude_hook_arguments(python_executable: Path, install_root: Path, state_ro
 
 def _claude_hook_handler(
     python_executable: Path,
-    install_root: Path,
+    entry_root: Path,
     state_root: Path,
     event: str = "SessionStart",
     *,
@@ -800,7 +890,7 @@ def _claude_hook_handler(
 ) -> Dict[str, Any]:
     """One shell-free Claude command hook with exact argv boundaries."""
 
-    arguments = _claude_hook_arguments(python_executable, install_root, state_root)
+    arguments = _claude_hook_arguments(python_executable, entry_root, state_root)
     if legacy_shell_command and _platform_info()["os"] == "windows":
         command = build_windows_hook_command(arguments)
         handler: Dict[str, Any] = {"type": "command", "command": command}
@@ -828,7 +918,7 @@ def _claude_hook_handler(
 
 def _claude_hook_handlers(
     python_executable: Path,
-    install_root: Path,
+    entry_root: Path,
     state_root: Path,
     *,
     legacy_uniform_timeout: bool = False,
@@ -839,7 +929,7 @@ def _claude_hook_handlers(
     return {
         event: _claude_hook_handler(
             python_executable,
-            install_root,
+            entry_root,
             state_root,
             event,
             legacy_uniform_timeout=legacy_uniform_timeout,
@@ -1103,9 +1193,15 @@ def _previous_claude_handlers(
         return None
     previous_version = _semantic_version(settings.get("recorder_version"), fullmatch=True)
     legacy_uniform_timeout = previous_version is None or previous_version < (0, 1, 3)
+    entry_root = (
+        state_root
+        if previous_version is not None
+        and previous_version >= _STABLE_HOOK_LAUNCHER_MIN_VERSION
+        else install
+    )
     return _claude_hook_handlers(
         python,
-        install,
+        entry_root,
         state_root,
         legacy_uniform_timeout=legacy_uniform_timeout,
         legacy_shell_command=legacy_uniform_timeout,
@@ -1256,6 +1352,12 @@ def _toml_without_comments(line: str) -> str:
 
 _OTEL_TABLE = re.compile(r"^\s*\[\[?\s*(?:otel|[\"']otel[\"'])(?=\s*(?:[.\]]))", re.IGNORECASE)
 _OTEL_KEY = re.compile(r"^\s*(?:otel|[\"']otel[\"'])\s*(?:\.|=)", re.IGNORECASE)
+_TOML_TABLE_HEADER = re.compile(
+    r"^\s*(?:"
+    r"\[\[\s*[A-Za-z0-9_-]+(?:\s*\.\s*[A-Za-z0-9_-]+)*\s*\]\]"
+    r"|\[\s*[A-Za-z0-9_-]+(?:\s*\.\s*[A-Za-z0-9_-]+)*\s*\]"
+    r")\s*$"
+)
 
 
 def _contains_otel_definition(text: str) -> bool:
@@ -1307,6 +1409,42 @@ def _decode_toml(raw: bytes) -> Tuple[str, bytes]:
         raise InstallerConflict("Codex config.toml is not valid UTF-8") from error
 
 
+def _displaced_managed_otel_suffix(
+    current: str,
+    acceptable_blocks: Sequence[str],
+    newline: str,
+) -> Optional[str]:
+    """Return bytes a host writer appended before the managed end marker.
+
+    The recovery is deliberately narrower than TOML parsing: the recorder
+    payload and marker must remain byte-exact, and the first semantic line
+    displaced after that payload must close the `[otel]` table by opening a
+    different TOML table. Any OTel definition anywhere in the displaced bytes
+    remains a conflict.
+    """
+
+    marker = MANAGED_END + newline
+    if not current.endswith(marker):
+        return None
+    for acceptable in acceptable_blocks:
+        if not acceptable.endswith(marker):
+            continue
+        payload = acceptable[: -len(marker)]
+        if not current.startswith(payload):
+            continue
+        displaced = current[len(payload) : -len(marker)]
+        if not displaced or _contains_otel_definition(displaced):
+            continue
+        for line in displaced.splitlines():
+            semantic = _toml_without_comments(line).strip()
+            if not semantic:
+                continue
+            if _TOML_TABLE_HEADER.fullmatch(semantic):
+                return displaced
+            break
+    return None
+
+
 def _render_otel_config(
     original: bytes,
     *,
@@ -1333,12 +1471,16 @@ def _render_otel_config(
     prefix, current, suffix = split
     if _contains_otel_definition(prefix) or _contains_otel_definition(suffix):
         raise InstallerConflict("Codex config.toml defines otel outside the managed telemetry block")
-    acceptable = current == wanted
-    if not acceptable and previous_port is not None and previous_token is not None:
-        acceptable = current == _managed_otel_block(previous_port, previous_token, newline)
-    if not acceptable:
+    acceptable_blocks = [wanted]
+    if previous_port is not None and previous_token is not None:
+        acceptable_blocks.append(_managed_otel_block(previous_port, previous_token, newline))
+    if current in acceptable_blocks:
+        displaced = ""
+    else:
+        displaced = _displaced_managed_otel_suffix(current, acceptable_blocks, newline)
+    if displaced is None:
         raise InstallerConflict("managed Codex otel block was edited outside the installer")
-    return bom + (prefix + wanted + suffix).encode("utf-8")
+    return bom + (prefix + wanted + displaced + suffix).encode("utf-8")
 
 
 def _retire_otel_config(
@@ -1355,9 +1497,14 @@ def _retire_otel_config(
     prefix, current, suffix = split
     if _contains_otel_definition(prefix) or _contains_otel_definition(suffix):
         raise InstallerConflict("Codex config.toml defines otel outside the managed telemetry block")
-    if current != _managed_otel_block(previous_port, previous_token, newline):
+    previous = _managed_otel_block(previous_port, previous_token, newline)
+    if current == previous:
+        displaced = ""
+    else:
+        displaced = _displaced_managed_otel_suffix(current, [previous], newline)
+    if displaced is None:
         raise InstallerConflict("managed Codex otel block was edited outside the installer")
-    return bom + (prefix + suffix).encode("utf-8")
+    return bom + (prefix + displaced + suffix).encode("utf-8")
 
 
 def _file_state(path: Path) -> Dict[str, Any]:
@@ -1592,7 +1739,11 @@ def _read_or_empty(path: Path) -> bytes:
     return path.read_bytes() if path.exists() else b""
 
 
-def _previous_handler(settings: Optional[Dict[str, Any]], state_root: Path) -> Optional[Dict[str, Any]]:
+def _previous_handler(
+    settings: Optional[Dict[str, Any]],
+    state_root: Path,
+    canonical_home: Path,
+) -> Optional[Dict[str, Any]]:
     if settings is None:
         return None
     try:
@@ -1600,7 +1751,20 @@ def _previous_handler(settings: Optional[Dict[str, Any]], state_root: Path) -> O
         install = Path(settings["install_root"])
     except (KeyError, TypeError):
         return None
-    return _hook_handler(python, install, state_root)
+    version = _semantic_version(settings.get("recorder_version"), fullmatch=True)
+    runtime_target = None
+    if version is not None and version >= _RUNTIME_TARGET_MIN_VERSION:
+        runtime_target = _runtime_target_ref(
+            settings["auth_token"],
+            "codex",
+            canonical_home,
+        )
+    entry_root = (
+        state_root
+        if version is not None and version >= _STABLE_HOOK_LAUNCHER_MIN_VERSION
+        else install
+    )
+    return _hook_handler(python, entry_root, state_root, runtime_target)
 
 
 def _plan_home(
@@ -1823,21 +1987,23 @@ def plan_install(
     explicit_token_change = bool(
         previous_settings and auth_token is not None and auth_token != previous_settings["auth_token"]
     )
-    ownership_change = bool(is_version_change or rotate_auth_token or explicit_token_change)
-    rotate_port_by_default = bool(previous_settings and ownership_change)
+    credential_change = bool(previous_settings and (rotate_auth_token or explicit_token_change))
+    rotate_port_by_default = bool(previous_settings and (legacy_upgrade or credential_change))
     if listen_port is None:
         if rotate_port_by_default:
             selected_port, port_selection_detail = _allocate_upgrade_port(previous_settings["listen_port"])
             if legacy_upgrade:
                 port_provenance = "legacy-upgrade-port-rotation"
-            elif is_version_change:
-                port_provenance = "version-upgrade-port-rotation"
             else:
                 port_provenance = "auth-rotation-port-rotation"
         elif previous_settings:
             selected_port = previous_settings["listen_port"]
-            port_provenance = "persisted-existing"
-            port_selection_detail = "persisted-existing"
+            if is_version_change:
+                port_provenance = "compatible-upgrade-port-preserved"
+                port_selection_detail = "authenticated-retirement-supported"
+            else:
+                port_provenance = "persisted-existing"
+                port_selection_detail = "persisted-existing"
         else:
             selected_port, port_provenance = _allocate_loopback_port()
             port_selection_detail = port_provenance
@@ -1847,9 +2013,9 @@ def plan_install(
         port_selection_detail = "caller-explicit"
     if not isinstance(selected_port, int) or isinstance(selected_port, bool) or not 1 <= selected_port <= 65535:
         raise InstallerError("listen_port must be an integer between 1 and 65535")
-    if previous_settings and ownership_change and selected_port == previous_settings["listen_port"]:
+    if previous_settings and (legacy_upgrade or credential_change) and selected_port == previous_settings["listen_port"]:
         raise InstallerConflict(
-            "receiver ownership changes require a distinct listen_port for portable handoff"
+            "credential changes and legacy upgrades require a distinct listen_port for portable handoff"
         )
     if rotate_auth_token:
         selected_token = secrets.token_hex(32)
@@ -1860,12 +2026,21 @@ def plan_install(
     else:
         selected_token = _validate_token(auth_token)
         token_lifecycle = "caller-explicit"
+    previous_semantic_version = _semantic_version(previous_version, fullmatch=True)
+    stable_handler_migration = bool(
+        previous_settings
+        and (
+            previous_semantic_version is None
+            or previous_semantic_version < _STABLE_HOOK_LAUNCHER_MIN_VERSION
+        )
+    )
     binding_change = bool(
         previous_settings
         and (
-            ownership_change
+            credential_change
             or selected_port != previous_settings["listen_port"]
             or str(interpreter) != previous_settings["python_executable"]
+            or stable_handler_migration
         )
     )
 
@@ -1880,9 +2055,7 @@ def plan_install(
     launcher_path = state / "recorder.py"
     launcher_after = stable_launcher_bytes()
     launcher_state = _file_state(launcher_path)
-    new_handler = _hook_handler(interpreter, install_root, state)
-    old_handler = _previous_handler(previous_settings, state)
-    new_claude_handlers = _claude_hook_handlers(interpreter, install_root, state)
+    new_claude_handlers = _claude_hook_handlers(interpreter, state, state)
     old_claude_handlers = _previous_claude_handlers(previous_settings, state)
 
     homes: List[Dict[str, Any]] = []
@@ -1894,6 +2067,14 @@ def plan_install(
         if any(_paths_overlap(existing, home) for existing in seen_paths):
             raise InstallerError("Codex home paths must not duplicate or contain one another: {}".format(home))
         seen_paths.append(home)
+        runtime_target = _runtime_target_ref(selected_token, "codex", home)
+        new_handler = _hook_handler(
+            interpreter,
+            state,
+            state,
+            runtime_target,
+        )
+        old_handler = _previous_handler(previous_settings, state, home)
         homes.append(
             _plan_home(
                 name,
@@ -1989,13 +2170,18 @@ def plan_install(
 
     if retirement_requests and previous_settings is None:
         raise InstallerConflict("target retirement requires an existing managed installation")
-    if retirement_requests and (old_handler is None or old_claude_handlers is None):
+    if retirement_requests and (
+        previous_settings is None or old_claude_handlers is None
+    ):
         raise InstallerConflict("prior managed hook identity cannot be reconstructed")
     retired_codex_specs: List[Dict[str, Any]] = []
     retired_claude_specs: List[Dict[str, Any]] = []
     for retirement in retirement_requests:
         home = Path(retirement["home"])
         if retirement["runtime"] == "codex":
+            old_handler = _previous_handler(previous_settings, state, home)
+            if old_handler is None:
+                raise InstallerConflict("prior managed Codex hook identity cannot be reconstructed")
             retired_codex_specs.append(
                 _plan_retired_codex_home(
                     retirement["name"],
@@ -2083,8 +2269,15 @@ def plan_install(
             "lifecycle_handoff": (
                 "legacy-port-rotation"
                 if legacy_upgrade
-                else "authenticated-retirement-and-settings-drift"
-                if ownership_change
+                else "credential-change-port-rotation"
+                if credential_change
+                else "authenticated-same-port-retirement"
+                if is_version_change
+                and previous_settings is not None
+                and selected_port == previous_settings["listen_port"]
+                else "settings-drift-port-change"
+                if previous_settings is not None
+                and selected_port != previous_settings["listen_port"]
                 else "not-applicable"
             ),
             "auth_header": AUTH_HEADER,
@@ -2303,6 +2496,8 @@ def _publish_windows_stage_no_replace(
     plan: InstallPlan,
     action: Dict[str, Any],
     anchor: _DirectoryAnchor,
+    *,
+    mutation_guard: Optional[Callable[[], None]] = None,
 ) -> None:
     """Publish the exact reviewed stage object while its handle stays held."""
 
@@ -2317,6 +2512,8 @@ def _publish_windows_stage_no_replace(
     handle = int(binding["handle"])
     captured = dict(binding["identity"])
     _require_directory_anchor(anchor)
+    if mutation_guard is not None:
+        mutation_guard()
     try:
         _windows_rename_handle_no_replace(
             handle,
@@ -2358,15 +2555,23 @@ def _publish_prepared_stage_no_replace(
     plan: InstallPlan,
     action: Dict[str, Any],
     anchor: _DirectoryAnchor,
+    *,
+    mutation_guard: Optional[Callable[[], None]] = None,
 ) -> None:
     if os.name == "nt":  # pragma: no cover - native Windows CI
         _ensure_windows_stage_binding(plan, action)
-        _publish_windows_stage_no_replace(plan, action, anchor)
+        _publish_windows_stage_no_replace(
+            plan,
+            action,
+            anchor,
+            mutation_guard=mutation_guard,
+        )
         return
     _atomic_move_no_replace(
         Path(action["stage_path"]),
         Path(action["path"]),
         anchor=anchor,
+        mutation_guard=mutation_guard,
     )
 
 
@@ -2411,6 +2616,7 @@ def _atomic_move_no_replace(
     destination: Path,
     *,
     anchor: _DirectoryAnchor,
+    mutation_guard: Optional[Callable[[], None]] = None,
 ) -> None:
     """Move adjacent names through one held reviewed parent identity."""
 
@@ -2424,6 +2630,8 @@ def _atomic_move_no_replace(
     ):
         raise InstallerConflict("atomic no-replace move escaped its held target parent")
     _require_directory_anchor(anchor)
+    if mutation_guard is not None:
+        mutation_guard()
     try:
         if os.name == "nt":
             _windows_move_no_replace(source, destination)
@@ -2744,7 +2952,7 @@ def _load_plan_held(
         "transaction directory",
     )
     if anchor.identity != expected_transaction_identity:
-        raise InstallerConflict(
+        raise InstallerTransactionIdentityConflict(
             "held transaction directory identity differs from the reviewed transaction"
         )
     _require_directory_anchor(anchor)
@@ -4675,8 +4883,6 @@ def _prepare_apply(plan: InstallPlan) -> Dict[str, Any]:
     launcher_after = stable_launcher_bytes()
     if _sha256(launcher_after) != launcher_spec["after_sha256"]:
         raise InstallerDrift("planned stable launcher output cannot be reproduced")
-    new_handler = _hook_handler(interpreter, install_root, state)
-    old_handler = _previous_handler(previous_settings, state)
 
     home_outputs: List[Dict[str, Any]] = []
     for home_spec in journal["codex_homes"]:
@@ -4699,6 +4905,14 @@ def _prepare_apply(plan: InstallPlan) -> Dict[str, Any]:
             "{} config.toml".format(home_spec["name"]),
             anchor=action_anchor("otel-config", home_spec["name"]),
         )
+        runtime_target = _runtime_target_ref(plan.auth_token, "codex", home)
+        new_handler = _hook_handler(
+            interpreter,
+            state,
+            state,
+            runtime_target,
+        )
+        old_handler = _previous_handler(previous_settings, state, home)
         hooks_after = _render_hooks(hooks_before, new_handler, old_handler)
         config_after = _render_otel_config(
             config_before,
@@ -4724,7 +4938,7 @@ def _prepare_apply(plan: InstallPlan) -> Dict[str, Any]:
             }
         )
 
-    new_claude_handlers = _claude_hook_handlers(interpreter, install_root, state)
+    new_claude_handlers = _claude_hook_handlers(interpreter, state, state)
     old_claude_handlers = _previous_claude_handlers(previous_settings, state)
     claude_home_outputs: List[Dict[str, Any]] = []
     for home_spec in journal.get("claude_homes", []):
@@ -4767,7 +4981,7 @@ def _prepare_apply(plan: InstallPlan) -> Dict[str, Any]:
         )
     retired_home_outputs: List[Dict[str, Any]] = []
     if journal.get("retired_codex_homes"):
-        if previous_settings is None or old_handler is None:
+        if previous_settings is None:
             raise InstallerDrift("prior Codex handler cannot be reconstructed for retirement")
         for home_spec in journal["retired_codex_homes"]:
             home = _absolute_path(home_spec["home"], "planned retired Codex home")
@@ -4787,6 +5001,9 @@ def _prepare_apply(plan: InstallPlan) -> Dict[str, Any]:
                 "{} retired config.toml".format(home_spec["name"]),
                 anchor=action_anchor("retired-otel-config", home_spec["name"]),
             )
+            old_handler = _previous_handler(previous_settings, state, home)
+            if old_handler is None:
+                raise InstallerDrift("prior Codex handler cannot be reconstructed for retirement")
             hooks_after = _retire_hooks(hooks_before, old_handler)
             config_after = _retire_otel_config(
                 config_before,
@@ -5518,6 +5735,7 @@ def _apply_one_action(
     *,
     source: Optional[Path] = None,
     data: Optional[bytes] = None,
+    mutation_guard: Optional[Callable[[], None]] = None,
 ) -> None:
     if not action["changed"]:
         action["applied"] = False
@@ -5559,6 +5777,7 @@ def _apply_one_action(
             Path(action["path"]),
             Path(action["before_path"]),
             anchor=_anchor_for_action(plan, action),
+            mutation_guard=mutation_guard,
         )
         state = _held_action_namespace(plan, action)
         if state["target"] != "missing" or state["before"] != "before":
@@ -5591,7 +5810,12 @@ def _apply_one_action(
         )
         raise InstallerDrift("apply publish boundary changed; artifacts were retained")
     anchor = _anchor_for_action(plan, action)
-    _publish_prepared_stage_no_replace(plan, action, anchor)
+    _publish_prepared_stage_no_replace(
+        plan,
+        action,
+        anchor,
+        mutation_guard=mutation_guard,
+    )
     if _apply_namespace_case(plan, action) != "applied":
         _journal_action_progress(
             plan,
@@ -5714,6 +5938,8 @@ def apply_install(
     *,
     fault_after: Optional[int] = None,
     plan_digest: Optional[str] = None,
+    mutation_guard: Optional[Callable[[], None]] = None,
+    require_planned: bool = False,
 ) -> Dict[str, Any]:
     """Apply a plan transactionally; telemetry failure never changes source."""
 
@@ -5722,21 +5948,35 @@ def apply_install(
         expected_plan_digest=plan_digest,
     ) as plan:
         with _held_target_parents(plan):
-            return _apply_install_held(plan, fault_after=fault_after)
+            return _apply_install_held(
+                plan,
+                fault_after=fault_after,
+                mutation_guard=mutation_guard,
+                require_planned=require_planned,
+            )
 
 
 def _apply_install_held(
     plan: InstallPlan,
     *,
     fault_after: Optional[int],
+    mutation_guard: Optional[Callable[[], None]],
+    require_planned: bool,
 ) -> Dict[str, Any]:
     """Apply while the transaction and every target parent remain held."""
 
     _require_all_action_parents(plan)
-    if plan.journal.get("status") == "applying":
+    status_value = plan.journal.get("status")
+    if require_planned and status_value != "planned":
+        raise InstallerConflict(
+            "plan status must be planned for this apply: {}".format(status_value)
+        )
+    if status_value == "applying":
         _recover_interrupted_apply(plan)
     if plan.journal.get("status") == "applied":
         result = _verify_install_held(plan)
+        if mutation_guard is not None:
+            mutation_guard()
         _activate_receiver(_state_path(plan.journal["target"]["state_root"]))
         result["receiver_healthy"] = True
         return result
@@ -5767,6 +6007,8 @@ def _apply_install_held(
                     raise InstallerConflict(
                         "review-bound transaction artifact is occupied before apply"
                     )
+        if mutation_guard is not None:
+            mutation_guard()
         _journal_update(plan, "applying", actions, None)
 
         try:
@@ -5794,13 +6036,21 @@ def _apply_install_held(
                     continue
                 if source_tree_digest(prepared["source"]) != plan.journal["source"]["payload_sha256"]:
                     raise InstallerDrift("source runtime payload changed before a configuration mutation")
+                if mutation_guard is not None:
+                    mutation_guard()
                 if action["kind"] == "install-tree":
-                    _apply_one_action(plan, action, source=prepared["source"])
+                    _apply_one_action(
+                        plan,
+                        action,
+                        source=prepared["source"],
+                        mutation_guard=mutation_guard,
+                    )
                 else:
                     _apply_one_action(
                         plan,
                         action,
                         data=outputs[(action["kind"], action["name"])],
+                        mutation_guard=mutation_guard,
                     )
                 mutations += 1
                 _maybe_fault(fault_after, mutations)
@@ -5808,9 +6058,13 @@ def _apply_install_held(
                 raise InstallerDrift("source runtime payload changed during apply")
             for action in actions:
                 _verify_action_after(plan, action)
+            if mutation_guard is not None:
+                mutation_guard()
             _activate_receiver(state)
             for action in actions:
                 _verify_action_after(plan, action)
+            if mutation_guard is not None:
+                mutation_guard()
             _journal_update(plan, "applied", actions, None)
         except BaseException as error:
             # POSIX keeps the reviewed transaction directory reachable through
@@ -6164,6 +6418,7 @@ __all__ = [
     "InstallerConflict",
     "InstallerDrift",
     "InstallerError",
+    "InstallerTransactionIdentityConflict",
     "InstallerVerificationError",
     "MANAGED_ID",
     "apply_install",

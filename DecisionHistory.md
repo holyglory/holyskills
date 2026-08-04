@@ -7,11 +7,14 @@ production-grade foundations, canonical ownership, scoped persistent memory for 
 mistakes, realistic verification, audits that begin only
 after their target implementation exists, explicit user activation for exhaustive repository and
 implemented-UI audits, complete diagnostic passes before batch repair,
-unacceptable under-engineering and informed approval before every expansion beyond the requested
-result or credible need, security controls grounded in user-confirmed project assumptions,
-relevant bounded agent context, proportionate runtime effort, and
-interfaces whose
-visible hierarchy matches the task and promised content (D-20260801-02, D-20260801-01,
+unacceptable under-engineering and proportional approval questions only for material expansions
+where an unresolved answer could cause rework or over-engineering, security controls grounded in
+user-confirmed project assumptions without reopening a settled baseline for routine reviewed tool use,
+relevant bounded agent context, proportionate runtime effort, software-owned concurrent activation
+proof with opaque per-target attribution, one-shot installer handoff instead of user-operated shell
+choreography, and interfaces whose visible hierarchy matches the task and promised content and whose
+enabled controls and requested journeys are proven through rendered interactions
+(D-20260804-01, D-20260802-02, D-20260802-01, D-20260801-03, D-20260801-02, D-20260801-01,
 D-20260714-03, D-20260713-03,
 D-20260713-04, D-20260714-04, D-20260720-01, D-20260731-01, D-20260731-02,
 D-20260729-01,
@@ -20,6 +23,92 @@ D-20260710-05). Inferred: repeated choices indicate a taste for compact low-nois
 stable ordering and grouping, visible exceptions, contextual actions, and durable state rather than
 volatile cleverness (D-20260707-01, D-20260707-02, D-20260707-07, D-20260707-08); apply these
 patterns by default while treating them as inference when a new context materially differs.
+
+## [D-20260804-01 — UI completion requires exercised working interactions](DecisionDetails/D-20260804-01.md)
+
+Decision: Every visible enabled control in an included product UI must perform its stated action end
+to end and produce the promised observable result. Before claiming UI completion, inventory every
+visible interaction across the included screens, states, and responsive variants; map it to its
+journey and result; and exercise applicable success, cancellation, validation, permission-failure,
+recovery, and persistence behavior through the rendered interface. Track every missing behavior
+specifically in `CompletionLedger.md`; expose future behavior only when explicitly specified, then
+keep an in-scope future control disabled, visibly unavailable, and completion-blocking until it is
+implemented or removed from scope. Out-of-scope future information is noninteractive content.
+
+Why: General truthfulness, route coverage, component rendering, screenshots, and geometry checks did
+not prevent agents from shipping enabled controls with inert or partially wired behavior. Options:
+selected an agreed-UI-bounded interaction inventory and rendered end-to-end evidence over visual-only
+verification, structural code inspection, or enabled placeholders because it catches broken user
+journeys without invoking or authorizing an unrelated exhaustive audit. Prior attempts: the generic
+"a control must perform its stated action" rule missed an explicit inventory and zero-gap completion
+gate. Intent: a polished interface is incomplete when users can invoke behavior that does not work.
+Revisit only if: another deterministic completion gate proves the same per-control and per-journey
+coverage with no weaker end-to-end evidence.
+
+## [D-20260802-02 — Hook upgrades use a one-shot software handoff](DecisionDetails/D-20260802-02.md)
+
+Decision: Make Terminal a recovery surface rather than the normal hook-installation interface. An
+agent arms one detached, bounded worker against the exact reviewed plan and affected process
+identities before shutdown; after those processes exit, the worker applies and verifies the existing
+transaction and saves a private filename-bearing receipt. Managed hooks use a version-neutral stable
+launcher, compatible upgrades preserve the established credential and endpoint, and the normal wait
+covers a delayed return without becoming persistent across an OS reboot. After topology drift, only a
+strict no-mutation failure receipt remains reportable; mutation and success gates stay fail-closed.
+
+Why: A safe plan was not a usable installation when the same runtime had to exit and the user then
+had to copy apply and verify commands into Terminal. Options: selected a recorder-owned one-shot
+handoff over manual shell choreography, a privileged service, or mutating live hosts because it
+preserves review, rollback, host trust, and the personal local-only posture while reducing the normal
+interaction to approval, one restart, trust review, and fresh-task proof. Prior attempts: serial
+shutdown instructions and later digest-bound Terminal commands caused repeated manual choreography;
+rotating a healthy endpoint caused unrelated host-configuration rewrites; and the first 15-minute
+handoff expired before the next resume, after which reboot-time device identity drift hid its saved
+no-mutation receipt. Intent: ordinary installation should be software-owned without silently
+bypassing host controls or assuming an immediate user response. Revisit only if: the hosts provide a
+native post-exit installer/activation transaction with equivalent binding, rollback, and receipt
+evidence.
+
+## [D-20260802-01 — Activation proof is concurrent and target-attributed](DecisionDetails/D-20260802-01.md)
+
+Decision: Give each reviewed Codex home a stable opaque target reference in its installed hook,
+carry the resulting target identity into correlated recorder observations, and replace serial
+process-isolation proof with one software-owned concurrent activation watch. The watch captures its
+own baseline, waits for every selected Codex target, writes the bounded result to a cold report, and
+returns a filename-bearing receipt. Claude activation remains an independent host-owned workflow.
+
+Why: The recorder could prove Codex-family activity but could not distinguish two simultaneously
+running Codex homes, forcing the user to quit applications, isolate each process, capture sequence
+numbers, and repeat terminal commands. Options: selected recorder-owned opaque attribution and one
+watch over rejected process isolation, mutable friendly-name telemetry, or separate recorders per
+home because it proves both targets without exposing paths, splitting stores, or making the user
+orchestrate verification. Prior attempts: family-level evidence could not identify a home, and serial
+process-isolation proof imposed repeated shutdown and terminal choreography. Intent: installation and
+activation should require only host trust plus one ordinary fresh task in each selected Codex
+instance. Revisit only if: Codex supplies an authoritative privacy-safe instance identity or native
+activation acknowledgement with equivalent correlation.
+
+## [D-20260801-03 — Scope and security questions are decision-material and proportional](DecisionDetails/D-20260801-03.md)
+
+Decision: Ask the user about an engineering expansion or unresolved security assumption only when
+a concrete pending decision could materially change scope, controls, cost, complexity, maintenance,
+reversibility, or risk enough that a wrong answer could cause meaningful additional work,
+over-engineering, or omission of a necessary control. Use confirmed context and read-only discovery
+first, ask the smallest concise set of material questions, and scale detail to impact. Routine use
+of one reviewed skill or tool that preserves established scope and security posture does not reopen
+the baseline or trigger a broad interview.
+
+Why: The prior exhaustive every-expansion and full-baseline wording prevented silent extras but
+made a single reviewed tool invocation require an oversized questionnaire even when its posture was
+already known. Options: selected a material-decision threshold with proportional questions over the
+prior blanket interview, no approval gate, or an agent-inferred threat model because it preserves
+control over consequential extra work without manufacturing questions or assumptions. Prior
+attempts: D-20260731-01's every-potential-expansion threshold and D-20260731-02's automatic full
+baseline caused oversized irrelevant interviews for settled routine tool use. Intent: preserve the
+under-engineering asymmetry, confirmed-assumption requirement, and explicit approval before a
+material expansion while asking only what can change the pending decision. Revisit only if: the
+user selects a different durable threshold or evidence shows this materiality gate misses
+consequential expansions or security-control decisions. This supersedes D-20260731-01's question
+threshold and D-20260731-02's automatic full baseline when absent.
 
 ## [D-20260801-02 — Hook installation is a portable orchestration skill](DecisionDetails/D-20260801-02.md)
 

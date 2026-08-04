@@ -26,8 +26,8 @@ Holy Skills does not import, clone, pin, build, or test that repository.
   ingestion.
 - `install-delivery-efficiency-hooks`: a cross-platform installation workflow
   for recorder prerequisites, transactional Codex and Claude hook deployment,
-  supported feature activation, required host review, restart, and fresh-task
-  telemetry proof.
+  supported feature activation, exact host review, and one agent-owned
+  concurrent Codex watch for per-home fresh-task telemetry proof.
 - `ui-implementation-audit`: an explicit-invocation-only, source- and
   evidence-bound audit used once a substantive product UI surface exists,
   covering rendered behavior, journeys, handlers, backend paths, permissions,
@@ -170,8 +170,11 @@ explicitly partial or unknown rather than being estimated or recorded as zero.
 The recorder uses a positive privacy allowlist. Prompt and assistant text,
 transcripts, source and working paths, filenames, commands, tool arguments and
 results, raw errors, secrets, credentials, account data, and personal data do
-not enter its durable schema. Source identifiers are converted in memory to
-installation-keyed opaque IDs.
+not enter its durable schema. Source identifiers and the stable, versioned
+reference provided by recorder `0.2.3` and newer for each reviewed Codex home
+are converted in memory to installation-keyed opaque IDs. Home paths, friendly
+labels, credentials, and derivation inputs never enter durable telemetry. Per-home target attribution is
+Codex-only in this release; Claude activation remains independent.
 
 The runtime is deliberately not itself a skill. The
 `install-delivery-efficiency-hooks` skill orchestrates prerequisite discovery,
@@ -204,9 +207,14 @@ After installing the repository skills as direct links, invoke
 explicit runtime home, installs missing requested prerequisites through current
 official channels, runs the immutable plan/apply/verify workflow, enables the
 Codex hooks feature when supported and authorized, and proves fresh task-bound
-events. It cannot silently grant host trust: when Codex requires `/hooks`
-review, the user must inspect and approve the installed command before the
-skill can report that target active.
+events for all selected Codex homes with one concurrent activation watch. It
+cannot silently grant host trust: when Codex requires `/hooks` review, the user
+must inspect and approve the exact installed command before the skill can
+report that target active. The normal install and upgrade path is zero-Terminal:
+the agent arms a detached `install defer` job, the user closes affected hosts
+once and waits the announced short settling interval, then reopens once; the
+reopened agent validates the saved receipt before trust review or fresh-task
+proof.
 
 The recorder requires Python 3.9 or newer and otherwise uses only the standard
 library. Run installation from the canonical checkout and name every Codex and
@@ -224,7 +232,9 @@ receiver, so the installer rejects 2.1.211 and earlier even though the
 exists from v2.1.196. Use `--claude-executable` with an absolute path when the
 intended binary is not on `PATH`.
 
-On macOS, Linux, or WSL:
+The following planning examples describe commands the skill runs; they are not
+instructions for the user to open Terminal. On macOS, Linux, or WSL, the agent
+uses the platform's exact absolute paths:
 
 ```bash
 python3 tools/delivery-efficiency/recorder.py install plan \
@@ -233,7 +243,7 @@ python3 tools/delivery-efficiency/recorder.py install plan \
   --claude-home "user=$HOME/.claude"
 ```
 
-On Windows PowerShell:
+On native Windows, the agent uses PowerShell-native path syntax:
 
 ```powershell
 python .\tools\delivery-efficiency\recorder.py install plan `
@@ -254,19 +264,79 @@ Review the printed `journal_path`, `plan_sha256`, source digest, target digests,
 port provenance, and exact homes. The immutable `plan.json` is the review
 baseline; every disk-loaded apply, verify, or rollback requires its printed
 digest so changing both the mutable journal and its recorded digest cannot
-silently change the reviewed topology. Then apply and verify the same journal:
+silently change the reviewed topology.
+
+### Normal zero-Terminal install and upgrade
+
+The reviewed plan classifies reload-required targets from actual changed
+actions. A host must close and reopen only when its handler bytes, Python
+binding, OTel endpoint or credential, managed environment, or another
+host-loaded setting changes. A recorder-only install, version, or settings-root
+change with byte-identical host configuration requires neither restart nor
+renewed Codex hook trust.
+
+The agent discovers every exact live same-user process for those changed
+targets, including background helpers, and arms the one-shot worker itself:
 
 ```bash
-python3 tools/delivery-efficiency/recorder.py install apply \
+python3 tools/delivery-efficiency/recorder.py install defer \
   --journal "/absolute/state/transactions/<plan-id>/journal.json" \
-  --plan-digest "<plan_sha256>"
-python3 tools/delivery-efficiency/recorder.py install verify \
-  --journal "/absolute/state/transactions/<plan-id>/journal.json" \
-  --plan-digest "<plan_sha256>"
+  --plan-digest "<plan_sha256>" \
+  --target-pid "<exact-live-pid>" \
+  --target-pid "<another-exact-live-pid>"
 ```
 
-For an upgrade, rotate the receiver credential inside the transaction rather
-than supplying or copying the existing secret:
+On native Windows the agent supplies the same arguments with its absolute
+`python.exe`, journal, and state paths using PowerShell-native quoting. WSL uses
+the Linux executable, PIDs, paths, and state inside that exact distribution;
+native Windows and WSL jobs are never mixed.
+
+The agent never asks the user to find a PID or inspect a process list. The
+command waits for a worker-ready handshake and emits one bounded
+`DEFERRED_INSTALL_ARMED` receipt containing a nonsecret job ID, private status
+`filename`, `status="armed"`, target count, and wait limit. It exposes no
+absolute paths, PIDs, credentials, commands, environments, or raw errors.
+`armed` is not installation success.
+
+Only after that receipt does the agent ask the user to close every affected
+host once. The detached worker never signals a process. It waits for the exact
+captured process identities to exit, rejects detected PID reuse or matching
+relaunch, revalidates the reviewed plan and filesystem state, and calls the
+existing transactional apply-and-verify implementation. The wait defaults to
+86400 seconds and is bounded to 1 through 604800 seconds. The worker remains
+one-shot and nonpersistent: an OS reboot ends it and requires an agent-owned
+fresh plan and rearm. The user only repeats the close/reopen boundary after a
+new armed receipt and never opens Terminal.
+
+An unaffected agent or host-owned observer may check the private job using
+`install deferred-status` and the receipt's job ID, but that observer is
+optional. After closing the named hosts, the user waits the short settling
+interval announced by the agent and reopens once. The reopened agent's first
+action is to read deferred status before trust review, activation, or any other
+work. Status emits one bounded `DEFERRED_INSTALL_STATUS` receipt, names the
+same private filename, and never makes the user run a command. Only a
+saved `status="verified"` receipt with
+`verification_ok=true` and `receiver_healthy=true` permits the reopened agent
+to continue. A detectable premature matching relaunch fails closed as
+`target-race`. Cancellation, expiry, unapplied failure, exact rollback, blocked
+rollback, or worker loss remains explicitly incomplete.
+
+If a strict receipt for the exact job and plan digest proves no mutation,
+`deferred-status` may report that saved categorical failure even when an OS
+reboot changed volatile filesystem device identity. This read-only fallback is
+failure evidence only. It never authorizes apply, trust review, activation, or
+success.
+
+The user never opens Terminal or copies/runs installer commands in the normal
+path. Their complete install role is to approve the reviewed operation, close
+the named affected hosts once when the ready receipt exists, wait the announced
+short settling interval, reopen those hosts once, review any changed Codex
+hook after the reopened agent validates the receipt, and exercise fresh tasks
+for activation proof. They never need to observe the private receipt directly.
+
+Credential rotation is a separate reviewed change, not an automatic upgrade
+step. When the request or concrete compromise evidence selects it, the agent
+adds the rotation option without supplying or copying the existing secret:
 
 ```bash
 python3 tools/delivery-efficiency/recorder.py install plan \
@@ -286,13 +356,14 @@ retains omitted targets in that inventory and never interprets omission as
 retirement. On POSIX the inventory and every secret-bearing settings file are
 forced to mode `0600`; Windows uses the containing directory's inherited ACL
 and the standard-library installer makes no stronger ACL-hardening claim.
-Ownership changes select a distinct receiver port by default and
-reject an explicitly reused port, so installation never kills an unknown
-process merely because it owns the old port. Recorders at version 0.1.2 and
-newer also retire themselves after confirmed valid settings drift. A pre-0.1.2
-receiver cannot perform that hand-off; it may remain harmlessly on the
-now-unused old port until its process ends while the upgraded configuration
-targets the new authenticated receiver.
+Credential changes select a distinct receiver port by default and reject an
+explicitly reused port. A compatible upgrade from recorder 0.1.2 or later,
+however, preserves the existing loopback host, bearer credential, and port
+when rotation was not requested, then uses bounded authenticated retirement
+and rebind; it never signals a PID or kills an unknown port owner. A pre-0.1.2
+receiver cannot perform that handoff, so its upgrade retains reviewed port
+rotation and may leave the old receiver harmlessly on its now-unused port until
+that process ends.
 
 Retire a target only by binding its previously recorded name and absolute path
 explicitly. Retirement removes only the exact installer-owned hooks and
@@ -307,8 +378,9 @@ python3 tools/delivery-efficiency/recorder.py install plan \
 Use `--retire-codex-home` for Codex. These flags accept the same absolute paths
 on macOS, Linux, and WSL and PowerShell-native absolute paths on Windows.
 
-Apply installs a read-only versioned copy and a stable
-`<state>/recorder.py` launcher, merges named handlers into each `hooks.json`,
+Apply installs a read-only versioned copy and a version-neutral
+`<state>/recorder.py` launcher, merges named handlers that point to that stable
+launcher into each `hooks.json`,
 and appends an authenticated OTLP/HTTP JSON block only when `config.toml` does
 not already own `[otel]`. A Claude home receives managed hook handlers and the
 managed telemetry environment inside its `settings.json` (`hooks` plus
@@ -343,6 +415,13 @@ single-link lock files. Plans require every active Codex or Claude home to
 already exist; planning provisions only recorder-owned state, install, and
 transaction directories.
 
+Recorder `0.2.4` performs a one-time migration of `0.2.3` Codex and Claude
+handler commands to the stable launcher. Those changed hosts reload once, and
+Codex requires review of the changed command. For a later compatible
+recorder-only upgrade, the rendered host configuration remains byte-identical,
+its actions are `changed=false`, and neither host restart nor renewed trust is
+required.
+
 Each changed target uses immutable adjacent stage, prior, and recovery slots.
 An existing target first moves no-replace into its prior slot, and the reviewed
 stage then moves no-replace into the vacant target; the target can therefore be
@@ -364,22 +443,72 @@ publication, but hostile mutation by another process running as that same OS
 account is not an integrity boundary. The receiver is activated only after the
 published content passes verification. Unsupported filesystem primitives fail
 closed without a check-then-replace fallback. Rollback restores exact prior
-bytes only while the installed digests observed by its checks still match:
+bytes only while the installed digests observed by its checks still match.
+
+After the reopened agent validates the saved verified deferred receipt, the
+skill owns one bounded Codex activation watch. It reads the digest-approved
+plan, selects every reviewed Codex home by default, captures its own event
+baseline, and waits for the selected homes concurrently:
 
 ```bash
+python3 skills/install-delivery-efficiency-hooks/scripts/activation_status.py \
+  --journal "/absolute/state/transactions/<plan-id>/journal.json" \
+  --plan-digest "<plan_sha256>" \
+  --runtime codex \
+  --watch
+```
+
+Repeat `--target "<reviewed-name>"` only when the watch should cover a selected
+subset. The helper writes a bounded private report under the recorder state and
+emits exactly one `REPORT_SAVED` line whose JSON receipt names the report file
+and gives its aggregate active and pending result. A timeout still saves an
+honest partial report; legacy family-only evidence never activates a named
+home.
+
+While the watch runs, the user's complete Codex activation role is to open
+`/hooks` in each selected instance, inspect and trust the exact installed
+command, and start one ordinary fresh task in each instance. The user does not
+quit clients or isolate homes for serial verification, capture sequence
+baselines, or repeat Terminal commands. Any one-time runtime restart that the
+reviewed plan required already occurred through the deferred close/reopen
+boundary; activation does not ask for a second restart. A home becomes active
+only when that fresh task has target-attributed hook lifecycle evidence and
+correlated provider usage.
+
+Claude activation remains host-owned and independent of this Codex watch;
+per-home target attribution is Codex-only in recorder `0.2.3` and newer. Claude Code
+loads `settings.json` hooks at session start without a Codex-style trust grant.
+Its `/hooks` surface is useful for inspection, but viewing it is not an
+activation or approval step. Claude authentication and the recorder's loopback
+authentication token establish identity only; neither grants the agent
+authority beyond the user's request.
+
+### Recovery-only direct installer commands
+
+Direct apply, verify, and rollback are retained for an agent or operator
+recovering an explicitly diagnosed deferred-job failure. They are never the
+normal user journey and never a fallback that asks the user to open Terminal.
+Use only the exact reviewed journal and digest:
+
+```bash
+python3 tools/delivery-efficiency/recorder.py install apply \
+  --journal "/absolute/state/transactions/<plan-id>/journal.json" \
+  --plan-digest "<plan_sha256>"
+python3 tools/delivery-efficiency/recorder.py install verify \
+  --journal "/absolute/state/transactions/<plan-id>/journal.json" \
+  --plan-digest "<plan_sha256>"
 python3 tools/delivery-efficiency/recorder.py install rollback \
   --journal "/absolute/state/transactions/<plan-id>/journal.json" \
   --plan-digest "<plan_sha256>"
 ```
 
-Restart each Codex and Claude Code runtime after apply. Codex user hooks are
-intentionally not marked trusted behind Codex's back: open `/hooks`, review the
-exact installed command, and trust it; until then Codex hook coverage remains
-an instrumentation gap. Claude Code loads `settings.json` hooks at session
-start without a Codex-style trust grant. Its `/hooks` surface is useful for
-inspection, but viewing it is not an activation or approval step. Claude
-authentication and the recorder's loopback authentication token establish
-identity only; neither grants the agent authority beyond the user's request.
+Recovery first reads the private deferred status and journal state. It never
+replays a stale plan, overwrites drift, treats process exit as success, or
+claims rollback reversed prerequisites, Codex feature state, authentication,
+or prior host trust.
+
+### Runtime behavior after a verified install
+
 The installer starts and health-checks the authenticated loopback receiver, and
 a configured lifecycle hook starts it on demand in later sessions, after any
 host-required hook trust step. Hook trust enables that telemetry hook only; it
@@ -435,11 +564,12 @@ python3 "/absolute/state/recorder.py" report
 
 `report` fails closed unless every authoritative spool HMAC and sequence agrees
 with the exact canonical cold-ledger bytes; a merely parseable or edited JSONL
-file is never treated as measured evidence. Immutable schema `1.0` rows remain
-validated and reportable; recorder `0.2.1` writes schema `1.1`, and reports
-identify compatible mixed `1.0`/`1.1` ledgers without rewriting either version.
-This compatibility does not assert that every universal-policy measurement is
-available for legacy events.
+file is never treated as measured evidence. Recorder `0.2.4` writes schema
+`1.2`; immutable schema `1.0` and `1.1` rows remain validated and reportable
+beside it without rewriting any version. Reports identify compatible single-
+and mixed-version ledgers. This compatibility does not invent per-home target
+attribution or any other unavailable universal-policy measurement for legacy
+events.
 
 Hooks and provider-native events record observable boundaries. Agents use the
 same launcher only for facts the host cannot know, at meaningful phase changes
