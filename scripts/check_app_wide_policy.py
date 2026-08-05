@@ -22,6 +22,7 @@ REQUIRED_SECTIONS = (
     "Prohibit unimplemented product behavior",
     "Learn from agent-made mistakes",
     "Verify real behavior",
+    "Use standing preview and browser-QA permission",
     "Measure delivery efficiency truthfully",
     "Put requested interface content first",
     "Respect data and system boundaries",
@@ -84,6 +85,147 @@ def _bullet_starting_with(body: str, opening: str) -> str:
         flags=re.IGNORECASE | re.MULTILINE | re.DOTALL,
     )
     return match.group(0) if match else ""
+
+
+def _standing_tool_prompt_violations(text: str) -> list[str]:
+    """Reject repeat chat prompts for routine tool use without masking real gates."""
+
+    compact = re.sub(r"\s+", " ", text)
+    sentences = re.split(r"(?<=[.!?])\s+", compact)
+    negated_approval_clause = re.compile(
+        r"(?i)(?:"
+        r"\b(?:you\s+)?(?:do\s+not|don't|never|must\s+not|need\s+not|should\s+not)"
+        r"(?:\s+need\s+to)?\s+(?:separately\s+|explicitly\s+)?"
+        r"(?:ask|request|obtain|require|await|wait)\b|"
+        r"\b(?:there\s+is\s+)?no\s+need\s+to\s+"
+        r"(?:ask|request|obtain|require|await|wait)\b|"
+        r"\bno\s+(?:separate\s+|explicit\s+|chat\s+)?"
+        r"(?:approval|authorization|permission)\s+(?:is\s+)?required\b|"
+        r"\bdoes\s+not\s+require\b.{0,40}\b(?:approval|authorization|permission)\b"
+        r")"
+    )
+    distinct_gate = re.compile(
+        r"(?i)\b(?:"
+        r"production|destructive|credentials?|secrets?|"
+        r"trust\s+(?:change|gate|decision)|security[- ](?:control|gate|posture)|"
+        r"host[- ](?:owned\s+)?approval|host\s+approval|tool\s+approval\s+mechanism|"
+        r"material\s+(?:unrequested\s+)?expansion|scope\s+expansion|"
+        r"install(?:ation|ing)?|upgrad(?:e|ing)|"
+        r"backup|recovery|shared[- ]state|persistent\s+(?:data|datastore)|"
+        r"external\s+(?:side\s+effect|account|service)|purchase|publish(?:ing)?|"
+        r"send(?:ing)?\s+(?:a\s+)?(?:message|email)|delete|drop|database\s+reset"
+        r")\b"
+    )
+    routine_use = re.compile(
+        r"(?i)\b(?:in[- ]scope|routine|browser\s+QA|interaction\s+testing|"
+        r"local\s+(?:QA|preview|interaction|service|runtime)|reproduction)\b"
+    )
+    clarification = re.compile(
+        r"(?i)\b(?:preview\s+URL|local\s+URLs?|target\s+URL|selected\s+design|"
+        r"equally\s+plausible|ambiguous|user\s+input|requirements?|"
+        r"which\s+(?:URL|route|design)|correct\s+URL|choice\s+between|"
+        r"(?:confirm|approve|select|choose|clarify)\s+(?:the\s+)?"
+        r"(?:URL|route|design|target|input|requirement)|"
+        r"(?:if|when)\b.{0,120}\b(?:not\s+been\s+(?:selected|specified|provided|confirmed)|"
+        r"unclear|unknown|ambiguous|equally\s+plausible|multiple|two|which|choice|missing)|"
+        r"(?:user\s+journey|scope|route|URL|target|design|requirement|input)\b.{0,60}"
+        r"\b(?:remains?\s+)?(?:unspecified|unselected|unclear|unknown|ambiguous|missing))\b"
+    )
+    targets = (
+        (
+            r"(?:Playwright|(?:headless[- ])?browser[- ]automation|"
+            r"browser[- ]control\s+tool|browser\s+control\s+tool|"
+            r"browser[- ]testing\s+tool)",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            r"(?:DevCoordinator|development[- ]runtime\s+coordinator|"
+            r"development\s+coordinator)",
+            "in-scope development coordination must not require repeat chat approval",
+        ),
+    )
+    found: list[str] = []
+    for target_source, label in targets:
+        target = re.compile(rf"(?i)\b{target_source}\b")
+        action_target = rf"(?:use|invoke|run)\s+(?:the\s+)?{target_source}\b"
+        gerund_target = rf"(?:using|invoking|running)\s+(?:the\s+)?{target_source}\b"
+        explicit_prompt = re.compile(
+            rf"(?i)(?:"
+            rf"\b(?:may|can|should)\s+i\s+{action_target}|"
+            rf"\bshould\s+i\s+proceed\s+with\s+(?:the\s+)?{target_source}\b|"
+            rf"\b(?:must|do|need)\s+i\s+(?:get|obtain|have)\b.{{0,50}}"
+            rf"\b(?:approval|authorization|permission)\b.{{0,50}}"
+            rf"\bbefore\s+{gerund_target}|"
+            rf"\bdo\s+i\s+have\b.{{0,40}}\b(?:approval|authorization|permission)\b"
+            rf".{{0,50}}\bto\s+{action_target}|"
+            rf"\b(?:can|could|will|would)\s+you\s+(?:please\s+)?"
+            rf"(?:approve|authorize|permit)\s+(?:me\s+to\s+)?{action_target}|"
+            rf"\bdo\s+you\s+want\s+me\s+to\s+{action_target}|"
+            rf"\bwould\s+you\s+like\s+me\s+to\s+{action_target}|"
+            rf"\b(?:please\s+)?confirm\s+(?:that\s+)?i\s+(?:may|can)\s+"
+            rf"{action_target}|"
+            rf"\bis\s+it\s+(?:okay|ok|acceptable)\s+if\s+i\s+{action_target}|"
+            rf"\bis\s+it\s+(?:okay|ok|acceptable)\s+to\s+{action_target}|"
+            rf"\bplease\s+confirm\s+before\s+i\s+{action_target}|"
+            rf"\bare\s+you\s+(?:okay|ok)\s+with\s+me\s+{gerund_target}|"
+            rf"\b(?:please\s+)?(?:approve|authorize|permit)\s+(?:me\s+to\s+)?"
+            rf"{action_target}|"
+            rf"\bi\s+(?:need|require)\b.{{0,70}}\b"
+            rf"(?:approval|authorization|permission)\b.{{0,70}}"
+            rf"(?:\bto\s+{action_target}|\bbefore\s+{gerund_target})|"
+            rf"\b(?:ask|request|obtain|require|await|wait\s+for)\b.{{0,100}}"
+            rf"\b(?:approval|authorization|permission|confirmation)\b.{{0,100}}"
+            rf"(?:\bbefore\s+{gerund_target}|\bprior\s+to\s+{gerund_target}|"
+            rf"\bto\s+{action_target})|"
+            rf"\b(?:before\s+{gerund_target}|prior\s+to\s+{gerund_target})"
+            rf".{{0,120}}\b(?:ask|request|obtain|require|await|wait\s+for)\b"
+            rf".{{0,80}}\b(?:approval|authorization|permission|confirmation)\b"
+            rf")"
+        )
+        prohibition_prompt = re.compile(
+            rf"(?i)(?:"
+            rf"\b(?:do\s+not|don't|never|must\s+not)\s+(?:{action_target}|{gerund_target})"
+            rf".{{0,140}}\bwithout\s+(?:asking|requesting|obtaining|receiving)\b"
+            rf".{{0,80}}\b(?:user|approval|authorization|permission)\b|"
+            rf"\b(?:do\s+not|don't|never|must\s+not)\s+(?:{action_target}|{gerund_target})"
+            rf".{{0,140}}\buntil\b.{{0,80}}\b(?:user\s+)?"
+            rf"(?:says?\s+yes|approves?|confirms?|agrees?|authorizes?|gives?\s+permission)\b|"
+            rf"\b(?:{action_target}|{gerund_target})\b.{{0,140}}"
+            rf"\b(?:is\s+)?(?:prohibited|forbidden|not\s+allowed)\b.{{0,100}}"
+            rf"\bunless\b.{{0,80}}\b(?:user\s+)?"
+            rf"(?:approves?|confirms?|agrees?|says?\s+yes|authorizes?|gives?\s+permission)\b"
+            rf")"
+        )
+        bare_prompt = re.compile(
+            rf"(?i)(?:"
+            rf"\b(?:ask|check|confirm)\s+(?:with\s+)?(?:the\s+)?user\s+"
+            rf"(?:first\s+)?before\s+{gerund_target}|"
+            rf"\bask\s+(?:the\s+user\s+)?(?:first\s+)?before\s+{gerund_target}"
+            rf")"
+        )
+        for sentence in sentences:
+            fragments = re.split(r"\s*(?:;|\bbut\b)\s*", sentence, flags=re.IGNORECASE)
+            effective_sentence = "; ".join(
+                fragment
+                for fragment in fragments
+                if fragment and not negated_approval_clause.search(fragment)
+            )
+            if not target.search(effective_sentence):
+                continue
+            explicit = explicit_prompt.search(effective_sentence) is not None
+            bare = bare_prompt.search(effective_sentence) is not None
+            prohibited = prohibition_prompt.search(effective_sentence) is not None
+            if not explicit and not bare and not prohibited:
+                continue
+            separately_gated = distinct_gate.search(effective_sentence) is not None
+            includes_routine_use = routine_use.search(effective_sentence) is not None
+            is_clarification = clarification.search(effective_sentence) is not None
+            if (explicit or prohibited or (bare and not is_clarification)) and (
+                not separately_gated or includes_routine_use
+            ):
+                found.append(label)
+                break
+    return found
 
 
 def find_policy_violations(text: str) -> list[str]:
@@ -586,6 +728,31 @@ def find_policy_violations(text: str) -> list[str]:
             ),
         )
 
+    standing_browser_qa = bodies["Use standing preview and browser-QA permission"]
+    if standing_browser_qa:
+        _require_terms(
+            violations,
+            standing_browser_qa,
+            "standing preview and browser-QA permission contract",
+            (
+                "standing permission across all repositories",
+                "Playwright or equivalent browser automation directly",
+                "in-scope local preview",
+                "browser QA",
+                "configured DevCoordinator",
+                "temporary-runtime lifecycle work",
+                "Do not ask for separate chat authorization",
+                "only tool use within the agreed task",
+                "does not broaden scope",
+                "production changes",
+                "destructive data actions",
+                "credential or trust changes",
+                "security-assumption",
+                "host or tool approval mechanisms",
+                "material unrequested expansion",
+            ),
+        )
+
     efficiency = bodies["Measure delivery efficiency truthfully"]
     if efficiency:
         _require_terms(
@@ -664,11 +831,30 @@ def find_policy_violations(text: str) -> list[str]:
                 "below a long list",
                 "success returns",
                 "new item",
+                "one concise, self-explanatory heading or label",
+                "subtitles",
+                "helper text",
+                "descriptive copy",
+                "headings, labels, cards, or settings",
+                "by default",
+                "user explicitly requests it",
+                "necessary to prevent misunderstanding or error",
+                "never use it to restate the heading or label",
                 "narrow constraints",
                 "loading, empty, error, populated, and long-content states",
                 "functional defect",
                 "visual exploration only for new directions or redesigns",
             ),
+        )
+        _require_pattern(
+            violations,
+            interface,
+            "UI descriptions must default to one self-explanatory label and never restate it",
+            r"prefer\s+one\s+concise,\s+self-explanatory\s+heading\s+or\s+label"
+            r".{0,220}do\s+not\s+add\s+subtitles.{0,220}by\s+default"
+            r".{0,260}only\s+when\s+the\s+user\s+explicitly\s+requests\s+it\s+or"
+            r".{0,180}necessary\s+to\s+prevent\s+misunderstanding\s+or\s+error"
+            r".{0,160}never\s+use\s+it\s+to\s+restate\s+the\s+heading\s+or\s+label",
         )
 
     boundaries = bodies["Respect data and system boundaries"]
@@ -763,10 +949,17 @@ def find_policy_violations(text: str) -> list[str]:
         (r"(?i)\binteraction\s+inventory\b[^.\n]{0,140}\b(?:automatically|by\s+itself)\s+(?:invokes?|authorizes?|requires?)\b[^.\n]{0,100}\b(?:broader|repository-wide|exhaustive)\s+audit\b", "the scoped interaction inventory must not authorize a broader audit"),
         (r"(?i)\b(?:route\s+coverage|screenshots?|visual\s+comparison|geometry\s+checks?)\b[^.;\n]{0,120}(?<!not )(?<!never )(?<!cannot )(?<!can't )(?<!fail to )(?<!fails to )(?<!failed to )(?<!insufficient to )(?<!inadequate to )\b(?:constitutes?|proves?|counts?\s+as|(?:is|are)\s+sufficient)\b[^.;\n]{0,80}\binteraction\s+verification\b", "static or visual evidence alone must not count as interaction verification"),
         (r"(?i)\b(?:code\s+inspection|component\s+rendering|handler|route)\b[^.;\n]{0,120}(?<!not )(?<!never )(?<!cannot )(?<!can't )(?<!fail to )(?<!fails to )(?<!failed to )(?<!insufficient to )(?<!inadequate to )\b(?:constitutes?|proves?|counts?\s+as|(?:is|are)\s+sufficient)\b[^.;\n]{0,80}\b(?:interaction\s+verification|working\s+behavior)\b", "implementation structure alone must not prove product interaction"),
+        (r"(?i)(?<!not )(?<!never )\b(?:by\s+default|always)\s*,?\s*(?:add|include|show)\b[^.\n]{0,100}\b(?:subtitles?|helper\s+text|descriptive\s+copy|descriptions?)\b[^.\n]{0,120}\b(?:beneath|below|under)\b[^.\n]{0,60}\b(?:(?:each|every|all)\s+)?(?:headings?|labels?|cards?|settings?)\b", "UI supporting copy must not be added beneath clear labels by default"),
+        (r"(?i)(?<!not )(?<!never )\b(?:add|include|show)\b[^.\n]{0,100}\b(?:subtitles?|helper\s+text|descriptive\s+copy|descriptions?)\b[^.\n]{0,120}\b(?:beneath|below|under)\b[^.\n]{0,60}\b(?:(?:each|every|all)\s+)?(?:headings?|labels?|cards?|settings?)\b[^.\n]{0,120}(?<!not )(?<!never )\b(?:by\s+default|always|for\s+every|to\s+all)\b", "UI supporting copy must not be added beneath clear labels by default"),
+        (r"(?i)(?<!not )(?<!never )\b(?:every|all|each)\s+(?:headings?|labels?|cards?|settings?)\b[^.\n]{0,100}\b(?:should|must|needs?\s+to)\s+(?:include|have|show)\b[^.\n]{0,80}\b(?:subtitles?|helper\s+text|descriptive\s+copy|descriptions?)\b", "UI supporting copy must not be added beneath clear labels by default"),
+        (r"(?i)\b(?:supporting\s+copy|subtitles?|helper\s+text|descriptive\s+copy|descriptions?)\b[^.\n]{0,100}\b(?:may|can|should)\s+be\s+(?:added|included|shown)\b[^.\n]{0,100}\b(?:whenever|any\s+time|wherever)\b[^.\n]{0,80}\b(?:helpful|useful|nice|appropriate)\b", "supporting UI copy must require an explicit request or misunderstanding/error-prevention need"),
+        (r"(?i)\b(?:supporting\s+copy|subtitles?|helper\s+text|descriptive\s+copy|descriptions?)\b[^.\n]{0,100}\b(?:may|can|should|must)\s+(?:repeat|restate|duplicate|paraphrase|echo)\b[^.\n]{0,80}\b(?:(?:the|its|their)\s+)?(?:headings?|labels?)\b", "supporting UI copy must never restate its heading or label"),
     )
     for pattern, label in contradictory_instructions:
         if re.search(pattern, text, flags=re.DOTALL):
             violations.append(label)
+
+    violations.extend(_standing_tool_prompt_violations(text))
 
     return violations
 

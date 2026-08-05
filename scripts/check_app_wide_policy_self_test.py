@@ -311,6 +311,46 @@ def main() -> int:
             "collection destinations must not lead with forms",
         ),
         (
+            "default descriptive copy",
+            policy + "\nAdd descriptive copy beneath cards by default.\n",
+            "must not be added beneath clear labels by default",
+        ),
+        (
+            "prefix default helper text",
+            policy + "\nBy default, show helper text beneath settings.\n",
+            "must not be added beneath clear labels by default",
+        ),
+        (
+            "always helper text under setting",
+            policy + "\nAlways add helper text under each setting.\n",
+            "must not be added beneath clear labels by default",
+        ),
+        (
+            "blanket setting helper text",
+            policy + "\nEvery setting should include helper text.\n",
+            "must not be added beneath clear labels by default",
+        ),
+        (
+            "blanket card description",
+            policy + "\nEvery card should have a description.\n",
+            "must not be added beneath clear labels by default",
+        ),
+        (
+            "discretionary helpful copy",
+            policy + "\nSupporting copy may be added whenever it seems helpful.\n",
+            "must require an explicit request or misunderstanding/error-prevention need",
+        ),
+        (
+            "supporting copy restates heading",
+            policy + "\nSupporting copy should restate the heading to reinforce it.\n",
+            "must never restate its heading or label",
+        ),
+        (
+            "subtitle paraphrases heading",
+            policy + "\nA subtitle may paraphrase its heading.\n",
+            "must never restate its heading or label",
+        ),
+        (
             "missing implemented-product-behavior contract",
             replace_section(
                 policy,
@@ -397,6 +437,163 @@ def main() -> int:
             "handler substitutes for interaction",
             policy + "\nA handler proves working behavior without exercising the control.\n",
             "must not prove product interaction",
+        ),
+        (
+            "missing standing browser-QA permission",
+            replace_section(
+                policy,
+                "Use standing preview and browser-QA permission",
+                "- Ask before invoking optional testing tools.",
+            ),
+            "standing preview and browser-QA permission contract",
+        ),
+        (
+            "repeat Playwright approval",
+            policy
+            + "\nAsk the user for explicit chat authorization before using Playwright for "
+            "in-scope browser QA.\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "repeat coordinator approval",
+            policy
+            + "\nAlways ask for explicit approval before using DevCoordinator for routine "
+            "in-scope local runtime coordination.\n",
+            "in-scope development coordination must not require repeat chat approval",
+        ),
+        (
+            "direct Playwright permission question",
+            policy + "\nMay I use Playwright for this in-scope browser QA?\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "Playwright approval need",
+            policy
+            + "\nI need your approval to run Playwright for local interaction testing.\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "target-first Playwright approval",
+            policy
+            + "\nBefore using Playwright for in-scope browser QA, ask for the user's "
+            "approval.\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "ask-before browser automation",
+            policy
+            + "\nAsk the user before invoking browser automation for routine local QA.\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "direct coordinator permission question",
+            policy + "\nMay I use DevCoordinator for this routine local service?\n",
+            "in-scope development coordination must not require repeat chat approval",
+        ),
+        (
+            "mixed routine and production Playwright approval",
+            policy
+            + "\nAsk before using Playwright for routine local QA or production testing.\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "local configuration Playwright approval",
+            policy
+            + "\nMay I use Playwright to verify the local configuration during browser QA?\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "coordinator service-configuration approval",
+            policy
+            + "\nAsk before using DevCoordinator for routine local service configuration.\n",
+            "in-scope development coordination must not require repeat chat approval",
+        ),
+        (
+            "Playwright prohibited without asking",
+            policy
+            + "\nDo not use Playwright for routine browser QA without asking the user first.\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "Playwright prohibited without permission",
+            policy
+            + "\nNever run Playwright for local interaction testing without obtaining "
+            "explicit permission.\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "coordinator prohibited without approval",
+            policy
+            + "\nUsing DevCoordinator for routine local service work is prohibited unless "
+            "the user approves first.\n",
+            "in-scope development coordination must not require repeat chat approval",
+        ),
+        (
+            "headless-browser approval",
+            policy
+            + "\nAsk for explicit approval before using headless-browser automation for "
+            "routine local QA.\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "browser-control approval",
+            policy
+            + "\nAsk the user before running the browser-control tool for routine local QA.\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "must-get Playwright permission",
+            policy
+            + "\nMust I get your permission before running Playwright for local interaction "
+            "testing?\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "okay-to-use Playwright question",
+            policy
+            + "\nIs it okay if I use Playwright for the in-scope browser QA?\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "Playwright prohibited until yes",
+            policy
+            + "\nDo not run Playwright for routine browser QA until the user says yes.\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "coordinator not allowed until confirmation",
+            policy
+            + "\nUsing DevCoordinator for routine local service work is not allowed unless "
+            "the user confirms.\n",
+            "in-scope development coordination must not require repeat chat approval",
+        ),
+        (
+            "unrelated negation before Playwright approval",
+            policy
+            + "\nDo not ask about the preview URL; require explicit authorization before "
+            "using Playwright for routine QA.\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "proceed-with Playwright question",
+            policy + "\nShould I proceed with Playwright for routine browser QA?\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "want-me-to-run Playwright question",
+            policy
+            + "\nDo you want me to run Playwright for local interaction testing?\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "okay-to-use Playwright question without subject",
+            policy + "\nIs it okay to use Playwright for routine local QA?\n",
+            "in-scope browser automation must not require repeat chat approval",
+        ),
+        (
+            "confirm-before Playwright question",
+            policy + "\nPlease confirm before I run Playwright for browser QA.\n",
+            "in-scope browser automation must not require repeat chat approval",
         ),
         (
             "missing content-first UI",
@@ -519,6 +716,111 @@ def main() -> int:
     check(
         not MODULE.find_policy_violations(negative_interaction_safeguards),
         "negative UI safeguards must not trigger positive-weakening detectors",
+    )
+
+    necessary_supporting_copy = policy + (
+        "\nThe user explicitly requests one helper sentence beneath the destructive setting "
+        "because it explains an irreversible consequence needed to prevent error; it adds new "
+        "information and does not restate the heading. Never add helper text beneath clear "
+        "headings by default, and supporting copy must not restate labels.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(necessary_supporting_copy),
+        "explicitly requested or error-preventing nonredundant UI copy must remain valid",
+    )
+
+    separately_gated_browser_actions = policy + (
+        "\nAsk before a material unrequested expansion, production mutation, destructive "
+        "data action, credential or trust change, or security-control change. Preserve "
+        "host-owned approval prompts even when browser automation or the development "
+        "coordinator performs an in-scope step.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(separately_gated_browser_actions),
+        "standing tool permission must preserve materially distinct approval gates",
+    )
+
+    direct_standing_permission_boundaries = (
+        (
+            "production mutation",
+            "Ask for approval before using Playwright to test a production mutation.",
+        ),
+        (
+            "destructive local reset",
+            "Ask for approval before using DevCoordinator for a local destructive database reset.",
+        ),
+        (
+            "new credentials",
+            "Obtain permission before running browser automation with newly supplied credentials.",
+        ),
+        (
+            "host-owned prompt",
+            "Require host approval before running Playwright when the host approval mechanism prompts.",
+        ),
+        (
+            "tool installation",
+            "Ask for approval before installing Playwright as a new project dependency.",
+        ),
+        (
+            "preview URL confirmation",
+            "Confirm with the user that the preview URL is correct before using Playwright.",
+        ),
+        (
+            "design approval",
+            "Do you approve the selected design before I use Playwright to verify it?",
+        ),
+        (
+            "ambiguous local URLs",
+            "Check with the user before running Playwright if two equally plausible local URLs remain.",
+        ),
+        (
+            "unselected intended route",
+            "Ask the user before invoking Playwright if the intended route has not been selected.",
+        ),
+        (
+            "no need to ask",
+            "You do not need to ask before using Playwright for routine browser QA.",
+        ),
+        (
+            "no need to ask the user",
+            "There is no need to ask the user before running Playwright for local QA.",
+        ),
+        (
+            "unspecified user journey",
+            "Check with the user before running Playwright if the user journey remains unspecified.",
+        ),
+    )
+    for name, instruction in direct_standing_permission_boundaries:
+        check(
+            not MODULE.find_policy_violations(policy + "\n" + instruction + "\n"),
+            f"standing permission must preserve the {name} approval boundary",
+        )
+
+    explicitly_requested_copy = policy + (
+        "\nAdd helper text beneath a setting when the user explicitly requests it, "
+        "not by default.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(explicitly_requested_copy),
+        "explicitly requested helper text must remain valid independently",
+    )
+
+    error_preventing_copy = policy + (
+        "\nAdd descriptive copy below a label only when necessary to prevent error, "
+        "never by default.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(error_preventing_copy),
+        "error-preventing descriptive copy must remain valid independently",
+    )
+
+    negative_quantifier_copy = policy + (
+        "\nNot every setting should include helper text; clear settings use only their "
+        "label.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(negative_quantifier_copy),
+        "a negative blanket-copy instruction must not trigger a positive detector",
     )
 
     credible_in_scope_backup = policy + (

@@ -279,6 +279,21 @@ checks may support evidence but do not constitute interaction verification.
   state, respect dependencies and concurrent runs, and never delete shared
   records unconditionally.
 
+## Use standing preview and browser-QA permission
+
+- The user grants standing permission across all repositories to invoke
+  Playwright or equivalent browser automation directly for in-scope local
+  preview, reproduction, interaction testing, evidence capture, and browser QA,
+  and to use the configured DevCoordinator for relevant local service, port,
+  health, log, telemetry, test, and temporary-runtime lifecycle work. Do not ask
+  for separate chat authorization before these in-scope invocations.
+- This permission authorizes only tool use within the agreed task and the
+  tool's documented controls. It does not broaden scope; authorize production
+  changes, destructive data actions, credential or trust changes; waive
+  security-assumption, backup, recovery, or coordination gates; bypass host or
+  tool approval mechanisms; or replace informed approval for a material
+  unrequested expansion.
+
 ## Measure delivery efficiency truthfully
 
 - Efficiency telemetry is observational and subordinate to scope, correctness,
@@ -355,6 +370,11 @@ checks may support evidence but do not constitute interaction verification.
   they affect. Keep activation, preview, editing, selection, and destructive
   actions distinct; destructive actions require an explicit target and state.
   Show a simple normal first input before inferred or advanced fields.
+- Prefer one concise, self-explanatory heading or label. Do not add subtitles,
+  helper text, or descriptive copy beneath headings, labels, cards, or settings
+  by default. Add supporting copy only when the user explicitly requests it or
+  it is necessary to prevent misunderstanding or error; never use it to restate
+  the heading or label.
 - Do not expose private values, internal identifiers, serialized payloads, or
   implementation invariants as normal interface content. Provide validated,
   purpose-built controls for editable concepts.

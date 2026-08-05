@@ -13,8 +13,10 @@ user-confirmed project assumptions without reopening a settled baseline for rout
 relevant bounded agent context, proportionate runtime effort, software-owned concurrent activation
 proof with opaque per-target attribution, one-shot installer handoff instead of user-operated shell
 choreography, and interfaces whose visible hierarchy matches the task and promised content and whose
-enabled controls and requested journeys are proven through rendered interactions
-(D-20260804-01, D-20260802-02, D-20260802-01, D-20260801-03, D-20260801-02, D-20260801-01,
+enabled controls and requested journeys are proven through rendered interactions, with concise
+self-explanatory headings and labels instead of redundant default descriptions, and autonomous
+in-scope browser QA and local runtime coordination without repeat authorization prompts
+(D-20260805-02, D-20260805-01, D-20260804-01, D-20260802-02, D-20260802-01, D-20260801-03, D-20260801-02, D-20260801-01,
 D-20260714-03, D-20260713-03,
 D-20260713-04, D-20260714-04, D-20260720-01, D-20260731-01, D-20260731-02,
 D-20260729-01,
@@ -23,6 +25,36 @@ D-20260710-05). Inferred: repeated choices indicate a taste for compact low-nois
 stable ordering and grouping, visible exceptions, contextual actions, and durable state rather than
 volatile cleverness (D-20260707-01, D-20260707-02, D-20260707-07, D-20260707-08); apply these
 patterns by default while treating them as inference when a new context materially differs.
+
+## [D-20260805-02 — In-scope browser QA and runtime coordination have standing permission](DecisionDetails/D-20260805-02.md)
+
+Decision: Across all repositories, agents may invoke Playwright or equivalent browser automation
+directly and use the configured DevCoordinator for in-scope local preview, browser QA, and
+development-runtime coordination without asking for separate chat authorization. This permission
+does not expand scope or waive production, destructive-data, credential, trust, security,
+coordination, or host-owned approval gates.
+
+Why: Repeat authorization prompts delayed routine implementation and verification. Options: selected
+bounded standing permission over per-invocation approval or unrestricted blanket authority because it
+removes predictable friction while preserving materially distinct risk gates. Prior attempts: the
+generic routine-tool rule failed to prevent agents from asking before these named tools. Intent:
+agents autonomously use the normal in-scope preview and runtime-control path. Revisit
+only if: the user retracts this permission or a tool's documented controls or risk boundary changes.
+
+## [D-20260805-01 — UI copy is concise and nonredundant by default](DecisionDetails/D-20260805-01.md)
+
+Decision: Prefer one concise, self-explanatory heading or label. Do not add subtitles, helper text,
+or descriptive copy beneath headings, labels, cards, or settings by default. Add supporting copy only
+when the user explicitly requests it or it is necessary to prevent misunderstanding or error, and
+never use it to restate the heading or label.
+
+Why: Redundant supporting text makes interfaces verbose without improving the user's decision or
+preventing an error. Options: selected concise standalone labels with exception-only supporting copy
+over automatic descriptions for every surface or an absolute ban on help because it preserves clarity
+while allowing necessary instructions and warnings. Prior attempts: default subtitles and helper text
+caused clear headings to be repeated and diluted the visual hierarchy. Intent: every line of UI copy
+must add information the user actually needs. Revisit only if: user evidence shows a specific audience
+or journey consistently needs additional nonredundant guidance.
 
 ## [D-20260804-01 — UI completion requires exercised working interactions](DecisionDetails/D-20260804-01.md)
 
