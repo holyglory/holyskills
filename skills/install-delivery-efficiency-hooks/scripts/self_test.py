@@ -58,6 +58,15 @@ def validate_zero_terminal_skill(skill: str) -> list[str]:
         "saved status receipt": "DEFERRED_INSTALL_STATUS",
         "filename-bearing handoff": "status-report `filename`",
         "agent process discovery": "The agent owns target-process discovery",
+        "managed daemon binding": "--managed-codex-daemon",
+        "managed client binding": "--managed-codex-client",
+        "managed helper binding": "--managed-codex-member",
+        "proxy-first ordering": (
+            "waits for every bound transient client or proxy to exit before"
+        ),
+        "exact native daemon stop": "app-server daemon stop",
+        "fixed trusted native path": "fixed platform system search path",
+        "no SSH fallback": "Never redirect the user to SSH or a server Terminal",
         "one close and reopen": "approve/close/reopen cycle happens once",
         "short settling interval": "agent-announced short settling interval",
         "reopened status first": "before doing anything else",
@@ -112,6 +121,11 @@ def validate_readme_zero_terminal(readme: str) -> list[str]:
             "never authorizes apply, trust review, activation, or success"
         ),
         "no user Terminal": "The user never opens Terminal or copies/runs installer commands",
+        "managed daemon binding": "--managed-codex-daemon",
+        "managed client binding": "--managed-codex-client",
+        "native daemon stop": "app-server daemon stop",
+        "fixed trusted native path": "fixed platform system search path",
+        "no SSH fallback": "never redirects them to SSH, a server Terminal",
         "one reopen": "reopen those hosts once",
         "settling interval": "short settling interval",
         "reopened agent status gate": "reopened agent's first action is to read deferred status",
@@ -149,6 +163,18 @@ def validate_contract(root: Path) -> list[str]:
         "deferred status receipt": "DEFERRED_INSTALL_STATUS",
         "deferred filename": "status-report `filename`",
         "deferred process discovery": "The agent owns target-process discovery",
+        "daemon group": "A Codex daemon group has one persistent app-server daemon",
+        "managed daemon option": "--managed-codex-daemon",
+        "managed client option": "--managed-codex-client",
+        "managed member option": "--managed-codex-member",
+        "bootstrap feature option": "--managed-codex-bootstrap-feature",
+        "managed version proof": "app-server daemon version",
+        "backend proof": "reported lifecycle backend before arming",
+        "missing backend classification": "without `backend` is legacy/ephemeral",
+        "Linux exact migration": "pidfd-bound graceful termination",
+        "remote feature preservation": "this includes `code_mode_host`",
+        "managed native stop": "app-server daemon stop",
+        "managed no raw kill": "The worker never uses raw kill semantics",
         "bounded deferred wait": (
             "defaults to 86400 seconds and accepts only 1 through 604800 seconds"
         ),
@@ -183,14 +209,14 @@ def validate_contract(root: Path) -> list[str]:
         "exact installer boundary": "Installer apply, verify, and rollback remain exact",
         "activation-only config conformance": "For activation inspection only, a changed Codex `config.toml` action's whole-file hash drift may conform",
         "reviewed newline exactness": "byte-exact—including reviewed newline encoding",
-        "outer multiline refusal": "Multiline-string syntax outside the block",
+        "outer multiline refusal": "Multiline-string syntax outside the payload",
         "journal-bound receipt": "binds the current canonical recorder source to the reviewed journal",
         "agent-owned watch": "--watch",
         "all reviewed Codex targets": "without it the helper selects all reviewed Codex homes",
-        "no manual sequence choreography": "Do not ask the user to open Terminal, copy a sequence, quit or isolate another Codex app",
-        "bounded watch": "at most 900 seconds",
+        "no manual sequence choreography": "No watch, deadline, sequence copy, Terminal, client isolation, or baseline choreography is part of the normal journey",
+        "persistent activation state": "Persistent proof survives tasks, sessions, receiver restarts, and client reconnects",
+        "watch expiry is diagnostic only": "expiry or timeout never describes the recorder or its persistent activation state",
         "filename-bearing report receipt": "REPORT_SAVED",
-        "private cold report": "private `activation-reports/` directory",
         "same-target usage": "same target and task",
         "null-target rejection": "null, legacy, or different target on usage cannot activate the home",
         "legacy family honesty": "marks every requested home unproven",
@@ -199,6 +225,10 @@ def validate_contract(root: Path) -> list[str]:
         "security assumptions": "security-assumptions.md",
         "security decision coverage": "A first recorder installation or retirement, Codex feature activation, hook trust, and credential generation or rotation can change security posture",
         "routine repair boundary": "verified non-rotating repair that preserves the same named homes, endpoint boundary, credential, controls, and documented posture is routine execution, not a new posture decision",
+        "requested mode router": "Route by requested mode",
+        "verify-first boundary": "Do not create a plan, private transaction, credential, target mutation, or prerequisite installation merely to verify status",
+        "activation routing": "Activate an existing verified installation",
+        "no silent mode expansion": "does not silently cross into the mutating workflow",
         "security question materiality": "wrong answer could select unnecessary controls, omit a necessary control, expand the work, or cause meaningful rework",
         "smallest security question": "smallest concise set of material questions",
         "conditional full baseline": "cover the full baseline only when that decision materially depends on every area",
@@ -238,9 +268,17 @@ def validate_contract(root: Path) -> list[str]:
     for label, marker in {
         "platform agent-owned defer": "The normal install and upgrade path is software-owned",
         "platform ready handshake": "DEFERRED_INSTALL_ARMED",
+        "platform managed daemon binding": "--managed-codex-daemon",
+        "platform managed client binding": "--managed-codex-client",
+        "platform managed member binding": "--managed-codex-member",
+        "platform exact native stop": "selects the exact captured executable's native stop",
+        "platform no raw signal": "never a bare PID or `SIGKILL`",
+        "platform no SSH fallback": (
+            "Never redirect the user to SSH or a server Terminal"
+        ),
         "platform optional observer": "is optional",
         "platform deferred wait bounds": (
-            "1-through-604800-second wait (86400 seconds by default)"
+            "1-through-604800-second user wait (86400 seconds by default)"
         ),
         "platform one-shot nonpersistent worker": "It is one-shot and nonpersistent",
         "platform agent-owned reboot recovery": (
@@ -467,15 +505,21 @@ def check_journal_bound_integration(module: Any) -> None:
         usage = event(
             2,
             "codex",
-            "codex-otel",
+            "codex-hooks",
             "usage.observed",
             "a",
-            "otel_response_completed",
+            "unknown",
             "provider-native",
         )
+        target_ref = installer._runtime_target_ref(
+            plan.auth_token, "codex", home
+        )
+        start_observation = observation(start)
+        usage_observation = observation(usage)
+        start_observation["source_identity"]["target"] = target_ref
         with Recorder(state) as recorder:
-            recorder.record(observation(start), source_key="activation-start")
-            recorder.record(observation(usage), source_key="activation-usage")
+            recorder.record(start_observation, source_key="activation-start")
+            recorder.record(usage_observation, source_key="activation-usage")
 
         with mock.patch.object(module, "_snapshot_recorder_api", healthy_snapshot_api):
             result = module.inspect(
@@ -502,6 +546,43 @@ def check_journal_bound_integration(module: Any) -> None:
                 )
             check(status == 0, "journal-bound CLI did not report active")
             check(output.getvalue().startswith("ACTIVATION_STATUS {"), "receipt marker missing")
+
+            report_root = state / "activation-reports"
+            reports_before = list(report_root.iterdir()) if report_root.exists() else []
+            persistent = module.persistent_activation(
+                plan.journal_path,
+                plan.plan_digest,
+                selected_targets=["test-codex"],
+            )
+            check(persistent["ok"] is True, "durable target proof was not persistent")
+            check(persistent["status"] == "active", "persistent proof was reported inactive")
+            check(
+                persistent["proof_freshness"] == "persistent-history",
+                "persistent proof claimed fresh-watch evidence",
+            )
+            reports_after = list(report_root.iterdir()) if report_root.exists() else []
+            check(reports_after == reports_before, "normal persistent inspection wrote a watch report")
+
+            persistent_output = io.StringIO()
+            with redirect_stdout(persistent_output):
+                persistent_status = module.main(
+                    [
+                        "--journal",
+                        str(plan.journal_path),
+                        "--plan-digest",
+                        plan.plan_digest,
+                        "--runtime",
+                        "codex",
+                        "--target",
+                        "test-codex",
+                        "--require-active",
+                    ]
+                )
+            check(persistent_status == 0, "normal target inspection did not stay active")
+            check(
+                persistent_output.getvalue().startswith("ACTIVATION_STATUS "),
+                "normal target inspection did not emit one bounded status",
+            )
 
             watch_result, report_path, report_digest, report_size = module.watch(
                 plan.journal_path,
@@ -613,6 +694,41 @@ def check_codex_config_activation_conformance(module: Any) -> None:
             conformed["verification"]
             == "journal-bound-reviewed-snapshot-and-double-activation-config-conformance",
             "activation did not report its narrow config conformance path",
+        )
+
+        marker = b"# END HOLYSKILLS DELIVERY EFFICIENCY v1\n"
+        trusted_state = (
+            b"\n[hooks.state]\n\n"
+            b'[hooks.state."/test/codex/hooks.json:pre_tool_use:0:0"]\n'
+            b'trusted_hash = "sha256:' + b"a" * 64 + b'"\n'
+        )
+        host_rewritten = exact_config.replace(
+            marker,
+            trusted_state + marker,
+            1,
+        )
+        check(
+            host_rewritten != exact_config,
+            "host-trust fixture did not insert state before the managed end marker",
+        )
+        set_config(host_rewritten)
+        try:
+            installer.verify_install(plan, plan_digest=plan.plan_digest)
+        except installer.InstallerVerificationError:
+            pass
+        else:
+            raise AssertionError("exact verification accepted host trust-state drift")
+        with mock.patch.object(module, "_snapshot_recorder_api", healthy_snapshot_api):
+            trusted = module.inspect(
+                plan.journal_path,
+                plan.plan_digest,
+                after_sequence=0,
+                selected_runtime="codex",
+            )
+        check(
+            trusted["verification"]
+            == "journal-bound-reviewed-snapshot-and-double-activation-config-conformance",
+            "activation rejected safely displaced host trust state",
         )
 
         managed_edit = exact_config.replace(
@@ -1203,8 +1319,8 @@ def main() -> int:
         check("missing platform WSL" in validate_contract(fixture), "WSL coverage gap missed")
         for old, new, expected in (
             (
-                "1-through-604800-second wait (86400 seconds by default)",
-                "1-through-3600-second wait (900 seconds by default)",
+                "1-through-604800-second user wait\n(86400 seconds by default)",
+                "1-through-3600-second user wait\n(900 seconds by default)",
                 "missing platform deferred wait bounds",
             ),
             (
@@ -1213,7 +1329,7 @@ def main() -> int:
                 "missing platform one-shot nonpersistent worker",
             ),
             (
-                "reboot ends it and requires agent-owned replan and rearm",
+                "reboot ends it and requires\nagent-owned replan and rearm",
                 "reboot leaves the old plan reusable by the user",
                 "missing platform agent-owned reboot recovery",
             ),
@@ -1223,7 +1339,7 @@ def main() -> int:
                 "missing platform reboot user close/reopen only",
             ),
             (
-                "the exact job and plan digest proves no mutation",
+                "the exact job and plan digest proves no\nmutation",
                 "best-effort status suggests no mutation",
                 "missing platform strict no-mutation fallback",
             ),
@@ -1336,6 +1452,29 @@ def main() -> int:
         selected_runtime="codex",
     )
     check(wrong_adapter["runtimes"]["codex"]["active"] is False, "wrong adapter activated Codex")
+
+    non_counter_hook_events = [
+        event(1, "codex", "codex-hooks", "task.start", "a", "prompt_submit"),
+        event(
+            2,
+            "codex",
+            "codex-hooks",
+            "usage.observed",
+            "a",
+            "post_tool",
+            "provider-native",
+        ),
+    ]
+    validate_realistic_events(non_counter_hook_events, module)
+    non_counter_hook = module.summarize_events(
+        non_counter_hook_events,
+        after_sequence=0,
+        selected_runtime="codex",
+    )
+    check(
+        non_counter_hook["runtimes"]["codex"]["active"] is False,
+        "an ordinary Codex hook lookalike activated local counter proof",
+    )
 
     codex_exec_events = [
             event(1, "codex", "codex-hooks", "task.start", "a", "prompt_submit"),

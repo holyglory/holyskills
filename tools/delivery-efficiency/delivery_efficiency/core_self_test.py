@@ -19,6 +19,7 @@ if __package__ in {None, ""}:
 
 from delivery_efficiency import ADAPTER_VERSION, RECORDER_VERSION, SCHEMA_VERSION
 from delivery_efficiency.contract import ContractValidationError, canonical_json, validate_durable_event
+from delivery_efficiency.codex import translate_transcript_usage
 from delivery_efficiency.platforms import (
     PlatformConfigurationError,
     PlatformIdentity,
@@ -27,6 +28,7 @@ from delivery_efficiency.platforms import (
     validate_state_path,
 )
 from delivery_efficiency.storage import DedupeConflictError, LedgerIntegrityError, Recorder
+from delivery_efficiency.reporting import summarize
 
 TARGET_A = "target_v1_" + "a" * 32
 TARGET_B = "target_v1_" + "b" * 32
@@ -191,6 +193,88 @@ def _exact_otel_usage_observation(
     observation["source_identity"]["task"] = turn
     observation["source_identity"]["turn"] = turn
     return observation
+
+
+def _local_usage_observation(session: str, turn: str, index: int) -> Dict[str, Any]:
+    observation = _exact_otel_usage_observation(session, turn, index)
+    observation["adapter"] = {"name": "codex-hooks", "version": ADAPTER_VERSION}
+    observation["payload"]["source_event"] = "unknown"
+    observation["measurement"]["tokens"].update(
+        {
+            "cached_input": "4",
+            "output": "3",
+            "reasoning_output": "2",
+        }
+    )
+    observation["coverage"]["tokens"] = "complete"
+    return observation
+
+
+def test_transcript_usage_is_task_bound_bounded_and_private() -> None:
+    with tempfile.TemporaryDirectory(prefix="delivery-efficiency-rollout-") as temporary:
+        root = Path(temporary).resolve()
+        home = root / "codex"
+        sessions = home / "sessions" / "2026" / "08" / "13"
+        sessions.mkdir(parents=True)
+        transcript = sessions / "rollout-fixture.jsonl"
+        secret = "never-copy-this-prompt-or-response"
+        records = [
+            {"type": "event_msg", "timestamp": "2026-08-13T00:00:00Z", "payload": {"type": "task_started", "turn_id": "turn-a"}},
+            {"type": "event_msg", "timestamp": "2026-08-13T00:00:01Z", "payload": {"type": "user_message", "message": secret}},
+            {"type": "response_item", "payload": {"type": "message", "content": secret}},
+            *(
+                {"type": "response_item", "payload": {"type": "message", "content": secret * 64}}
+                for _ in range(1_500)
+            ),
+            {"type": "event_msg", "timestamp": "2026-08-13T00:00:02Z", "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 10, "cached_input_tokens": 4, "output_tokens": 3, "reasoning_output_tokens": 2, "total_tokens": 13}}}},
+            {"type": "event_msg", "timestamp": "2026-08-13T00:00:03Z", "payload": {"type": "task_complete", "turn_id": "turn-a"}},
+            {"type": "event_msg", "timestamp": "2026-08-13T00:00:04Z", "payload": {"type": "task_started", "turn_id": "turn-b"}},
+            {"type": "event_msg", "timestamp": "2026-08-13T00:00:05Z", "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 99, "cached_input_tokens": 90, "output_tokens": 8, "reasoning_output_tokens": 7}}}},
+        ]
+        transcript.write_text(
+            "".join(json.dumps(item, separators=(",", ":")) + "\n" for item in records),
+            encoding="utf-8",
+        )
+        emissions = translate_transcript_usage(
+            str(transcript),
+            codex_home=home,
+            session="session-a",
+            turn="turn-a",
+            surface="desktop",
+            runtime_version="0.147.0",
+        )
+        assert len(emissions) == 1
+        usage, source_key = emissions[0]
+        assert usage["adapter"]["name"] == "codex-hooks"
+        assert usage["source_identity"]["task"] == "turn-a"
+        assert usage["measurement"]["tokens"] == {
+            "input": "10",
+            "cached_input": "4",
+            "output": "3",
+            "reasoning_output": "2",
+            "tool": None,
+            "other": None,
+        }
+        encoded = canonical_json(usage) + source_key
+        assert secret not in encoded
+        assert str(transcript) not in encoded
+
+        outside = root / "outside.jsonl"
+        outside.write_text(transcript.read_text(encoding="utf-8"), encoding="utf-8")
+        assert translate_transcript_usage(
+            str(outside),
+            codex_home=home,
+            session="session-a",
+            turn="turn-a",
+        ) == []
+        linked = sessions / "rollout-linked.jsonl"
+        linked.symlink_to(outside)
+        assert translate_transcript_usage(
+            str(linked),
+            codex_home=home,
+            session="session-a",
+            turn="turn-a",
+        ) == []
 
 
 def _read_events(state_dir: Path):
@@ -517,6 +601,179 @@ def test_declaration_binding_and_otel_correlation() -> None:
         assert ambiguous_event["identity"]["session_id"] is not None
         assert ambiguous_event["identity"]["task_id"] is None
 
+
+def test_explicit_phase_attribution_is_balanced_and_nonoverlapping() -> None:
+    with tempfile.TemporaryDirectory(prefix="delivery-efficiency-phase-") as temporary:
+        state = Path(temporary).resolve()
+        recorder = Recorder(state)
+        session = "phase-session-private"
+        start = _observation(350)
+        start["source_identity"].update(
+            {"session": session, "project": "/fixture/private/repository"}
+        )
+        recorder.record(start, source_key="phase-task-start")
+
+        phase = _declaration_observation()
+        phase["event"] = "span.start"
+        phase["source_identity"].update(
+            {"session": session, "span": "testing-phase-private"}
+        )
+        phase["classification"].update(
+            {"phase": "testing", "activity_state": "model-active"}
+        )
+        phase["payload"].update(
+            {
+                "requirement_id": None,
+                "requirement_status": "not-applicable",
+                "verification": "not-applicable",
+            }
+        )
+        recorder.record_declaration(
+            phase, source_key="phase-start", source_session=session
+        )
+
+        overlap = copy.deepcopy(phase)
+        overlap["source_identity"]["span"] = "overlap-private"
+        _assert_rejected(
+            lambda: recorder.record_declaration(
+                overlap, source_key="phase-overlap", source_session=session
+            ),
+            ContractValidationError,
+        )
+
+        inside = recorder.record(
+            _otel_usage_observation(session, 351), source_key="phase-usage-inside"
+        )
+        inside_event = next(
+            event
+            for event in _read_events(state)
+            if event["event_id"] == inside.event_id
+        )
+        assert inside_event["classification"]["phase"] == "testing"
+        assert inside_event["classification"]["phase_provenance"] == "agent-declared"
+
+        phase_end = copy.deepcopy(phase)
+        phase_end["event"] = "span.end"
+        recorder.record_declaration(
+            phase_end, source_key="phase-end", source_session=session
+        )
+        outside = recorder.record(
+            _otel_usage_observation(session, 352), source_key="phase-usage-outside"
+        )
+        outside_event = next(
+            event
+            for event in _read_events(state)
+            if event["event_id"] == outside.event_id
+        )
+        assert outside_event["classification"]["phase"] == "unattributed"
+        assert outside_event["classification"]["phase_provenance"] == "inferred"
+
+        unmatched = copy.deepcopy(phase_end)
+        unmatched["source_identity"]["span"] = "unmatched-private"
+        _assert_rejected(
+            lambda: recorder.record_declaration(
+                unmatched, source_key="phase-unmatched", source_session=session
+            ),
+            ContractValidationError,
+        )
+        durable = (state / "EfficiencyLedger.jsonl").read_bytes()
+        assert b"/fixture/private/repository" not in durable
+        assert b"testing-phase-private" not in durable
+        recorder.close()
+
+
+def test_realistic_final_usage_and_runtime_phase_close() -> None:
+    with tempfile.TemporaryDirectory(prefix="delivery-efficiency-final-phase-") as temporary:
+        state = Path(temporary).resolve()
+        recorder = Recorder(state)
+        session = "final-session-private"
+        turn = "final-turn-private"
+        start = _observation(370)
+        start["source_identity"].update(
+            {"session": session, "task": turn, "turn": turn, "project": "/fixture/private/standalone"}
+        )
+        recorder.record(start, source_key="final-task-start")
+
+        phase = _declaration_observation()
+        phase["event"] = "span.start"
+        phase["source_identity"].update({"session": session, "span": "reporting-final"})
+        phase["classification"].update(
+            {"phase": "reporting", "activity_state": "model-active"}
+        )
+        phase["payload"].update(
+            {"requirement_id": None, "requirement_status": "not-applicable", "verification": "not-applicable"}
+        )
+        recorder.record_declaration(
+            phase, source_key="reporting-open", source_session=session
+        )
+
+        before = recorder.record(
+            _local_usage_observation(session, turn, 371),
+            source_key="local-before-final",
+        )
+        duplicate = _exact_otel_usage_observation(session, turn, 371)
+        duplicate["measurement"]["tokens"].update(
+            {"cached_input": "4", "output": "3", "reasoning_output": "2"}
+        )
+        duplicate["coverage"]["tokens"] = "complete"
+        recorder.record(duplicate, source_key="duplicate-exporter-before-final")
+
+        terminal = _declaration_observation()
+        terminal["event"] = "task.terminal"
+        terminal["source_identity"]["session"] = session
+        terminal["payload"].update(
+            {
+                "outcome": "incomplete",
+                "requirement_id": None,
+                "requirement_status": "not-applicable",
+                "verification": "partially-verified",
+            }
+        )
+        terminal["coverage"]["scope"] = "partial"
+        terminal["coverage"]["verification"] = "partial"
+        recorder.record_declaration(
+            terminal, source_key="terminal-before-final", source_session=session
+        )
+
+        after = recorder.record(
+            _local_usage_observation(session, turn, 372),
+            source_key="local-final-response",
+        )
+        active_task = summarize(
+            recorder.read_verified_events(), recorder.read_private_project_labels()
+        )["tasks"][0]
+        assert active_task["token_coverage"] == "partial"
+        stop = _observation(373, event="runtime.turn_stopped")
+        stop["source_identity"].update(
+            {"session": session, "task": turn, "turn": turn, "project": None}
+        )
+        stop["payload"]["source_event"] = "turn_stop"
+        stop["classification"].update(
+            {"phase": "reporting", "phase_provenance": "inferred"}
+        )
+        recorder.record(stop, source_key="runtime-stop-after-final")
+
+        events = _read_events(state)
+        before_event = next(event for event in events if event["event_id"] == before.event_id)
+        after_event = next(event for event in events if event["event_id"] == after.event_id)
+        assert before_event["classification"]["phase"] == "reporting"
+        assert after_event["classification"]["phase"] == "reporting"
+        runtime_closes = [
+            event for event in events
+            if event["event"] == "span.end"
+            and event["adapter"]["name"] == "codex-hooks"
+            and event["payload"]["source_event"] == "unknown"
+        ]
+        assert len(runtime_closes) == 1
+        task = summarize(events, recorder.read_private_project_labels())["tasks"][0]
+        assert task["token_source"] == "task-bound-local-runtime"
+        assert task["token_coverage"] == "complete"
+        assert task["tokens"]["input"] == "20"
+        assert task["tokens_by_phase"]["reporting"]["tokens"]["input"] == "20"
+        assert task["tokens_by_phase"]["reporting"]["usage_event_count"] == 2
+        assert task["phase_interval_union_ns"]["reporting"] is not None
+        assert task["repository_display_name"] == "standalone"
+        recorder.close()
 
 def test_codex_runtime_target_correlation_and_privacy() -> None:
     with tempfile.TemporaryDirectory(prefix="delivery-efficiency-target-") as temporary:
@@ -878,6 +1135,9 @@ def main() -> int:
         test_contract_privacy_dedupe_and_span,
         test_concurrent_writers_and_cross_process_dedupe,
         test_declaration_binding_and_otel_correlation,
+        test_transcript_usage_is_task_bound_bounded_and_private,
+        test_explicit_phase_attribution_is_balanced_and_nonoverlapping,
+        test_realistic_final_usage_and_runtime_phase_close,
         test_codex_runtime_target_correlation_and_privacy,
         test_crash_recovery_without_duplicate,
         test_partial_line_crash_recovery,

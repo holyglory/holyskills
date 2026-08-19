@@ -522,21 +522,13 @@ This is a local curation repository for Codex skills.
 
         headings = [
             "Coverage",
-            "Interview Summary",
-            "Confirmed App Idea",
-            "Confirmed Users And Contexts",
-            "Confirmed Journey Inventory",
-            "Missing Or Weak Journeys",
-            "Journey Decision Model Gaps",
-            "Information Relevance Inventory Gaps",
-            "Documentation Completeness Findings",
-            "Information Hierarchy And Navigation Gaps",
+            "Confirmation Status",
+            "Journey Findings",
+            "Decision And Information Gaps",
+            "Documentation Findings",
             "Interaction Affordance And Metadata Gaps",
-            "UX Documentation Gaps",
-            "UI Handoff Constraints",
             "Recommended Documentation Plan",
-            "Readiness Score",
-            "Questions Still Unanswered",
+            "Readiness And Open Questions",
         ]
         good_report = tmp / "good-report.md"
         sections = []
@@ -544,19 +536,27 @@ This is a local curation repository for Codex skills.
             body = "Confirmed from the user interview and docs with file evidence."
             if heading == "Coverage":
                 body = "Journey status confirmed; documentation and source hints were inspected."
-            elif heading == "Interview Summary":
-                body = "The user confirmed the app idea, operators, and prioritized service-health journey."
-            elif heading == "Confirmed Journey Inventory":
+            elif heading == "Confirmation Status":
+                body = "Confirmed from the user and repository documentation."
+            elif heading == "Journey Findings":
                 body = "| Journey | Status | Evidence |\n| --- | --- | --- |\n| Review health | confirmed | user interview |"
             elif heading == "Interaction Affordance And Metadata Gaps":
                 body = "No gaps: activation targets, focus feedback, destination, disclosure lifecycle, detail access, scrollbar separation, stable dimensions, hover-copy, concise status, icon meaning, and passive metadata are explicitly documented."
-            elif heading == "Readiness Score":
-                body = "Confirmed readiness: 3/3 for journey definition with user evidence."
-            elif heading == "Questions Still Unanswered":
-                body = "None after the recorded user interview."
+            elif heading == "Readiness And Open Questions":
+                body = "Confirmed readiness: 3/3 for journey definition with user evidence; no open questions."
             sections.append(f"## {heading}\n\n{body}\n")
         write(good_report, "\n".join(sections))
         run_report_verify(good_report, expect=0)
+
+        no_interaction = tmp / "no-interaction-report.md"
+        write(
+            no_interaction,
+            good_report.read_text(encoding="utf-8").replace(
+                "No gaps: activation targets, focus feedback, destination, disclosure lifecycle, detail access, scrollbar separation, stable dimensions, hover-copy, concise status, icon meaning, and passive metadata are explicitly documented.",
+                "No relevant interaction or message-metadata surfaces documented.",
+            ),
+        )
+        run_report_verify(no_interaction, expect=0)
 
         missing_interaction = tmp / "missing-interaction.md"
         write(missing_interaction, good_report.read_text(encoding="utf-8").replace("## Interaction Affordance And Metadata Gaps", "## Generic UI Gaps"))
@@ -567,8 +567,7 @@ This is a local curation repository for Codex skills.
             unconfirmed,
             good_report.read_text(encoding="utf-8")
             .replace("Journey status confirmed; documentation and source hints were inspected.", "journey assumptions unconfirmed")
-            .replace("Confirmed readiness: 3/3 for journey definition with user evidence.", "Readiness cannot be confirmed.")
-            .replace("None after the recorded user interview.", "No questions recorded."),
+            .replace("Confirmed readiness: 3/3 for journey definition with user evidence; no open questions.", "Readiness cannot be confirmed; no questions recorded."),
         )
         run_report_verify(unconfirmed, expect=1)
 

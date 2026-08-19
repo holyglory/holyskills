@@ -6,9 +6,8 @@ verification, documentation, and observational agent-runtime tooling; it does
 not own or deploy local-service coordination products.
 
 The coordinator, PostgreSQL protection skill, native DevOps Board, and web
-DevOps Console are independently versioned in
-[holyglory/DevCoordinator](https://github.com/holyglory/DevCoordinator).
-Holy Skills does not import, clone, pin, build, or test that repository.
+DevOps Console are independently versioned outside this repository. Holy Skills
+does not import, clone, pin, build, or test their source repository.
 
 ## Canonical skills
 
@@ -26,8 +25,8 @@ Holy Skills does not import, clone, pin, build, or test that repository.
   ingestion.
 - `install-delivery-efficiency-hooks`: a cross-platform installation workflow
   for recorder prerequisites, transactional Codex and Claude hook deployment,
-  supported feature activation, exact host review, and one agent-owned
-  concurrent Codex watch for per-home fresh-task telemetry proof.
+  supported feature activation, exact host review, persistent per-home Codex
+  telemetry proof, and standalone task/repository readings.
 - `ui-implementation-audit`: an explicit-invocation-only, source- and
   evidence-bound audit used once a substantive product UI surface exists,
   covering rendered behavior, journeys, handlers, backend paths, permissions,
@@ -124,7 +123,13 @@ Every field is required and IDs are unique. Status begins with `Active`,
 `Blocked`, `In progress`, `Incomplete`, `Open`, `Partial`, `Pending`, `To do`,
 `TODO`, `Unresolved`, or `Waiting`. Do not add prose, checklists, extra tables,
 or terminal rows outside the schema; history belongs in the sources named
-above.
+above. Write each field for a reader who does not know the implementation:
+start `Remaining work` with the missing outcome in plain language, use `Why it
+matters` for the current user or product impact and readiness consequence, make
+`Status` name the present state or concrete unblock condition, and make
+`Verification` describe the observable proof that closes the gap. Technical
+paths, identifiers, and test names may follow that explanation but never replace
+it; raw logs belong in cold artifacts.
 
 `UserIssueLedgers/` is a different lifecycle: its rows remain after a fix so a
 later task cannot repeat the same user-indicated mistake. It contains multiple
@@ -206,15 +211,18 @@ After installing the repository skills as direct links, invoke
 `/install-delivery-efficiency-hooks` in Claude Code. The skill inventories each
 explicit runtime home, installs missing requested prerequisites through current
 official channels, runs the immutable plan/apply/verify workflow, enables the
-Codex hooks feature when supported and authorized, and proves fresh task-bound
-events for all selected Codex homes with one concurrent activation watch. It
+Codex hooks feature when supported and authorized, and derives persistent
+target-bound activation from verified history for all selected Codex homes. It
 cannot silently grant host trust: when Codex requires `/hooks` review, the user
 must inspect and approve the exact installed command before the skill can
 report that target active. The normal install and upgrade path is zero-Terminal:
 the agent arms a detached `install defer` job, the user closes affected hosts
 once and waits the announced short settling interval, then reopens once; the
 reopened agent validates the saved receipt before trust review or fresh-task
-proof.
+proof. For a remote desktop client backed by a persistent Codex app-server, the
+agent binds the transient proxy and durable same-user daemon separately; after
+the proxy exits, the worker uses only the exact reviewed Codex native daemon
+stop, so the user never needs SSH or a server Terminal.
 
 The recorder requires Python 3.9 or newer and otherwise uses only the standard
 library. Run installation from the canonical checkout and name every Codex and
@@ -276,14 +284,19 @@ change with byte-identical host configuration requires neither restart nor
 renewed Codex hook trust.
 
 The agent discovers every exact live same-user process for those changed
-targets, including background helpers, and arms the one-shot worker itself:
+targets and classifies ordinary passive processes separately from a persistent
+managed Codex app-server, its transient clients/proxies, and owned helpers. It
+arms the one-shot worker itself:
 
 ```bash
 python3 tools/delivery-efficiency/recorder.py install defer \
   --journal "/absolute/state/transactions/<plan-id>/journal.json" \
   --plan-digest "<plan_sha256>" \
   --target-pid "<exact-live-pid>" \
-  --target-pid "<another-exact-live-pid>"
+  --target-pid "<another-exact-live-pid>" \
+  --managed-codex-daemon "<target>=<daemon-pid>" \
+  --managed-codex-client "<target>=<client-or-proxy-pid>" \
+  --managed-codex-member "<target>=<owned-helper-pid>"
 ```
 
 On native Windows the agent supplies the same arguments with its absolute
@@ -294,16 +307,27 @@ native Windows and WSL jobs are never mixed.
 The agent never asks the user to find a PID or inspect a process list. The
 command waits for a worker-ready handshake and emits one bounded
 `DEFERRED_INSTALL_ARMED` receipt containing a nonsecret job ID, private status
-`filename`, `status="armed"`, target count, and wait limit. It exposes no
-absolute paths, PIDs, credentials, commands, environments, or raw errors.
-`armed` is not installation success.
+`filename`, `status="armed"`, target count, wait limit, and a managed-daemon
+count when applicable. It exposes no absolute paths, PIDs, credentials,
+commands, environments, or raw errors. `armed` is not installation success.
 
 Only after that receipt does the agent ask the user to close every affected
-host once. The detached worker never signals a process. It waits for the exact
-captured process identities to exit, rejects detected PID reuse or matching
-relaunch, revalidates the reviewed plan and filesystem state, and calls the
-existing transactional apply-and-verify implementation. The wait defaults to
-86400 seconds and is bounded to 1 through 604800 seconds. The worker remains
+client or host once. Ordinary targets remain wait-only. For a managed Codex
+group, the worker first waits for every exact transient client/proxy to exit,
+then freezes cancellation and the user-wait deadline, rechecks the bound
+daemon executable path, image, home, versions, and relaunch guard, and invokes
+only the captured executable with fixed `app-server daemon stop` argv, exact
+`CODEX_HOME`, no shell, and a minimal environment containing a fixed platform
+system search path required by native lifecycle helpers. It never inherits the
+caller's `PATH`. It sends no raw process
+signal and requires each bound daemon/helper to exit within a short control
+window before quiescence and transactional apply-and-verify.
+
+Native-stop failure, identity drift, PID reuse, matching relaunch, or helper
+timeout fails unapplied. If exact topology or native control cannot be proven,
+the agent fails before asking the user to close anything and never redirects
+them to SSH, a server Terminal, or a manual kill command. The user wait defaults
+to 86400 seconds and is bounded to 1 through 604800 seconds. The worker remains
 one-shot and nonpersistent: an OS reboot ends it and requires an agent-owned
 fresh plan and rearm. The user only repeats the close/reopen boundary after a
 new armed receipt and never opens Terminal.
@@ -446,26 +470,27 @@ closed without a check-then-replace fallback. Rollback restores exact prior
 bytes only while the installed digests observed by its checks still match.
 
 After the reopened agent validates the saved verified deferred receipt, the
-skill owns one bounded Codex activation watch. It reads the digest-approved
-plan, selects every reviewed Codex home by default, captures its own event
-baseline, and waits for the selected homes concurrently:
+skill reads persistent activation from integrity-checked history. It binds the
+digest-approved plan and current target identities, and selects every reviewed
+Codex home by default:
 
 ```bash
 python3 skills/install-delivery-efficiency-hooks/scripts/activation_status.py \
   --journal "/absolute/state/transactions/<plan-id>/journal.json" \
   --plan-digest "<plan_sha256>" \
   --runtime codex \
-  --watch
+  --require-active
 ```
 
-Repeat `--target "<reviewed-name>"` only when the watch should cover a selected
-subset. The helper writes a bounded private report under the recorder state and
-emits exactly one `REPORT_SAVED` line whose JSON receipt names the report file
-and gives its aggregate active and pending result. A timeout still saves an
-honest partial report; legacy family-only evidence never activates a named
-home.
+Repeat `--target "<reviewed-name>"` only for a selected subset. The helper
+emits one bounded `ACTIVATION_STATUS`; it does not run continuously or create a
+normal-path report. Once verified evidence exists for the current target
+identity, it survives tasks, sessions, receiver restarts, and reconnects. The
+explicit `--watch` mode remains a bounded post-baseline diagnostic for installer
+development; its timeout never means that the recorder or activation expired.
+Legacy family-only evidence never activates a named home.
 
-While the watch runs, the user's complete Codex activation role is to open
+The user's complete Codex activation role is to open
 `/hooks` in each selected instance, inspect and trust the exact installed
 command, and start one ordinary fresh task in each instance. The user does not
 quit clients or isolate homes for serial verification, capture sequence
@@ -475,7 +500,7 @@ boundary; activation does not ask for a second restart. A home becomes active
 only when that fresh task has target-attributed hook lifecycle evidence and
 correlated provider usage.
 
-Claude activation remains host-owned and independent of this Codex watch;
+Claude activation remains host-owned and independent of Codex target proof;
 per-home target attribution is Codex-only in recorder `0.2.3` and newer. Claude Code
 loads `settings.json` hooks at session start without a Codex-style trust grant.
 Its `/hooks` surface is useful for inspection, but viewing it is not an
@@ -564,7 +589,7 @@ python3 "/absolute/state/recorder.py" report
 
 `report` fails closed unless every authoritative spool HMAC and sequence agrees
 with the exact canonical cold-ledger bytes; a merely parseable or edited JSONL
-file is never treated as measured evidence. Recorder `0.2.4` writes schema
+file is never treated as measured evidence. Recorder `0.2.9` writes schema
 `1.2`; immutable schema `1.0` and `1.1` rows remain validated and reportable
 beside it without rewriting any version. Reports identify compatible single-
 and mixed-version ledgers. This compatibility does not invent per-home target
@@ -609,6 +634,24 @@ runtime itself exposes it. Phase declarations pass through the authenticated
 receiver so separate launcher invocations share one process-owned monotonic
 clock domain. If that receiver restarts between boundaries, the duration is
 reported as unknown rather than combined across clocks or filled with zero.
+Only one balanced explicit phase may be open for a task. Provider usage
+observed while it is open inherits that phase with `agent-declared`
+attribution; usage outside the span remains `unattributed` and is never
+estimated from elapsed time.
+
+`report --tasks` is the standalone human-readable view. It names each task from
+a private bounded repository basename and a chronological task number, then
+shows status, native token categories, coverage, and phase attribution without
+retaining paths or prompt text. `report --repositories` provides the matching
+repository aggregates and conservative repeated-work candidates. Both commands
+work directly from the per-account recorder and require no Coordinator or other
+repository.
+
+If a locally installed DevCoordinator advertises efficiency ingestion, a
+terminal declaration also publishes the current account's cumulative opaque
+repository snapshot for optional cross-account UI. Missing, failing, or absent
+Coordinator capability never affects recording, standalone reports, or task
+attribution; repository paths never enter telemetry or the exported projection.
 
 For controlled automation, wrap `codex exec` while preserving its JSONL stdout:
 

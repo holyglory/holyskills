@@ -19,9 +19,9 @@ repository changes.
 Run a read-only, manifest-verified audit of whether the implemented UI matches
 the intended UI shown in mockups/assets and described by user journey
 requirements. The lead agent owns the final visual judgment. Low-effort workers
-inspect deterministic batches of interface source files, while separate workers
-inventory mockups/assets, identify visual tooling, and compare desktop/mobile
-screenshots against the design target.
+inspect deterministic batches of interface source files, while one visual
+worker normally inventories evidence, identifies tooling, and compares
+desktop/mobile screenshots against the design target.
 
 This skill exists because UI implementations often drift from generated mockups:
 spacing, density, hierarchy, responsive fit, visible states, and asset use must
@@ -97,9 +97,12 @@ and the documentation handoff conflict instead of marking the UI as compliant.
   run this audit as authorization for the needed workers.
 - Queue only interface-defining source files in `batch_###.md` prompts. Do not
   batch unrelated backend, scripts, build files, or non-UI source.
-- Always run the visual work when interface source files are queued:
-  `mockup_asset_audit.md`, `visual_tooling_audit.md`, and
-  `visual_comparison_audit.md`.
+- Always run `visual_comparison_audit.md` when interface source files are
+  queued. It owns mockup/asset discovery, visual-tooling discovery, and rendered
+  comparison by default. Add `--split-visual-discovery` only when the evidence
+  inventory is unusually large or requires specialized independent workers;
+  that mode also generates `mockup_asset_audit.md` and
+  `visual_tooling_audit.md`.
 - Before comparing screenshots to mockups, define a journey decision model:
   primary user goal, primary decision, required facts, warning/flag conditions,
   frequent actions, secondary/rare actions, and unconfirmed assumptions.
@@ -245,15 +248,13 @@ and the documentation handoff conflict instead of marking the UI as compliant.
      `fork_turns="none"`. Pass the complete prompt, accept only its compact
      filename-bearing receipt, and confirm the exact report artifact on disk.
      Workers do not edit the audited repository and must cover every owned unit.
-   - Dispatch `mockup_asset_audit.md` to extract expected screens, visual
-     hierarchy, typography, spacing, density, colors, assets, and state
-     requirements from mockups and journey docs.
-   - Dispatch `visual_tooling_audit.md` to find exact commands, servers,
-     routes, fixtures, Storybook stories, Playwright/Cypress specs, native
-     previews, and blockers.
    - Dispatch `visual_comparison_audit.md` to render or screenshot desktop and
-     narrow mobile UI, compare it against mockups/assets and journey
-     requirements, and report visual gaps with artifact evidence.
+     narrow mobile UI, inventory relevant mockups/assets and safe tooling,
+     compare the result against journey requirements, and report visual gaps
+     with artifact evidence.
+   - Only when the manifest records `visual_worker_mode: split`, also dispatch
+     `mockup_asset_audit.md` and `visual_tooling_audit.md` for specialized
+     discovery work.
    - If workers are unavailable, use disclosed manual fallback coverage: process
      each prompt yourself, save reports under `reports/`, update the ledger, and
      keep the final coverage label as manual fallback coverage.
@@ -261,10 +262,9 @@ and the documentation handoff conflict instead of marking the UI as compliant.
 6. **Verify coverage**
    - Confirm one report per source batch was written under
      `reports/batch_###.md`.
-   - Save visual reports under:
-     - `reports/mockup_asset_audit.md`
-     - `reports/visual_tooling_audit.md`
-     - `reports/visual_comparison_audit.md`
+   - Save `reports/visual_comparison_audit.md`. In explicit split mode, also
+     save `reports/mockup_asset_audit.md` and
+     `reports/visual_tooling_audit.md`.
    - Fill `effort_ledger.json` with lead effort, subagent capability, per-batch
      worker status, visual worker status, fallback status, and pruned-directory
      review decisions when applicable.
@@ -391,8 +391,9 @@ Findings must use either `No findings.` or field blocks with:
 ## Visual Worker Requirements
 
 The visual comparison report is not complete if it only says the UI "looks
-good" or "matches the mockup." It must include `Journey Decision Model`,
-`Rendered Journey Usability`, and `Visual Comparison Checks` tables with
+good" or "matches the mockup." It must include `Mockup And Asset Inventory`,
+`Visual Tooling`, `Journey Decision Model`, `Rendered Journey Usability`, and
+`Visual Comparison Checks` with
 desktop and mobile/narrow rows when a web UI can be rendered. Evidence must
 name the command/tool and bind `evidence:<id>` records from `visual_evidence.json`.
 If screenshots cannot be produced, the row result must be `BLOCKED` and the

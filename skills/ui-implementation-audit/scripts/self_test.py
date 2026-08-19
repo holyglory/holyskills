@@ -846,6 +846,8 @@ def complete_ledger(out: Path, manifest: dict) -> None:
         )
     if manifest.get("ui_implementation_audit", {}).get("visual_required"):
         for key in ("mockup_asset_worker", "visual_tooling_worker", "visual_comparison_worker"):
+            if ledger[key].get("status") != "pending":
+                continue
             ledger[key].update(
                 {
                     "status": "completed",
@@ -1016,8 +1018,9 @@ def write_complete_reports(
         if real_visual_evidence:
             write_visual_evidence(out, manifest)
         source_file = manifest["source_files"][0]["rel_path"]
-        write(
-            out / "reports" / "mockup_asset_audit.md",
+        if manifest["ui_implementation_audit"].get("mockup_asset_report"):
+            write(
+                out / "reports" / "mockup_asset_audit.md",
             f"""## Run ID
 {manifest['run_id']}
 
@@ -1039,9 +1042,10 @@ No findings.
 ## Open Questions
 None.
 """,
-        )
-        write(
-            out / "reports" / "visual_tooling_audit.md",
+            )
+        if manifest["ui_implementation_audit"].get("visual_tooling_report"):
+            write(
+                out / "reports" / "visual_tooling_audit.md",
             f"""## Run ID
 {manifest['run_id']}
 
@@ -1063,7 +1067,7 @@ No findings.
 ## Open Questions
 None.
 """,
-        )
+            )
         evidence = "looked fine" if weak_visual_evidence else "playwright capture with formal verifier evidence:formal-web"
         write(
             out / "reports" / "visual_comparison_audit.md",
@@ -1072,6 +1076,12 @@ None.
 
 ## Worker
 visual_comparison_audit
+
+## Mockup And Asset Inventory
+design/mockups/dashboard-mobile.png and docs/journeys.md define the expected dashboard hierarchy.
+
+## Visual Tooling
+Playwright captures desktop 1440px and mobile 390px views; formal browser verification records geometry.
 
 ## Journey Decision Model
 | Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
@@ -1126,6 +1136,12 @@ def write_currency_priority_visual_report(out: Path, *, include_p1: bool) -> Non
 ## Worker
 visual_comparison_audit
 
+## Mockup And Asset Inventory
+docs/journeys.md defines the required first-viewport priority.
+
+## Visual Tooling
+Playwright desktop and mobile captures with formal geometry evidence.
+
 ## Journey Decision Model
 | Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1177,6 +1193,12 @@ def write_layout_noise_visual_report(out: Path, *, include_p1: bool) -> None:
 
 ## Worker
 visual_comparison_audit
+
+## Mockup And Asset Inventory
+docs/journeys.md defines the review-workspace decision hierarchy.
+
+## Visual Tooling
+Playwright desktop and mobile captures with formal geometry evidence.
 
 ## Journey Decision Model
 | Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
@@ -1244,11 +1266,15 @@ def main() -> int:
             ):
                 check(token in prompt_text, f"batch prompt should enforce context-light artifact delivery: {token}")
         audit_meta = manifest["ui_implementation_audit"]
+        check(audit_meta["visual_worker_mode"] == "combined", "default visual audit should use one combined worker")
+        check(not audit_meta["mockup_asset_prompt"] and not audit_meta["visual_tooling_prompt"], "default visual audit should not create redundant discovery workers")
         for prompt_key, report_key in (
             ("mockup_asset_prompt", "mockup_asset_report"),
             ("visual_tooling_prompt", "visual_tooling_report"),
             ("visual_comparison_prompt", "visual_comparison_report"),
         ):
+            if not audit_meta[prompt_key]:
+                continue
             prompt_text = (out / audit_meta[prompt_key]).read_text(encoding="utf-8")
             check(str((out / audit_meta[report_key]).resolve()) in prompt_text, f"{prompt_key} should contain exact report path")
             check('fork_turns="none"' in prompt_text and "REPORT_SAVED" in prompt_text, f"{prompt_key} should use a compact context-light worker contract")
@@ -1299,6 +1325,11 @@ def main() -> int:
         check(queued == {"src/App.tsx", "src/styles.css"}, f"unexpected source queue: {queued}")
         check(manifest["ui_implementation_audit"]["mockup_asset_count"] >= 1, "mockup asset should be discovered")
         check(manifest["ui_implementation_audit"]["requirement_source_count"] >= 1, "journey requirement should be discovered")
+        split_out = tmp / "split-visual-out"
+        split_manifest = build(ui_fixture, split_out, "--split-visual-discovery")
+        split_meta = split_manifest["ui_implementation_audit"]
+        check(split_meta["visual_worker_mode"] == "split", "explicit split mode should be recorded")
+        check(split_meta["mockup_asset_prompt"] and split_meta["visual_tooling_prompt"], "explicit split mode should create both discovery prompts")
         implementation_gate = manifest["ui_implementation_audit"]["implementation_gate"]
         check(implementation_gate["status"] == "passed", "implemented UI gate should pass")
         check(

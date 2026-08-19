@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -16,6 +17,17 @@ from full_repo_harness import completion_ledger  # noqa: E402
 
 
 DEFAULT_LEDGER = ROOT / "CompletionLedger.md"
+
+
+def project_anchor(path: Path) -> Path | None:
+    """Use the repository root as the trusted boundary for its own ledger."""
+
+    absolute = Path.cwd() / path if not path.is_absolute() else path
+    try:
+        Path(os.path.abspath(absolute)).relative_to(Path(os.path.abspath(ROOT)))
+    except ValueError:
+        return None
+    return ROOT
 
 
 def find_ledger_violations(text: str) -> list[str]:
@@ -32,7 +44,7 @@ def audit_ledger(path: Path) -> list[str]:
     """Read and validate a ledger without following supplied path symlinks."""
 
     try:
-        text = completion_ledger.read_text_nofollow(path)
+        text = completion_ledger.read_text_nofollow(path, anchor=project_anchor(path))
         if text is None:
             return []
         completion_ledger.parse_ledger(text)

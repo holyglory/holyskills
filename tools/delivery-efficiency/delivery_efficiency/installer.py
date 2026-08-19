@@ -2935,7 +2935,12 @@ def _load_plan_held(
     path: Path,
     expected_plan_digest: str,
     anchor: _DirectoryAnchor,
+    *,
+    expected_recorder_version: Optional[str] = None,
 ) -> InstallPlan:
+    if expected_recorder_version is None:
+        expected_recorder_version = RECORDER_VERSION
+
     if path.parent != anchor.path or path.name != "journal.json":
         raise InstallerConflict("transaction journal is not the held journal child")
     journal_raw = _read_private_held(anchor, path.name)
@@ -2946,7 +2951,9 @@ def _load_plan_held(
         raise InstallerError("unsupported transaction journal schema")
     if journal.get("journal_path") != str(path):
         raise InstallerConflict("transaction journal path does not match its bound path")
-    _validate_journal_bindings(journal)
+    _validate_journal_bindings(
+        journal, expected_recorder_version=expected_recorder_version
+    )
     expected_transaction_identity = _validate_filesystem_identity(
         journal.get("transaction_identity"),
         "transaction directory",
@@ -2993,7 +3000,11 @@ def _load_plan_held(
         immutable_plan=immutable_plan,
         plan_digest=plan_digest,
     )
-    _validate_plan_integrity(plan, expected_plan_digest=expected_plan_digest)
+    _validate_plan_integrity(
+        plan,
+        expected_plan_digest=expected_plan_digest,
+        expected_recorder_version=expected_recorder_version,
+    )
     _require_directory_anchor(anchor)
     return plan
 
@@ -3005,6 +3016,46 @@ def load_plan(
     path = _absolute_path(journal_path, "journal_path")
     with _lock_transaction_directory(path.parent) as anchor:
         return _load_plan_held(path, expected_plan_digest, anchor)
+
+
+def load_plan_for_deferred_observation(
+    journal_path: Union[str, os.PathLike[str]],
+    expected_plan_digest: str,
+    allowed_historical_versions: Iterable[str],
+) -> InstallPlan:
+    """Load a prior-version plan only for deferred status or cancellation.
+
+    The returned plan cannot pass the ordinary current-version mutation gate.
+    This keeps already-armed one-shot workers observable across a recorder
+    upgrade without authorizing current installer code to apply an old plan.
+    """
+
+    path = _absolute_path(journal_path, "journal_path")
+    allowed = frozenset(allowed_historical_versions)
+    if not allowed or any(
+        _semantic_version(value, fullmatch=True) is None for value in allowed
+    ):
+        raise InstallerConflict("historical recorder version allowlist is invalid")
+    with _lock_transaction_directory(path.parent) as anchor:
+        if path.parent != anchor.path or path.name != "journal.json":
+            raise InstallerConflict("transaction journal is not the held journal child")
+        journal_raw = _read_private_held(anchor, path.name)
+        journal = _load_json_object(journal_raw, "transaction journal")
+        if journal_raw != _json_bytes(journal):
+            raise InstallerConflict("transaction journal bytes are not canonical")
+        version = journal.get("recorder_version")
+        if not isinstance(version, str):
+            raise InstallerConflict("transaction journal recorder version is invalid")
+        if version != RECORDER_VERSION and version not in allowed:
+            raise InstallerConflict(
+                "transaction journal recorder version is not observable by this installer"
+            )
+        return _load_plan_held(
+            path,
+            expected_plan_digest,
+            anchor,
+            expected_recorder_version=version,
+        )
 
 
 def _coerce_plan(
@@ -3092,8 +3143,14 @@ def _validate_plan_integrity(
     plan: InstallPlan,
     *,
     expected_plan_digest: Optional[str] = None,
+    expected_recorder_version: Optional[str] = None,
 ) -> None:
-    _validate_journal_bindings(plan.journal)
+    if expected_recorder_version is None:
+        expected_recorder_version = RECORDER_VERSION
+
+    _validate_journal_bindings(
+        plan.journal, expected_recorder_version=expected_recorder_version
+    )
     if not isinstance(plan.immutable_plan, dict):
         raise InstallerConflict("transaction has no immutable reviewed install plan")
     raw = _json_bytes(plan.immutable_plan)
@@ -3117,8 +3174,15 @@ def _bound_path(actual: Any, expected: Path, label: str) -> None:
         raise InstallerConflict("transaction journal has an invalid {} binding".format(label))
 
 
-def _validate_journal_bindings(journal: Dict[str, Any]) -> None:
+def _validate_journal_bindings(
+    journal: Dict[str, Any],
+    *,
+    expected_recorder_version: Optional[str] = None,
+) -> None:
     """Reject path substitution in a persisted transaction journal."""
+
+    if expected_recorder_version is None:
+        expected_recorder_version = RECORDER_VERSION
 
     try:
         plan_id = journal["plan_id"]
@@ -3131,7 +3195,10 @@ def _validate_journal_bindings(journal: Dict[str, Any]) -> None:
         raise InstallerConflict("transaction journal is missing required bindings") from error
     if not isinstance(plan_id, str) or not re.fullmatch(r"[0-9a-f]{32}", plan_id):
         raise InstallerConflict("transaction journal plan_id is invalid")
-    if version != RECORDER_VERSION:
+    if (
+        _semantic_version(expected_recorder_version, fullmatch=True) is None
+        or version != expected_recorder_version
+    ):
         raise InstallerConflict("transaction journal recorder version does not match this installer")
     if not state.is_absolute():
         raise InstallerConflict("transaction journal state_root is not absolute")

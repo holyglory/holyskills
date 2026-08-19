@@ -80,6 +80,36 @@ class ProcessIdentityTests(unittest.TestCase):
         inspector = fake_inspector({41: reused})
         self.assertFalse(inspector.is_alive(reviewed))
 
+    def test_exact_identity_rejects_same_process_after_image_change(self) -> None:
+        reviewed = identity(41, "boot:10", "/opt/codex", "1:10")
+        changed_image = identity(41, "boot:10", "/opt/other", "1:11")
+        inspector = fake_inspector({41: changed_image})
+        self.assertTrue(inspector.is_alive(reviewed))
+        self.assertFalse(inspector.is_exact(reviewed))
+
+    def test_executable_path_recheck_detects_replacement(self) -> None:
+        reviewed = identity(41, "boot:10", "/opt/codex", "1:10")
+        inspector = fake_inspector({41: reviewed})
+        with mock.patch.object(processes, "_file_identity", return_value="1:11"):
+            self.assertFalse(inspector.executable_path_matches(reviewed))
+
+    def test_linux_pidfd_termination_is_exact_and_sigterm_only(self) -> None:
+        reviewed = identity(41, "boot:10", "/opt/codex", "1:10")
+        inspector = fake_inspector({41: reviewed})
+        with mock.patch.object(
+            inspector, "supports_exact_graceful_termination", return_value=True
+        ), mock.patch.object(
+            processes, "_file_identity", return_value="1:10"
+        ), mock.patch.object(
+            processes.os, "pidfd_open", return_value=91
+        ) as opened, mock.patch.object(
+            processes.signal, "pidfd_send_signal"
+        ) as sent, mock.patch.object(processes.os, "close") as closed:
+            inspector.terminate_exact_gracefully(reviewed)
+        opened.assert_called_once_with(41, 0)
+        sent.assert_called_once_with(91, processes.signal.SIGTERM)
+        closed.assert_called_once_with(91)
+
     def test_target_exit_or_reuse_before_ready_is_must_catch(self) -> None:
         reviewed = identity(51, "boot:10", "/Applications/Target", "1:10")
         exited = fake_inspector({})
@@ -152,6 +182,13 @@ class ProcessIdentityTests(unittest.TestCase):
         with self.assertRaises(processes.ProcessIdentityError):
             inspector.list_processes([target])
 
+        class SeparateNamespaceBackend(AmbiguousBackend):
+            def proves_separate_pid_namespace(self, pid, targets):
+                return pid == 20 and targets == [target]
+
+        inspector._backend = SeparateNamespaceBackend()
+        self.assertEqual(inspector.list_processes([target]), [])
+
         class OtherOwnerBackend(AmbiguousBackend):
             def owner(self, _pid):
                 return "uid:2000"
@@ -181,6 +218,72 @@ class ProcessIdentityTests(unittest.TestCase):
         stat_call.assert_called_once_with("/proc/71/exe")
         self.assertEqual(captured.executable_path, "/opt/tool")
         self.assertEqual(captured.executable_file_id, "9:123")
+
+    def test_linux_pid_namespace_proof_requires_distinct_depth(self) -> None:
+        backend = object.__new__(processes._LinuxBackend)
+        target = identity(10, "start", "/usr/bin/node", "1:1")
+        with mock.patch.object(
+            backend,
+            "_pid_namespace_depth",
+            side_effect=lambda pid: {10: 1, 20: 2, 30: 1}[pid],
+        ):
+            self.assertTrue(backend.proves_separate_pid_namespace(20, [target]))
+            self.assertFalse(backend.proves_separate_pid_namespace(30, [target]))
+
+    def test_linux_pid_namespace_proof_fails_closed_without_evidence(self) -> None:
+        backend = object.__new__(processes._LinuxBackend)
+        target = identity(10, "start", "/usr/bin/node", "1:1")
+        with mock.patch.object(
+            backend,
+            "_pid_namespace_depth",
+            side_effect=processes.ProcessIdentityError("unreadable"),
+        ):
+            self.assertFalse(backend.proves_separate_pid_namespace(20, [target]))
+
+    def test_linux_bound_pid_namespace_proof_survives_reviewed_target_exit(self) -> None:
+        backend = object.__new__(processes._LinuxBackend)
+        first = identity(10, "start-10", "/usr/bin/node", "1:1")
+        second = identity(11, "start-11", "/usr/bin/node", "1:1")
+        current = {10: first, 11: second}
+        with mock.patch.object(
+            backend,
+            "capture",
+            side_effect=lambda pid: current[pid],
+        ), mock.patch.object(
+            backend,
+            "_pid_namespace_depth",
+            side_effect=lambda pid: {10: 1, 11: 1, 20: 2}[pid],
+        ) as namespace_depth:
+            backend.bind_reviewed_pid_namespaces([first, second])
+            current.pop(11)
+            self.assertTrue(
+                backend.proves_separate_pid_namespace(20, [first, second])
+            )
+        self.assertEqual(
+            [call.args[0] for call in namespace_depth.call_args_list],
+            [10, 11, 20],
+        )
+
+    def test_linux_pid_namespace_binding_requires_every_exact_target(self) -> None:
+        backend = object.__new__(processes._LinuxBackend)
+        reviewed = identity(10, "start", "/usr/bin/node", "1:1")
+        changed = identity(10, "other", "/usr/bin/node", "1:1")
+        with mock.patch.object(
+            backend, "capture", return_value=changed
+        ), mock.patch.object(backend, "_pid_namespace_depth") as namespace_depth:
+            with self.assertRaises(processes.ProcessIdentityError):
+                backend.bind_reviewed_pid_namespaces([reviewed])
+        namespace_depth.assert_not_called()
+
+    def test_linux_bound_namespace_proof_rejects_unbound_target(self) -> None:
+        backend = object.__new__(processes._LinuxBackend)
+        bound = identity(10, "bound", "/usr/bin/node", "1:1")
+        unbound = identity(11, "unbound", "/usr/bin/node", "1:1")
+        backend._reviewed_pid_namespace_depths = {bound: 1}
+        with mock.patch.object(backend, "_pid_namespace_depth", return_value=2):
+            self.assertFalse(
+                backend.proves_separate_pid_namespace(20, [bound, unbound])
+            )
 
 
 class DeferredPrimitiveTests(unittest.TestCase):
@@ -338,6 +441,7 @@ class DeferredPrimitiveTests(unittest.TestCase):
             "filename": "deferred-install-result.json",
             "status": "verified",
             "targets": 2,
+            "managed_daemons": 1,
             "wait_seconds": 900,
             "verification_ok": True,
             "receiver_healthy": True,
@@ -361,6 +465,7 @@ class DeferredPrimitiveTests(unittest.TestCase):
         value = json.loads(line.split(" ", 1)[1])
         self.assertTrue(value["verification_ok"])
         self.assertTrue(value["receiver_healthy"])
+        self.assertEqual(value["managed_daemons"], 1)
 
     def test_receipt_is_categorical_and_contains_no_process_or_source_fields(self) -> None:
         value = deferred._receipt_value(
@@ -535,6 +640,439 @@ class DeferredPrimitiveTests(unittest.TestCase):
             self.assertTrue(options["creationflags"] & 0x01000000)
         else:
             self.assertTrue(options["start_new_session"])
+
+
+class ManagedDaemonPrimitiveTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory(prefix="managed-daemon-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name).resolve()
+        self.home = self.root / "codex-home"
+        self.home.mkdir()
+        self.plan = installer.plan_install(
+            ROOT,
+            self.root / "state",
+            {"managed-test": self.home},
+            python_executable=Path(sys.executable).resolve(),
+        )
+        executable = Path(sys.executable).resolve()
+        metadata = executable.stat()
+        file_id = "{}:{}".format(int(metadata.st_dev), int(metadata.st_ino))
+        self.daemon = identity(81, "daemon-start", str(executable), file_id)
+        self.client = identity(82, "client-start", str(executable), file_id)
+        self.member = identity(83, "member-start", str(executable), file_id)
+        self.targets = [self.daemon, self.client, self.member]
+        self.inspector = fake_inspector({item.pid: item for item in self.targets})
+
+    def action(self) -> dict[str, object]:
+        with mock.patch.object(
+            deferred,
+            "_probe_managed_codex_daemon",
+            return_value=("pid", "0.147.0", "0.147.0"),
+        ):
+            actions = deferred._prepare_managed_codex_daemons(
+                self.plan,
+                self.inspector,
+                self.targets,
+                {"managed-test": self.daemon.pid},
+                {"managed-test": [self.client.pid]},
+                {"managed-test": [self.member.pid]},
+            )
+        self.assertEqual(len(actions), 1)
+        return actions[0]
+
+    def test_schema_v2_binds_plan_home_clients_daemon_and_members(self) -> None:
+        action = self.action()
+        job_id = "6" * 32
+        request = deferred._request_value(
+            journal=self.plan.journal_path,
+            plan_digest=self.plan.plan_digest,
+            job_id=job_id,
+            wait_seconds=30,
+            payload_digest=self.plan.journal["source"]["payload_sha256"],
+            targets=self.targets,
+            peers=[],
+            managed_codex_daemons=[action],
+        )
+        self.assertEqual(
+            request["schema_version"], deferred.DEFERRED_REQUEST_SCHEMA_VERSION
+        )
+        paths = deferred._job_paths(self.plan.journal_path, job_id)
+        validated = deferred._validated_request(request, paths["request"])
+        owned = deferred._bind_managed_codex_daemons(
+            self.plan, self.targets, validated["_managed_daemons"]
+        )
+        self.assertEqual(owned, {self.daemon.pid, self.member.pid})
+        self.assertNotIn(self.client.pid, owned)
+
+        legacy = dict(request)
+        legacy["schema_version"] = deferred.DEFERRED_SCHEMA_VERSION
+        legacy.pop("managed_codex_daemons")
+        validated_legacy = deferred._validated_request(legacy, paths["request"])
+        self.assertEqual(validated_legacy["_managed_daemons"], [])
+
+        historical_action = dict(request["managed_codex_daemons"][0])
+        historical_action["protocol"] = deferred._HISTORICAL_MANAGED_CODEX_PROTOCOL
+        historical_action.pop("backend")
+        historical_action.pop("bootstrap_features")
+        historical_request = dict(request)
+        historical_request["managed_codex_daemons"] = [historical_action]
+        validated_historical = deferred._validated_request(
+            historical_request, paths["request"]
+        )
+        self.assertEqual(
+            validated_historical["_managed_daemons"][0]["backend"],
+            "historical-unbound",
+        )
+
+    def test_group_allows_task_scoped_helpers_outside_daemon_lifecycle(self) -> None:
+        volatile_helper = identity(84, "task-start", "/usr/bin/node", "2:84")
+        inspector = fake_inspector(
+            {
+                self.daemon.pid: self.daemon,
+                self.client.pid: self.client,
+                volatile_helper.pid: volatile_helper,
+            }
+        )
+        with mock.patch.object(
+            deferred,
+            "_probe_managed_codex_daemon",
+            return_value=("pid", "0.147.0", "0.147.0"),
+        ):
+            actions = deferred._prepare_managed_codex_daemons(
+                self.plan,
+                inspector,
+                [self.daemon, self.client],
+                {"managed-test": self.daemon.pid},
+                {"managed-test": [self.client.pid]},
+                {"managed-test": []},
+            )
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["members"], [])
+        self.assertEqual(
+            deferred._bind_managed_codex_daemons(
+                self.plan, [self.daemon, self.client], actions
+            ),
+            {self.daemon.pid},
+        )
+
+    def test_group_validation_rejects_wrong_target_image_overlap_and_home_drift(self) -> None:
+        wrong_client = identity(
+            self.client.pid,
+            self.client.creation,
+            "/opt/other",
+            "9:9",
+        )
+        with mock.patch.object(
+            deferred,
+            "_probe_managed_codex_daemon",
+            return_value=("pid", "0.147.0", "0.147.0"),
+        ):
+            with self.assertRaises(deferred.DeferredInstallError):
+                deferred._prepare_managed_codex_daemons(
+                    self.plan,
+                    fake_inspector(
+                        {
+                            self.daemon.pid: self.daemon,
+                            wrong_client.pid: wrong_client,
+                            self.member.pid: self.member,
+                        }
+                    ),
+                    [self.daemon, wrong_client, self.member],
+                    {"managed-test": self.daemon.pid},
+                    {"managed-test": [wrong_client.pid]},
+                    {"managed-test": [self.member.pid]},
+                )
+            with self.assertRaises(deferred.DeferredInstallError):
+                deferred._prepare_managed_codex_daemons(
+                    self.plan,
+                    self.inspector,
+                    self.targets,
+                    {"managed-test": self.daemon.pid},
+                    {"managed-test": [self.client.pid]},
+                    {"managed-test": [self.client.pid]},
+                )
+
+        action = self.action()
+        changed = dict(action)
+        changed["home"] = self.root
+        with self.assertRaises(deferred.DeferredInstallError):
+            deferred._bind_managed_codex_daemons(
+                self.plan, self.targets, [changed]
+            )
+
+    def test_control_uses_exact_argv_fixed_system_path_and_no_shell(self) -> None:
+        action = self.action()
+        version = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "status": "running",
+                    "backend": "pid",
+                    "managedCodexPath": self.daemon.executable_path,
+                    "cliVersion": "0.147.0",
+                    "appServerVersion": "0.147.0",
+                }
+            ).encode("utf-8"),
+            stderr=b"",
+        )
+        stopped = subprocess.CompletedProcess(args=[], returncode=0)
+        bootstrapped = subprocess.CompletedProcess(args=[], returncode=0)
+        with mock.patch.dict(
+            os.environ, {"PATH": str(self.root / "untrusted-bin")}
+        ), mock.patch.object(
+            deferred.subprocess, "run", side_effect=[version, stopped, bootstrapped]
+        ) as run:
+            self.assertEqual(
+                deferred._probe_managed_codex_daemon(
+                    self.inspector, self.daemon, self.home
+                ),
+                ("pid", "0.147.0", "0.147.0"),
+            )
+            result = deferred._run_codex_daemon_control(
+                self.inspector, self.daemon, self.home, "stop"
+            )
+            bootstrap_result = deferred._run_bound_codex_daemon_control(
+                self.daemon.executable_path,
+                self.daemon.executable_file_id,
+                self.home,
+                "bootstrap",
+                bootstrap_features=["code_mode_host"],
+            )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(bootstrap_result.returncode, 0)
+        version_call, stop_call, bootstrap_call = run.call_args_list
+        self.assertEqual(
+            version_call.args[0],
+            [
+                self.daemon.executable_path,
+                "app-server",
+                "daemon",
+                "version",
+            ],
+        )
+        self.assertEqual(stop_call.args[0][-1], "stop")
+        self.assertEqual(
+            bootstrap_call.args[0],
+            [
+                self.daemon.executable_path,
+                "app-server",
+                "daemon",
+                "bootstrap",
+                "--enable",
+                "code_mode_host",
+            ],
+        )
+        for call in (version_call, stop_call, bootstrap_call):
+            self.assertNotIn("shell", call.kwargs)
+            self.assertEqual(call.kwargs["env"]["CODEX_HOME"], str(self.home))
+            self.assertNotIn("HOME", call.kwargs["env"])
+            self.assertEqual(call.kwargs["env"]["PATH"], os.defpath)
+            self.assertNotIn("untrusted-bin", call.kwargs["env"]["PATH"])
+            self.assertEqual(call.kwargs["cwd"], str(self.home))
+        self.assertEqual(stop_call.kwargs["stdout"], subprocess.DEVNULL)
+        self.assertEqual(stop_call.kwargs["stderr"], subprocess.DEVNULL)
+
+    def test_missing_backend_retires_exact_helpers_before_legacy_daemon(self) -> None:
+        action = self.action()
+        action["backend"] = "legacy-ephemeral"
+        values = {self.daemon.pid: self.daemon, self.member.pid: self.member}
+        inspector = fake_inspector(values)
+        guards = []
+
+        expected_order = [self.member, self.daemon]
+
+        def terminate(identity_value):
+            self.assertEqual(identity_value, expected_order.pop(0))
+            values.pop(identity_value.pid)
+
+        with mock.patch.object(
+            deferred,
+            "_probe_managed_codex_daemon",
+            return_value=("legacy-ephemeral", "0.147.0", "0.147.0"),
+        ), mock.patch.object(
+            inspector, "terminate_exact_gracefully", side_effect=terminate
+        ) as terminated, mock.patch.object(
+            deferred, "_bootstrap_and_stop_bound_codex_daemon"
+        ) as bootstrap:
+            deferred._stop_managed_codex_daemons(
+                inspector, [action], lambda: guards.append("guard")
+            )
+        self.assertEqual(
+            terminated.call_args_list,
+            [mock.call(self.member), mock.call(self.daemon)],
+        )
+        self.assertEqual(expected_order, [])
+        bootstrap.assert_called_once()
+        self.assertGreaterEqual(len(guards), 2)
+
+        missing_backend = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "status": "running",
+                    "managedCodexPath": self.daemon.executable_path,
+                    "cliVersion": "0.147.0",
+                    "appServerVersion": "0.147.0",
+                }
+            ).encode("utf-8"),
+            stderr=b"",
+        )
+        with mock.patch.object(
+            deferred.subprocess, "run", return_value=missing_backend
+        ):
+            self.assertEqual(
+                deferred._probe_managed_codex_daemon(
+                    self.inspector, self.daemon, self.home
+                )[0],
+                "legacy-ephemeral",
+            )
+
+    def test_legacy_bootstrap_requires_a_real_managed_backend_then_native_stop(self) -> None:
+        action = self.action()
+        action["backend"] = "legacy-ephemeral"
+        action["bootstrap_features"] = ["code_mode_host"]
+        bootstrap = subprocess.CompletedProcess(args=[], returncode=0)
+        stopped = subprocess.CompletedProcess(args=[], returncode=0)
+        controls = []
+
+        def control(_path, _file_id, _home, operation, *, bootstrap_features=()):
+            controls.append((operation, tuple(bootstrap_features)))
+            return bootstrap if operation == "bootstrap" else stopped
+
+        with mock.patch.object(
+            deferred, "_run_bound_codex_daemon_control", side_effect=control
+        ), mock.patch.object(
+            deferred,
+            "_probe_bound_codex_daemon",
+            return_value=("pid", "0.147.0", "0.147.0"),
+        ), mock.patch.object(
+            deferred,
+            "_read_bound_codex_daemon_status",
+            return_value={"status": "not running"},
+        ):
+            deferred._bootstrap_and_stop_bound_codex_daemon(action)
+        self.assertEqual(
+            controls,
+            [("bootstrap", ("code_mode_host",)), ("stop", ())],
+        )
+
+        with mock.patch.object(
+            deferred,
+            "_run_bound_codex_daemon_control",
+            return_value=bootstrap,
+        ), mock.patch.object(
+            deferred,
+            "_probe_bound_codex_daemon",
+            return_value=("legacy-ephemeral", "0.147.0", "0.147.0"),
+        ):
+            with self.assertRaises(deferred.ManagedDaemonStopError) as failure:
+                deferred._bootstrap_and_stop_bound_codex_daemon(action)
+        self.assertEqual(
+            failure.exception.failure_code, "legacy-daemon-transition-failed"
+        )
+
+    def test_post_stop_quiescence_allows_expected_exit_but_rejects_reopen(self) -> None:
+        class Clock:
+            now = 0.0
+            sleeps: list[float] = []
+
+            def monotonic(inner_self) -> float:
+                return inner_self.now
+
+            def sleep(inner_self, seconds: float) -> None:
+                inner_self.sleeps.append(seconds)
+                inner_self.now += seconds
+
+        clock = Clock()
+        states = iter((True, True, False))
+        with mock.patch.object(
+            deferred.time, "monotonic", side_effect=clock.monotonic
+        ), mock.patch.object(
+            deferred.time, "sleep", side_effect=clock.sleep
+        ):
+            deferred._wait_for_relaunch_quiescence(lambda: next(states))
+        self.assertEqual(
+            clock.sleeps,
+            [deferred.QUIESCENCE_POLL_SECONDS] * 2,
+        )
+
+        with mock.patch.object(
+            deferred, "MANAGED_DAEMON_EXIT_TIMEOUT_SECONDS", 0.0
+        ):
+            with self.assertRaises(deferred.DeferredTargetRace):
+                deferred._wait_for_relaunch_quiescence(lambda: True)
+
+    def test_stop_waits_for_exact_group_and_reports_control_failures(self) -> None:
+        action = self.action()
+        values = {self.daemon.pid: self.daemon, self.member.pid: self.member}
+        inspector = fake_inspector(values)
+
+        def stop(*_args, **_kwargs):
+            values.clear()
+            return subprocess.CompletedProcess(args=[], returncode=0)
+
+        guard_calls = []
+        with mock.patch.object(
+            deferred,
+            "_probe_managed_codex_daemon",
+            return_value=("pid", "0.147.0", "0.147.0"),
+        ), mock.patch.object(
+            deferred, "_run_codex_daemon_control", side_effect=stop
+        ):
+            deferred._stop_managed_codex_daemons(
+                inspector, [action], lambda: guard_calls.append("guard")
+            )
+        self.assertFalse(values)
+        self.assertGreaterEqual(len(guard_calls), 3)
+
+        values.update({self.daemon.pid: self.daemon, self.member.pid: self.member})
+        with mock.patch.object(
+            deferred,
+            "_probe_managed_codex_daemon",
+            return_value=("pid", "0.147.0", "0.147.0"),
+        ), mock.patch.object(
+            deferred,
+            "_run_codex_daemon_control",
+            return_value=subprocess.CompletedProcess(args=[], returncode=2),
+        ):
+            with self.assertRaises(deferred.ManagedDaemonStopError) as failure:
+                deferred._stop_managed_codex_daemons(
+                    inspector, [action], lambda: None
+                )
+        self.assertEqual(failure.exception.failure_code, "managed-daemon-stop-failed")
+
+    def test_stop_timeout_and_same_pid_image_change_are_must_catch(self) -> None:
+        action = self.action()
+        values = {self.daemon.pid: self.daemon, self.member.pid: self.member}
+        inspector = fake_inspector(values)
+        with mock.patch.object(
+            deferred,
+            "_probe_managed_codex_daemon",
+            return_value=("pid", "0.147.0", "0.147.0"),
+        ), mock.patch.object(
+            deferred,
+            "_run_codex_daemon_control",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ), mock.patch.object(
+            deferred, "MANAGED_DAEMON_EXIT_TIMEOUT_SECONDS", 0.0
+        ):
+            with self.assertRaises(deferred.ManagedDaemonStopError) as failure:
+                deferred._stop_managed_codex_daemons(
+                    inspector, [action], lambda: None
+                )
+        self.assertEqual(failure.exception.failure_code, "managed-daemon-exit-timeout")
+
+        values[self.daemon.pid] = identity(
+            self.daemon.pid,
+            self.daemon.creation,
+            "/opt/replaced-codex",
+            "9:10",
+        )
+        with self.assertRaises(processes.ProcessIdentityError):
+            deferred._exact_alive_processes(inspector, [self.daemon])
 
 
 class ActiveJobTests(unittest.TestCase):
@@ -718,6 +1256,9 @@ class DeferredWorkerRecoveryTests(unittest.TestCase):
         clock = Clock()
 
         class Inspector:
+            def bind_reviewed_pid_namespaces(inner_self, values) -> None:
+                self.assertEqual(values, [self.target])
+
             def is_alive(inner_self, _value: processes.ProcessIdentity) -> bool:
                 return True
 
@@ -783,6 +1324,9 @@ class DeferredWorkerRecoveryTests(unittest.TestCase):
         clock = Clock()
 
         class Inspector:
+            def bind_reviewed_pid_namespaces(inner_self, values) -> None:
+                self.assertEqual(values, [self.target])
+
             def is_alive(inner_self, _value: processes.ProcessIdentity) -> bool:
                 return True
 
@@ -854,6 +1398,9 @@ class DeferredWorkerRecoveryTests(unittest.TestCase):
             alive_checks = 0
             relaunch_checks = 0
 
+            def bind_reviewed_pid_namespaces(inner_self, values) -> None:
+                self.assertEqual(values, [self.target])
+
             def is_alive(inner_self, _value: processes.ProcessIdentity) -> bool:
                 inner_self.alive_checks += 1
                 return inner_self.alive_checks == 1
@@ -901,6 +1448,9 @@ class DeferredWorkerRecoveryTests(unittest.TestCase):
 
         class Inspector:
             target_checks = 0
+
+            def bind_reviewed_pid_namespaces(inner_self, values) -> None:
+                self.assertEqual(values, [self.target])
 
             def is_alive(inner_self, value):
                 if value.pid != self.target.pid:
@@ -1063,6 +1613,73 @@ class DeferredStatusRecoveryTests(unittest.TestCase):
         current = self._filesystem_identity(metadata)
         current["device"] += 1
         return current
+
+    def test_prior_version_job_remains_status_and_cancel_observable(self) -> None:
+        historical_home = self.root / "historical-codex-home"
+        historical_home.mkdir()
+        with mock.patch.object(installer, "RECORDER_VERSION", "0.2.5"):
+            plan = installer.plan_install(
+                ROOT,
+                self.root / "historical-state",
+                {"historical": historical_home},
+                python_executable=Path(sys.executable).resolve(),
+            )
+        job_id = "8" * 32
+        paths = deferred._job_paths(plan.journal_path, job_id)
+        paths["root"].mkdir(parents=True, mode=0o700)
+        request = deferred._request_value(
+            journal=plan.journal_path,
+            plan_digest=plan.plan_digest,
+            job_id=job_id,
+            wait_seconds=900,
+            payload_digest=plan.journal["source"]["payload_sha256"],
+            targets=[identity(81, "historical-start", "/opt/codex", "1:81")],
+            peers=[],
+        )
+        request["schema_version"] = deferred.DEFERRED_SCHEMA_VERSION
+        request.pop("managed_codex_daemons")
+        deferred._write_once(
+            paths["request"],
+            deferred._canonical_bytes(request),
+            deferred.MAX_REQUEST_BYTES,
+        )
+        with self.assertRaisesRegex(
+            installer.InstallerConflict, "recorder version"
+        ):
+            installer.load_plan(plan.journal_path, plan.plan_digest)
+
+        cancelled = deferred.cancel_deferred_install(
+            plan.journal_path, plan.plan_digest, job_id
+        )
+        self.assertEqual(cancelled["status"], "cancel-requested")
+        self.assertNotIn("managed_daemons", cancelled)
+        receipt = deferred._receipt_value(
+            job_id=job_id,
+            plan_digest=plan.plan_digest,
+            status="cancelled",
+            phase="waiting",
+            target_count=1,
+            started_at="2026-08-02T00:00:00Z",
+            apply_status="not-started",
+            verification_ok=False,
+            receiver_healthy=False,
+            rollback_status="not-applicable",
+            failure_code="cancelled",
+        )
+        raw = deferred._canonical_bytes(receipt)
+        deferred._write_once(paths["receipt"], raw, deferred.MAX_RECEIPT_BYTES)
+        observed = deferred.read_deferred_install_status(
+            plan.journal_path, plan.plan_digest, job_id
+        )
+        self.assertEqual(observed["status"], "cancelled")
+        self.assertEqual(observed["sha256"], deferred._digest(raw))
+        self.assertNotIn("managed_daemons", observed)
+        with self.assertRaisesRegex(
+            installer.InstallerConflict, "recorder version"
+        ):
+            installer.apply_install(
+                plan.journal_path, plan_digest=plan.plan_digest
+            )
 
     def test_expired_no_mutation_receipt_survives_plan_identity_conflict(self) -> None:
         raw = self._save_receipt(self._receipt())
@@ -1387,6 +2004,174 @@ class NativeDeferredIntegrationTests(unittest.TestCase):
                         os.chmod(str(path), stat.S_IWRITE | stat.S_IREAD)
                     except OSError:
                         pass
+            temporary.cleanup()
+
+    @unittest.skipIf(os.name == "nt", "POSIX shell fixture")
+    def test_client_exit_precedes_native_daemon_stop_and_verified_install(self) -> None:
+        from delivery_efficiency.installer import plan_install
+        from delivery_efficiency.runtime import (
+            load_settings,
+            request_receiver_retirement,
+        )
+
+        shell = next(
+            (
+                candidate.resolve()
+                for candidate in (Path("/bin/sh"), Path("/usr/bin/sh"))
+                if candidate.is_file()
+            ),
+            None,
+        )
+        if shell is None:
+            self.skipTest("native POSIX shell is unavailable")
+        temporary = tempfile.TemporaryDirectory(prefix="deferred-managed-native-")
+        base = Path(temporary.name).resolve()
+        state = base / "state"
+        home = base / "codex-home"
+        processes_by_role: dict[str, subprocess.Popen[bytes]] = {}
+        plan = None
+        armed = None
+        try:
+            home.mkdir()
+            control = home / "app-server"
+            version_payload = json.dumps(
+                {
+                    "status": "running",
+                    "backend": "fixture-managed",
+                    "managedCodexPath": str(shell),
+                    "cliVersion": "fixture-1",
+                    "appServerVersion": "fixture-1",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            control.write_text(
+                "#!/bin/sh\n"
+                "case \"$1:$2\" in\n"
+                "  daemon:version)\n"
+                "    printf '%s\\n' " + json.dumps(version_payload) + "\n"
+                "    ;;\n"
+                "  daemon:stop)\n"
+                "    [ -n \"${PATH:-}\" ] || exit 70\n"
+                "    ps -p \"$$\" >/dev/null || exit 71\n"
+                "    : > \"$CODEX_HOME/.daemon-stop\"\n"
+                "    ;;\n"
+                "  hold:daemon|hold:member)\n"
+                "    while [ ! -f \"$CODEX_HOME/.daemon-stop\" ]; do sleep 1; done\n"
+                "    ;;\n"
+                "  hold:client)\n"
+                "    while [ ! -f \"$CODEX_HOME/.client-stop\" ]; do sleep 1; done\n"
+                "    ;;\n"
+                "  *)\n"
+                "    exit 64\n"
+                "    ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            control.chmod(0o700)
+            plan = plan_install(
+                ROOT,
+                state,
+                {"managed-test": home},
+                python_executable=Path(sys.executable).resolve(),
+            )
+            target_environment = {**os.environ, "CODEX_HOME": str(home)}
+            for role in ("daemon", "client", "member"):
+                processes_by_role[role] = subprocess.Popen(
+                    [str(shell), str(control), "hold", role],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=target_environment,
+                )
+            launcher = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "recorder.py"),
+                    "install",
+                    "defer",
+                    "--journal",
+                    str(plan.journal_path),
+                    "--plan-digest",
+                    str(plan.plan_digest),
+                    *[
+                        item
+                        for process in processes_by_role.values()
+                        for item in ("--target-pid", str(process.pid))
+                    ],
+                    "--managed-codex-daemon",
+                    "managed-test={}".format(processes_by_role["daemon"].pid),
+                    "--managed-codex-client",
+                    "managed-test={}".format(processes_by_role["client"].pid),
+                    "--managed-codex-member",
+                    "managed-test={}".format(processes_by_role["member"].pid),
+                    "--wait-seconds",
+                    "20",
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(
+                launcher.returncode,
+                0,
+                launcher.stdout.decode("utf-8", "replace")
+                + launcher.stderr.decode("utf-8", "replace"),
+            )
+            line = launcher.stdout.decode("utf-8")
+            self.assertTrue(line.startswith("DEFERRED_INSTALL_ARMED "))
+            armed = json.loads(line.split(" ", 1)[1])
+            self.assertEqual(armed["managed_daemons"], 1)
+            time.sleep(0.3)
+            self.assertIsNone(processes_by_role["daemon"].poll())
+            self.assertFalse((home / ".daemon-stop").exists())
+            self.assertEqual(
+                deferred.read_deferred_install_status(
+                    plan.journal_path, plan.plan_digest, armed["job_id"]
+                )["status"],
+                "armed",
+            )
+
+            (home / ".client-stop").write_text("closed\n", encoding="utf-8")
+            processes_by_role["client"].wait(timeout=5)
+            deadline = time.monotonic() + 20
+            status = None
+            while time.monotonic() < deadline:
+                status = deferred.read_deferred_install_status(
+                    plan.journal_path, plan.plan_digest, armed["job_id"]
+                )
+                if status.get("status") != "armed":
+                    break
+                time.sleep(0.1)
+            self.assertIsNotNone(status)
+            self.assertEqual(status.get("status"), "verified")
+            self.assertIs(status.get("verification_ok"), True)
+            self.assertIs(status.get("receiver_healthy"), True)
+            self.assertTrue((home / ".daemon-stop").is_file())
+            self.assertIsNotNone(processes_by_role["daemon"].poll())
+            self.assertIsNotNone(processes_by_role["member"].poll())
+            settings = load_settings(state)
+            request_receiver_retirement(settings, timeout_seconds=1.0)
+            time.sleep(0.3)
+        finally:
+            if plan is not None and armed is not None:
+                try:
+                    status = deferred.read_deferred_install_status(
+                        plan.journal_path, plan.plan_digest, armed["job_id"]
+                    )
+                    if status.get("status") == "armed":
+                        deferred.cancel_deferred_install(
+                            plan.journal_path, plan.plan_digest, armed["job_id"]
+                        )
+                except Exception:
+                    pass
+            for process in processes_by_role.values():
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=5)
             temporary.cleanup()
 
     def test_failed_ready_arm_releases_active_job_and_real_retry_can_cancel(self) -> None:

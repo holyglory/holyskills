@@ -349,7 +349,7 @@ def page_metrics(report: dict) -> list[dict]:
 
 
 def main() -> int:
-    tmp = Path(tempfile.mkdtemp(prefix="formal-web-ui-self-test-"))
+    tmp = Path(tempfile.mkdtemp(prefix="fwv-"))
     server = None
     try:
         skill_contract = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -749,7 +749,21 @@ def main() -> int:
             cwd=audited_worktree,
         )
         if automatic.returncode != 0 or automatic.stderr.strip():
-            raise AssertionError(f"Automatic artifact run failed: {automatic.stderr}")
+            diagnostic: object = None
+            try:
+                failure_receipt = parse_bounded_receipt(
+                    automatic.stdout,
+                    expect=automatic.returncode,
+                )
+                failure_json, _ = receipt_artifact_paths(failure_receipt)
+                diagnostic = json.loads(failure_json.read_text(encoding="utf-8")).get("error")
+            except Exception as error:  # noqa: BLE001 - retain the primary verifier failure
+                diagnostic = f"unreadable setup-failure artifact: {error}"
+            raise AssertionError(
+                "Automatic artifact run failed: "
+                f"returncode={automatic.returncode}; diagnostic={diagnostic!r}; "
+                f"stderr={automatic.stderr!r}"
+            )
         automatic_receipt = parse_bounded_receipt(automatic.stdout, expect=0)
         automatic_json, automatic_markdown = receipt_artifact_paths(automatic_receipt)
         assert_complete_artifacts(automatic_json, automatic_markdown, expect=0)
@@ -1000,6 +1014,37 @@ def main() -> int:
             raise AssertionError("Opened transient state clip was not detected")
         if any("actions" in page_report.get("target", {}) for page_report in interaction_state.get("pages", [])):
             raise AssertionError("Interaction action payloads must not leak into public reports")
+
+        same_url_distinct_states = run_verify_config(
+            {
+                "targets": [
+                    {
+                        "name": "base-only",
+                        "url": f"{server.base_url}/interaction-states.html",
+                    },
+                    {
+                        "name": "opened-only",
+                        "url": f"{server.base_url}/interaction-states.html",
+                        "includeBase": False,
+                        "states": [{
+                            "name": "actions-open",
+                            "actions": [{"action": "click", "selector": "#open-bad"}],
+                            "waitFor": {"selector": "#bad-panel:not([hidden])", "settleMs": 25},
+                        }],
+                    },
+                ],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "same-url-distinct-states",
+            expect=1,
+        )
+        same_url_pages = same_url_distinct_states.get("pages", [])
+        same_url_states = [page_report.get("target", {}).get("stateName") for page_report in same_url_pages]
+        if len(same_url_pages) != 2 or set(same_url_states) != {"base", "actions-open"}:
+            raise AssertionError(
+                "Distinct target configurations for the same URL must preserve both base and interaction states; "
+                f"got {same_url_states}"
+            )
 
         clean_interaction_state = run_verify_config(
             {

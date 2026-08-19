@@ -1,8 +1,12 @@
-"""Wait-only, cross-platform process identity for deferred installation.
+"""Cross-platform process identity for deferred installation.
 
-The installer never signals a process.  A PID is useful only together with a
-kernel creation marker and executable identity, so PID reuse cannot be mistaken
-for the process that the caller reviewed.
+The installer normally invokes a reviewed runtime's native lifecycle command.
+On Linux only, a reviewed legacy Codex transition may request graceful SIGTERM
+through a pidfd after transient clients exit; it never signals a bare PID and
+never escalates to SIGKILL.
+A PID is useful only together with a kernel creation marker and executable
+identity, so PID reuse cannot be mistaken for the process that the caller
+reviewed.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ from dataclasses import dataclass
 import ctypes
 import os
 from pathlib import Path
+import signal
 import stat
 import sys
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
@@ -139,12 +144,81 @@ class ProcessInspector:
             raise ProcessIdentityError("target PID set is empty, duplicated, or exceeds its bound")
         return [self.capture(pid) for pid in pids]
 
+    def bind_reviewed_pid_namespaces(
+        self, targets: Sequence[ProcessIdentity]
+    ) -> None:
+        """Bind Linux namespace evidence while every reviewed target is exact."""
+
+        binder = getattr(self._backend, "bind_reviewed_pid_namespaces", None)
+        if binder is not None:
+            binder(targets)
+
     def is_alive(self, identity: ProcessIdentity) -> bool:
         try:
             current = self._backend.capture(identity.pid)
         except ProcessNotFound:
             return False
         return identity.same_process(current)
+
+    def is_exact(self, identity: ProcessIdentity) -> bool:
+        """Return true only while the complete reviewed process image is unchanged."""
+
+        try:
+            current = self._backend.capture(identity.pid)
+        except ProcessNotFound:
+            return False
+        return identity == current
+
+    def executable_path_matches(self, identity: ProcessIdentity) -> bool:
+        """Recheck that the executable pathname still resolves to the reviewed file."""
+
+        if identity.owner != self.owner:
+            raise ProcessIdentityError("process executable belongs to another user")
+        try:
+            current_file_id = _file_identity(identity.executable_path)
+        except ProcessIdentityError:
+            return False
+        return current_file_id == identity.executable_file_id
+
+    @staticmethod
+    def supports_exact_graceful_termination() -> bool:
+        """Return whether the host exposes a process-incarnation-bound SIGTERM."""
+
+        return (
+            sys.platform.startswith("linux")
+            and hasattr(os, "pidfd_open")
+            and hasattr(signal, "pidfd_send_signal")
+        )
+
+    def terminate_exact_gracefully(self, identity: ProcessIdentity) -> None:
+        """Gracefully terminate one exact Linux process through a pidfd."""
+
+        if not self.supports_exact_graceful_termination():
+            raise ProcessIdentityError(
+                "exact graceful process termination is unsupported on this host"
+            )
+        if identity.owner != self.owner or not self.executable_path_matches(identity):
+            raise ProcessIdentityError("process termination target is not exact")
+        try:
+            descriptor = os.pidfd_open(identity.pid, 0)
+        except ProcessLookupError as error:
+            raise ProcessNotFound("process no longer exists") from error
+        except OSError as error:
+            raise ProcessIdentityError("process pidfd is unavailable") from error
+        try:
+            current = self._backend.capture(identity.pid)
+            if current != identity:
+                raise ProcessIdentityError("process changed before termination")
+            try:
+                signal.pidfd_send_signal(descriptor, signal.SIGTERM)
+            except ProcessLookupError:
+                return
+            except OSError as error:
+                raise ProcessIdentityError(
+                    "exact graceful process termination failed"
+                ) from error
+        finally:
+            os.close(descriptor)
 
     @staticmethod
     def _hint_could_match(hint: str, targets: Sequence[ProcessIdentity]) -> bool:
@@ -179,6 +253,13 @@ class ProcessInspector:
                 ):
                     # The kernel-provided executable names prove this live
                     # process cannot be one of the reviewed target images.
+                    continue
+                proves_separate = getattr(
+                    self._backend, "proves_separate_pid_namespace", None
+                )
+                if targets and proves_separate is not None and proves_separate(
+                    pid, targets
+                ):
                     continue
                 raise
             if identity.owner != owner:
@@ -225,6 +306,7 @@ class _LinuxBackend:
             raise ProcessIdentityError("Linux boot identity is unavailable") from error
         if not self._boot_id or len(self._boot_id) > 128:
             raise ProcessIdentityError("Linux boot identity is invalid")
+        self._reviewed_pid_namespace_depths: Dict[ProcessIdentity, int] = {}
 
     def current_owner(self) -> str:
         return "uid:{}".format(os.geteuid())
@@ -287,6 +369,64 @@ class _LinuxBackend:
         if first != second:
             raise ProcessNotFound("process changed while its identity was captured")
         return ProcessIdentity(pid, first, owner, executable, executable_id)
+
+    def _pid_namespace_depth(self, pid: int) -> int:
+        try:
+            raw = Path("/proc/{}/status".format(pid)).read_bytes()
+        except FileNotFoundError as error:
+            raise ProcessNotFound("process no longer exists") from error
+        except OSError as error:
+            raise ProcessIdentityError(
+                "Linux PID namespace evidence is unavailable"
+            ) from error
+        for line in raw.splitlines():
+            if not line.startswith(b"NSpid:"):
+                continue
+            values = line.split()[1:]
+            if (
+                not values
+                or any(not value.isdigit() for value in values)
+                or int(values[0]) != pid
+            ):
+                break
+            return len(values)
+        raise ProcessIdentityError("Linux PID namespace evidence is invalid")
+
+    def bind_reviewed_pid_namespaces(
+        self, targets: Sequence[ProcessIdentity]
+    ) -> None:
+        """Capture every exact reviewed target's namespace depth before waiting."""
+
+        depths: Dict[ProcessIdentity, int] = {}
+        for target in targets:
+            if self.capture(target.pid) != target:
+                raise ProcessIdentityError(
+                    "reviewed process changed before namespace binding"
+                )
+            depths[target] = self._pid_namespace_depth(target.pid)
+        if len(depths) != len(targets):
+            raise ProcessIdentityError("reviewed PID namespace binding is incomplete")
+        self._reviewed_pid_namespace_depths = depths
+
+    def proves_separate_pid_namespace(
+        self, pid: int, targets: Sequence[ProcessIdentity]
+    ) -> bool:
+        """Prove an unreadable process is outside every reviewed PID namespace."""
+
+        try:
+            candidate_depth = self._pid_namespace_depth(pid)
+            bound = getattr(self, "_reviewed_pid_namespace_depths", {})
+            if bound:
+                if any(target not in bound for target in targets):
+                    return False
+                target_depths = {bound[target] for target in targets}
+            else:
+                target_depths = {
+                    self._pid_namespace_depth(target.pid) for target in targets
+                }
+        except ProcessIdentityError:
+            return False
+        return bool(target_depths) and candidate_depth not in target_depths
 
     def list_pids(self) -> Iterable[int]:
         try:

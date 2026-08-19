@@ -12,6 +12,10 @@ import hashlib
 import json
 import os
 import platform
+try:
+    import resource
+except ImportError:  # pragma: no cover - resource is unavailable on Windows.
+    resource = None
 import secrets
 import stat
 import sys
@@ -88,6 +92,37 @@ class UpdateError(ValueError):
 
 class PublicationUncertainError(UpdateError):
     """Raised when a publication error cannot be rolled back without risking data loss."""
+
+
+def descriptor_budget_target(soft_limit: int, hard_limit: int | None, required: int) -> int:
+    """Choose a bounded descriptor target for the updater's guarded evidence set."""
+    if required < 1:
+        raise UpdateError("descriptor budget must be positive")
+    if hard_limit is not None and hard_limit < required:
+        raise UpdateError(
+            f"descriptor budget requires {required} open files but the process hard limit is {hard_limit}"
+        )
+    return max(soft_limit, required)
+
+
+def evidence_descriptor_budget(source_count: int) -> int:
+    """Reserve descriptors for file guards, parent guards, and verifier overhead."""
+    if source_count < 0:
+        raise UpdateError("source count cannot be negative")
+    return source_count * 3 + 1024
+
+
+def ensure_descriptor_budget(required: int) -> None:
+    """Raise the process soft descriptor limit before holding the full audit closure."""
+    if resource is None:
+        return
+    soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    normalized_hard_limit = (
+        None if hard_limit == resource.RLIM_INFINITY else int(hard_limit)
+    )
+    target = descriptor_budget_target(int(soft_limit), normalized_hard_limit, required)
+    if target > soft_limit:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard_limit))
 
 
 @dataclass(frozen=True)
@@ -1128,6 +1163,9 @@ def open_evidence_bundle(
             raise UpdateError("manifest repo_root does not match --repo")
         if manifest_repo != repo:
             raise UpdateError("manifest repository binding changed while opening evidence")
+        source_files = manifest.get("source_files")
+        source_count = len(source_files) if isinstance(source_files, list) else 0
+        ensure_descriptor_budget(evidence_descriptor_budget(source_count))
 
         expected_reports_dir = lexical_absolute(manifest_path.parent / "reports")
         declared_reports = manifest.get("reports_dir")

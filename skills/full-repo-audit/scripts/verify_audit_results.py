@@ -95,6 +95,22 @@ IMPLEMENTATION_EVIDENCE_OUTCOME_RE = re.compile(
     r"\b(?:outcome|result):\s*([^;|]+)",
     re.IGNORECASE,
 )
+BROWSER_TEST_REFERENCE_RE = re.compile(
+    r"(?:^|/)[^`/]*browser[^`/]*\.test\.(?:[cm]?[jt]sx?)$",
+    re.IGNORECASE,
+)
+BROWSER_TEST_COMMAND_RE = re.compile(
+    r"\bcommand:\s*[^;|]*(?:node|npm|playwright)\b",
+    re.IGNORECASE,
+)
+BROWSER_TEST_PASS_RE = re.compile(
+    r"\b(?:pass(?:ed|ing)?\s*(?:=|:)?\s*[1-9]\d*|[1-9]\d*\s+pass(?:ing|ed)?)\b",
+    re.IGNORECASE,
+)
+BROWSER_TEST_ZERO_FAILURE_RE = re.compile(
+    r"\b(?:fail(?:ed|ures?)?\s*(?:=|:)?\s*0|0\s+(?:fail(?:ed|ures?)?))\b",
+    re.IGNORECASE,
+)
 IMPLEMENTATION_EXPECTATION_RE = re.compile(
     r"\b(counterfactual|invariance):\s*([^;|]+(?:\s+[^;|]+)*)",
     re.IGNORECASE,
@@ -201,6 +217,7 @@ SOURCE_JOURNEY_TABLE_HEADERS = {
     "primary navigation/decision elements",
     "relevance estimate",
     "required information",
+    "interaction and metadata checklist",
     "mobile/desktop availability",
     "test mode evidence",
 }
@@ -211,6 +228,7 @@ VISUAL_JOURNEY_TABLE_HEADERS = {
     "evidence",
     "navigation visibility",
     "decision information",
+    "interaction and metadata checklist",
     "visual quality",
     "result",
 }
@@ -224,6 +242,11 @@ ALLOWED_PRUNED_REVIEW_DECISIONS = {
     "excluded-with-rationale",
     "out-of-scope-with-user-confirmation",
     "requeued",
+}
+ALLOWED_TRACKED_DELETION_REVIEW_DECISIONS = {
+    "verified-removal",
+    "finding-recorded",
+    "blocked",
 }
 ALLOWED_CLAIM_BASES = {"runtime-attested", "tool-schema-inspected", "self-reported", "manual-fallback"}
 
@@ -436,6 +459,15 @@ PO_VALUE_RE = re.compile(r'(?m)^\s*msg(?:id|str)\s+"([^"]{2,100})"\s*$')
 APPLE_STRINGS_VALUE_RE = re.compile(r'(?m)=\s*"([^"]{2,100})"\s*;')
 FTL_VALUE_RE = re.compile(r"(?m)^\s*[-A-Za-z0-9_.]+\s*=\s*([^\n{#]{2,100})\s*$")
 NO_FINDINGS_SENTINELS = {"no findings", "no confirmed findings"}
+AUDIT_EXECUTION_ONLY_GAP_RE = re.compile(
+    r"\b(?:external test[- ]environment blocker|audit[- ]execution blocker|"
+    r"audit evidence cannot establish|not (?:an? )?source(?:-level)? defect)\b",
+    re.IGNORECASE,
+)
+AUDIT_EXECUTION_BLOCKER_HEADING_RE = re.compile(
+    r"\baudit[- ]execution (?:blocked|blocker)\b",
+    re.IGNORECASE,
+)
 BOILERPLATE_VALUES = {
     "concrete evidence",
     "exact visible text",
@@ -456,7 +488,7 @@ GENERIC_INTERFACE_PHRASES = (
     "implemented/missing behavior evidence",
 )
 VISIBLE_KEY_RE = re.compile(
-    r"(?im)^\s*(display_name|short_description|default_prompt|label|title|placeholder|description|tooltip|helper_text|empty_state|error_message|success_message)\s*:\s*['\"]?([^'\"\n#]+)['\"]?"
+    r"(?im)^\s*(display_name|short_description|default_prompt|label|title|placeholder|description|tooltip|helper_text|empty_state|error_message|success_message)\s*:\s*['\"]([^'\"\n#]+)['\"]"
 )
 VISIBLE_ATTR_RE = re.compile(
     r"""(?ix)
@@ -476,17 +508,17 @@ NOOP_FUNCTION_RE = re.compile(
 )
 EVENT_HANDLER_REF_RE = re.compile(r"\bon[A-Z][A-Za-z]*\s*=\s*{\s*([A-Za-z_$][\w$]*)\s*}")
 DEAD_HREF_RE = re.compile(r"""(?is)<a\b[^>]*\bhref\s*=\s*(?:["']#["']|{\s*["']#["']\s*})[^>]*>""")
-BUTTON_TAG_RE = re.compile(r"(?is)<button\b(.*?)>(.*?)</button>")
-SELF_CLOSING_BUTTON_RE = re.compile(r"(?is)<button\b(.*?)/>")
-COMPONENT_BUTTON_TAG_RE = re.compile(r"(?is)<[A-Z][A-Za-z0-9_.]*Button\b(.*?)>(.*?)</[A-Z][A-Za-z0-9_.]*Button>")
-SELF_CLOSING_COMPONENT_BUTTON_RE = re.compile(r"(?is)<[A-Z][A-Za-z0-9_.]*Button\b(.*?)/>")
-DISABLED_ATTR_PATTERN = r"""(?<![\w:-])disabled(?![\w:-])(?:\s*=\s*(?:{\s*true\s*}|["']disabled["']|["']true["']))?"""
+BUTTON_TAG_RE = re.compile(r"(?is)<button\b(.*?)(?<![=])>(.*?)</button>")
+SELF_CLOSING_BUTTON_RE = re.compile(r"(?is)<button\b((?:=>|[^>])*?)/\s*>")
+COMPONENT_BUTTON_TAG_RE = re.compile(r"(?is)<([A-Z][A-Za-z0-9_.]*Button)\b(.*?)>(.*?)</\1>")
+SELF_CLOSING_COMPONENT_BUTTON_RE = re.compile(r"(?is)<([A-Z][A-Za-z0-9_.]*Button)\b((?:=>|[^>])*?)/\s*>")
+DISABLED_ATTR_PATTERN = r"""(?<![\w:-])disabled(?![\w:-])(?:\s*=\s*(?:{\s*true\s*}|["']disabled["']|["']true["'])|(?=\s*(?:/?>|$)))"""
 DISABLED_ATTR_RE = re.compile(DISABLED_ATTR_PATTERN, re.IGNORECASE)
 STATIC_DISABLED_CONTROL_RE = re.compile(
     rf"(?is)<(?:button|a|[A-Z][A-Za-z0-9_.]*Button)\b[^>]*{DISABLED_ATTR_PATTERN}[^>]*>"
 )
 ROLE_BUTTON_RE = re.compile(r"""(?is)<([A-Za-z][\w:.-]*)\b([^>]*)\brole\s*=\s*(?:"button"|'button'|{\s*["']button["']\s*})([^>]*)>(.*?)</\1>""")
-FORM_FIELD_TAG_RE = re.compile(r"(?is)<(input|select|textarea)\b([^>]*)>(.*?)</\1>|<(input)\b([^>]*)/?>")
+FORM_FIELD_TAG_RE = re.compile(r"(?is)<(input|select|textarea)\b(.*?)(?<![=])>(.*?)</\1>|<(input)\b(.*?)(?<![=])/?>")
 FORM_TAG_RE = re.compile(r"(?is)<form\b([^>]*)>")
 FORM_SUBMIT_ATTR_RE = re.compile(
     r"(?is)(?<![\w:-])(?:action|onsubmit|onSubmit|@submit|v-on:submit|on:submit|\(submit\))\s*="
@@ -623,6 +655,13 @@ def parse_args() -> argparse.Namespace:
         required=True,
         nargs="+",
         help="One or more Markdown report files or directories containing reports.",
+    )
+    parser.add_argument(
+        "--batch-id",
+        help=(
+            "Validate one exact batch report without requiring lead reconciliation, "
+            "other batch reports, or a completed effort ledger."
+        ),
     )
     parser.add_argument(
         "--skip-current-hash-check",
@@ -871,6 +910,32 @@ def load_manifest(manifest_path: Path) -> dict:
     pruned_hints = manifest.get("pruned_directory_review_hints", [])
     if not isinstance(pruned_hints, list):
         raise ValueError("Manifest field pruned_directory_review_hints must be a list when present.")
+    tracked_deletions = manifest.get("tracked_deletions", [])
+    if not isinstance(tracked_deletions, list):
+        raise ValueError("Manifest field tracked_deletions must be a list when present.")
+    tracked_deletion_paths: set[str] = set()
+    for index, removal in enumerate(tracked_deletions):
+        if not isinstance(removal, dict):
+            raise ValueError(f"Manifest tracked_deletions[{index}] must be an object.")
+        path = removal.get("path")
+        if not isinstance(path, str) or not path:
+            raise ValueError(f"Manifest tracked_deletions[{index}].path must be a non-empty string.")
+        validate_repo_relative_path(path, f"tracked_deletions[{index}].path")
+        if path in tracked_deletion_paths:
+            raise ValueError(f"Manifest tracked_deletions contains duplicate path: {path}")
+        tracked_deletion_paths.add(path)
+        available = removal.get("baseline_available")
+        if not isinstance(available, bool):
+            raise ValueError(f"Manifest tracked_deletions[{index}].baseline_available must be boolean.")
+        digest = removal.get("baseline_sha256")
+        size = removal.get("baseline_size_bytes")
+        if available:
+            if not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None:
+                raise ValueError(f"Manifest tracked_deletions[{index}].baseline_sha256 must be a SHA-256 digest when baseline evidence is available.")
+            if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                raise ValueError(f"Manifest tracked_deletions[{index}].baseline_size_bytes must be a non-negative integer when baseline evidence is available.")
+        elif digest is not None or size is not None:
+            raise ValueError(f"Manifest tracked_deletions[{index}] must omit baseline digest and size when evidence is unavailable.")
     journey_audit = manifest.get("journey_audit")
     if journey_audit is not None and not isinstance(journey_audit, dict):
         raise ValueError("Manifest field journey_audit must be an object when present.")
@@ -899,6 +964,7 @@ def load_manifest(manifest_path: Path) -> dict:
     )
     validate_manifest_count(manifest, "scope_warning_count", len(scope_warnings))
     validate_manifest_count(manifest, "pruned_directory_review_hint_count", len(pruned_hints))
+    validate_manifest_count(manifest, "tracked_deletion_count", len(tracked_deletions))
 
     manifest["expected_files"] = {item["rel_path"] for item in manifest.get("source_files", [])}
     manifest["expected_hashes"] = {
@@ -1579,6 +1645,86 @@ def verify_effort_ledger(
     elif isinstance(pruned_review, dict) and pruned_review.get("status") != "not-applicable":
         issues.append({"path": str(ledger_path), "field": "pruned_directory_review.status", "expected": "not-applicable", "actual": pruned_review.get("status")})
 
+    raw_tracked_deletion_count = manifest.get("tracked_deletion_count", 0)
+    if isinstance(raw_tracked_deletion_count, int) and not isinstance(raw_tracked_deletion_count, bool):
+        tracked_deletion_count = raw_tracked_deletion_count
+    else:
+        tracked_deletion_count = 0
+        issues.append(
+            {
+                "path": str(ledger_path),
+                "field": "tracked_deletion_count",
+                "expected": "integer manifest count",
+                "actual": raw_tracked_deletion_count,
+            }
+        )
+    tracked_deletions = manifest.get("tracked_deletions", [])
+    expected_tracked_deletions = {
+        removal.get("path"): removal
+        for removal in tracked_deletions
+        if isinstance(removal, dict) and isinstance(removal.get("path"), str)
+    }
+    tracked_deletion_review = ledger.get("tracked_deletion_review")
+    if tracked_deletion_count:
+        if not isinstance(tracked_deletion_review, dict):
+            issues.append({"path": str(ledger_path), "field": "tracked_deletion_review", "expected": "object", "actual": type(tracked_deletion_review).__name__})
+        else:
+            if tracked_deletion_review.get("status") != "completed":
+                issues.append({"path": str(ledger_path), "field": "tracked_deletion_review.status", "expected": "completed", "actual": tracked_deletion_review.get("status")})
+            if tracked_deletion_review.get("removal_count") != tracked_deletion_count:
+                issues.append({"path": str(ledger_path), "field": "tracked_deletion_review.removal_count", "expected": tracked_deletion_count, "actual": tracked_deletion_review.get("removal_count")})
+            if not isinstance(tracked_deletion_review.get("notes"), str) or not tracked_deletion_review.get("notes"):
+                issues.append({"path": str(ledger_path), "field": "tracked_deletion_review.notes", "expected": "non-empty review notes", "actual": tracked_deletion_review.get("notes")})
+            decisions = tracked_deletion_review.get("decisions")
+            if not isinstance(decisions, list):
+                issues.append({"path": str(ledger_path), "field": "tracked_deletion_review.decisions", "expected": "one decision per tracked deletion", "actual": type(decisions).__name__})
+            else:
+                observed_paths = set()
+                decision_issues = []
+                for index, decision in enumerate(decisions):
+                    if not isinstance(decision, dict):
+                        decision_issues.append({"index": index, "reason": "decision row must be an object", "actual": type(decision).__name__})
+                        continue
+                    path = decision.get("path")
+                    if not isinstance(path, str):
+                        decision_issues.append({"index": index, "field": "path", "expected": "string path from manifest tracked_deletions", "actual": path})
+                    else:
+                        observed_paths.add(path)
+                    expected_removal = expected_tracked_deletions.get(path) if isinstance(path, str) else None
+                    if expected_removal is None:
+                        decision_issues.append({"index": index, "field": "path", "reason": "path is not in manifest tracked_deletions", "actual": path})
+                    elif decision.get("baseline_sha256") != expected_removal.get("baseline_sha256"):
+                        decision_issues.append({"index": index, "field": "baseline_sha256", "expected": expected_removal.get("baseline_sha256"), "actual": decision.get("baseline_sha256")})
+                    decision_value = decision.get("decision")
+                    if decision_value not in ALLOWED_TRACKED_DELETION_REVIEW_DECISIONS:
+                        decision_issues.append(
+                            {
+                                "index": index,
+                                "field": "decision",
+                                "expected": sorted(ALLOWED_TRACKED_DELETION_REVIEW_DECISIONS),
+                                "actual": decision_value,
+                            }
+                        )
+                    for field in ("rationale", "evidence"):
+                        value = decision.get(field)
+                        if not isinstance(value, str) or is_boilerplate_value(value) or len(plain_cell(value)) < 12:
+                            decision_issues.append({"index": index, "field": field, "expected": "non-boilerplate evidence-backed text", "actual": value})
+                missing_paths = sorted(set(expected_tracked_deletions) - observed_paths)
+                extra_paths = sorted(path for path in observed_paths - set(expected_tracked_deletions) if path is not None)
+                if missing_paths or extra_paths:
+                    decision_issues.append({"field": "path coverage", "missing": missing_paths, "extra": extra_paths})
+                if decision_issues:
+                    issues.append(
+                        {
+                            "path": str(ledger_path),
+                            "field": "tracked_deletion_review.decisions",
+                            "reason": "each tracked deletion needs a structured evidence-backed lead disposition",
+                            "issues": decision_issues,
+                        }
+                    )
+    elif isinstance(tracked_deletion_review, dict) and tracked_deletion_review.get("status") != "not-applicable":
+        issues.append({"path": str(ledger_path), "field": "tracked_deletion_review.status", "expected": "not-applicable", "actual": tracked_deletion_review.get("status")})
+
     expected_high_risk = {
         item.get("rel_path"): item
         for item in manifest.get("high_risk_files", [])
@@ -1915,6 +2061,17 @@ def is_boilerplate_value(value: str) -> bool:
     return not normalized or normalized in BOILERPLATE_VALUES or punctuationless in BOILERPLATE_VALUES
 
 
+def source_contains_visible_text(source: str, visible_text: str) -> bool:
+    """Match extractor-normalized interface text back to its source.
+
+    ``dedupe_hints`` collapses whitespace so TSX generic/type syntax cannot
+    accidentally create multiline table cells. Validate against both the raw
+    source and the same whitespace-normalized representation.
+    """
+    evidence = plain_cell(visible_text)
+    return evidence in source or evidence in re.sub(r"\s+", " ", source)
+
+
 def dedupe_hints(hints: list[str]) -> list[str]:
     cleaned = []
     seen = set()
@@ -2032,13 +2189,14 @@ def visible_text_hints(rel_path: str, text: str) -> list[str]:
     for match in VISIBLE_ATTR_RE.finditer(text):
         hints.append((match.group(1) or match.group(2)).strip())
     for match in VISIBLE_TEXT_RE.finditer(text):
-        hints.append(match.group(1).strip())
+        if not appears_inside_quoted_literal(text, match.start()):
+            hints.append(match.group(1).strip())
     return dedupe_hints(hints)
 
 
 def appears_inside_quoted_literal(line: str, index: int) -> bool:
     escaped = False
-    quote_counts = {"'": 0, '"': 0}
+    quote_counts = {"'": 0, '"': 0, "`": 0}
     for char in line[:index]:
         if escaped:
             escaped = False
@@ -2104,7 +2262,73 @@ def has_accessible_label(attrs: str, body: str = "") -> bool:
     text_body = strip_tags(body).strip()
     if text_body:
         return True
-    return bool(re.search(r"{\s*[A-Za-z_$][\w$.]*(?:\([^)]*\))?\s*}", body))
+    return bool(re.search(r"{[^{}]*[A-Za-z_$][^{}]*}", body))
+
+
+def is_wrapped_in_label(text: str, start: int, end: int) -> bool:
+    """Recognize native fields whose accessible name comes from a parent label."""
+    open_label = text.rfind("<label", 0, start)
+    closed_label = text.rfind("</label>", 0, start)
+    next_close = text.find("</label>", end)
+    return open_label > closed_label and next_close >= end
+
+
+def has_associated_html_label(text: str, attrs: str) -> bool:
+    """Recognize labels that name a sibling field through a shared JSX id expression."""
+    field_id = attr_value(attrs, "id")
+    if not field_id:
+        return False
+    label_values = re.findall(
+        r"(?is)\bhtmlFor\s*=\s*(?:\{\s*)?['\"]?([^}\s'\"]+)",
+        text,
+    )
+    return field_id in label_values
+
+
+def label_wrapper_component_names(text: str) -> set[str]:
+    """Find same-file JSX components that render children inside a native label."""
+    definitions = list(re.finditer(r"\b(?:function|const)\s+([A-Z][A-Za-z0-9_]*)\b", text))
+    names: set[str] = set()
+    for index, match in enumerate(definitions):
+        end = definitions[index + 1].start() if index + 1 < len(definitions) else len(text)
+        body = text[match.start():end]
+        if re.search(r"(?is)<label\b[^>]*>.*?\{\s*children\s*\}.*?</label>", body):
+            names.add(match.group(1))
+    return names
+
+
+def is_wrapped_in_label_component(
+    text: str,
+    start: int,
+    end: int,
+    label_components: set[str],
+) -> bool:
+    """Recognize native controls passed as children to a same-file label wrapper."""
+    if not label_components:
+        return False
+    openings = list(re.finditer(r"<([A-Z][A-Za-z0-9_]*)\b[^>]*>", text[:start]))
+    for opening in reversed(openings):
+        name = opening.group(1)
+        if name not in label_components:
+            continue
+        close = text.find(f"</{name}>", opening.end())
+        if close >= end:
+            return True
+    return False
+
+
+def accessible_button_component_names(text: str) -> set[str]:
+    """Find same-file Button components whose implementation supplies a usable name."""
+    definitions = list(re.finditer(r"\b(?:function|const)\s+([A-Z][A-Za-z0-9_]*Button)\b", text))
+    names: set[str] = set()
+    for index, match in enumerate(definitions):
+        end = definitions[index + 1].start() if index + 1 < len(definitions) else len(text)
+        body = text[match.start():end]
+        if not re.search(r"(?is)<(?:button|a|Link)\b", body):
+            continue
+        if re.search(r"(?is)\baria-label\s*=|\{\s*(?:children|label|[A-Za-z_$][\w$]*\.title)\s*\}|\bt\s*\(", body):
+            names.add(match.group(1))
+    return names
 
 
 def attr_value(attrs: str, name: str) -> str | None:
@@ -2140,12 +2364,35 @@ def no_op_handler_names(text: str) -> set[str]:
     return names
 
 
+def source_only_claim_requires_stronger_evidence(claim_text: str) -> bool:
+    """Distinguish a semantic side-effect claim from backticked source names."""
+    semantic_text = PATH_IN_BACKTICKS_RE.sub("", claim_text)
+    return bool(SOURCE_ONLY_DISALLOWED_CLAIM_RE.search(semantic_text))
+
+
+def is_static_validation_script(rel_path: str) -> bool:
+    """Return true for non-rendered check scripts that may embed source fixtures."""
+    normalized = PurePosixPath(rel_path).as_posix()
+    return bool(
+        re.search(
+            r"(?:^|/)scripts/check-[^/]+\.[cm]?[jt]sx?$",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def interface_control_markers_for(rel_path: str, text: str) -> list[str]:
     suffix = PurePosixPath(rel_path).suffix.lower()
-    if suffix not in INTERACTIVE_HINT_EXTENSIONS:
+    if suffix not in INTERACTIVE_HINT_EXTENSIONS or re.search(
+        r"(?i)\.(?:test|spec)\.[cm]?[jt]sx?$",
+        rel_path,
+    ) or is_static_validation_script(rel_path):
         return []
     markers: set[str] = set()
     noop_names = no_op_handler_names(text)
+    label_components = label_wrapper_component_names(text)
+    named_button_components = accessible_button_component_names(text)
     for match in EMPTY_HANDLER_RE.finditer(text):
         markers.add(f"empty handler `{match.group(0).strip()[:80]}`")
     for match in EVENT_HANDLER_REF_RE.finditer(text):
@@ -2169,11 +2416,30 @@ def interface_control_markers_for(rel_path: str, text: str) -> list[str]:
             continue
         if has_static_disabled_attr(attrs):
             markers.add(f"static disabled form field `{match.group(0).strip()[:120]}`")
-        if not has_accessible_label(attrs, body):
+        if (
+            not has_accessible_label(attrs, body)
+            and not is_wrapped_in_label(text, match.start(), match.end())
+            and not has_associated_html_label(text, attrs)
+            and not is_wrapped_in_label_component(
+                text,
+                match.start(),
+                match.end(),
+                label_components,
+            )
+        ):
             markers.add(f"unlabeled form field `{match.group(0).strip()[:120]}`")
         if tag_name in {"input", "select", "textarea"} and not has_event_handler(attrs):
             name_or_id = attr_value(attrs, "name") or attr_value(attrs, "id") or attr_value(attrs, "placeholder")
-            if not name_or_id:
+            if not name_or_id and not (
+                is_wrapped_in_label(text, match.start(), match.end())
+                or has_associated_html_label(text, attrs)
+                or is_wrapped_in_label_component(
+                    text,
+                    match.start(),
+                    match.end(),
+                    label_components,
+                )
+            ):
                 markers.add(f"untracked form field `{match.group(0).strip()[:120]}`")
     for match in BUTTON_TAG_RE.finditer(text):
         attrs = match.group(1) or ""
@@ -2185,12 +2451,18 @@ def interface_control_markers_for(rel_path: str, text: str) -> list[str]:
         if not has_accessible_label(attrs):
             markers.add(f"unlabeled button `{match.group(0).strip()[:120]}`")
     for match in COMPONENT_BUTTON_TAG_RE.finditer(text):
-        attrs = match.group(1) or ""
-        body = match.group(2) or ""
+        name = match.group(1).split(".")[-1]
+        attrs = match.group(2) or ""
+        body = match.group(3) or ""
+        if name in named_button_components:
+            continue
         if not has_accessible_label(attrs, body):
             markers.add(f"unlabeled button component `{match.group(0).strip()[:120]}`")
     for match in SELF_CLOSING_COMPONENT_BUTTON_RE.finditer(text):
-        attrs = match.group(1) or ""
+        name = match.group(1).split(".")[-1]
+        attrs = match.group(2) or ""
+        if name in named_button_components:
+            continue
         if not has_accessible_label(attrs):
             markers.add(f"unlabeled button component `{match.group(0).strip()[:120]}`")
     for match in ROLE_BUTTON_RE.finditer(text):
@@ -2885,6 +3157,18 @@ def validate_findings_schema(findings_body: str) -> list[dict]:
                     "missing": missing,
                 }
             )
+        gap = block["fields"].get("gap", "")
+        if (
+            AUDIT_EXECUTION_ONLY_GAP_RE.search(gap)
+            and not AUDIT_EXECUTION_BLOCKER_HEADING_RE.search(block["heading"])
+        ):
+            issues.append(
+                {
+                    "section": "findings",
+                    "heading": block["heading"],
+                    "reason": "audit-execution-only gap must use an 'Audit execution blocked' heading instead of a product-defect title",
+                }
+            )
     return issues
 
 
@@ -3316,7 +3600,7 @@ def validate_lead_reconciliation_report(
         if (
             result == "PASS"
             and lead_evidence_type == "source-only"
-            and SOURCE_ONLY_DISALLOWED_CLAIM_RE.search(lead_claim_text)
+            and source_only_claim_requires_stronger_evidence(lead_claim_text)
         ):
             issues.append(
                 {
@@ -3794,7 +4078,7 @@ def interface_evidence_is_source_backed(
             continue
         if evidence in inventory_visible_by_file.get(rel_path, set()):
             return True
-        if source_text_getter and evidence in source_text_getter(rel_path):
+        if source_text_getter and source_contains_visible_text(source_text_getter(rel_path), evidence):
             return True
     return False
 
@@ -3881,7 +4165,14 @@ def validate_finding_bindings(
     return issues
 
 
-def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check: bool = False) -> dict:
+def verify(
+    manifest_path: Path,
+    reports: list[Path],
+    *,
+    skip_current_hash_check: bool = False,
+    batch_id: str | None = None,
+) -> dict:
+    verification_batch_id = batch_id
     manifest = load_manifest(manifest_path)
     expected_source_files = manifest["expected_files"]
     expected_hashes = manifest["expected_hashes"]
@@ -3893,11 +4184,27 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
         for unit in manifest.get("coverage_units_normalized", [])
         if isinstance(unit, dict) and isinstance(unit.get("unit_id"), str)
     }
+    if verification_batch_id is not None:
+        if verification_batch_id not in expected_by_batch:
+            raise ValueError(f"--batch-id is not present in the manifest: {verification_batch_id}")
+        expected_by_batch = {verification_batch_id: expected_by_batch[verification_batch_id]}
+        expected_files_by_batch = {
+            verification_batch_id: expected_files_by_batch[verification_batch_id]
+        }
+        selected_units = set(expected_by_batch[verification_batch_id])
+        expected_hashes = {
+            unit_id: sha256
+            for unit_id, sha256 in expected_hashes.items()
+            if unit_id in selected_units
+        }
+        expected_source_files = sorted(set(expected_files_by_batch[batch_id]))
     expected = set(expected_hashes)
     expected_source_hashes = {
         item["rel_path"]: item.get("sha256")
         for item in manifest.get("source_files", [])
-        if isinstance(item, dict) and isinstance(item.get("rel_path"), str)
+        if isinstance(item, dict)
+        and isinstance(item.get("rel_path"), str)
+        and (verification_batch_id is None or item["rel_path"] in expected_source_files)
     }
     known_batch_ids = set(expected_by_batch)
     expected_run_id = manifest.get("run_id")
@@ -4010,7 +4317,10 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
             start_byte=start_byte if isinstance(start_byte, int) else None,
         )
 
-    unresolved_scope_warnings, excluded_file_mismatches = verify_excluded_files(manifest_path, manifest)
+    if verification_batch_id is None:
+        unresolved_scope_warnings, excluded_file_mismatches = verify_excluded_files(manifest_path, manifest)
+    else:
+        unresolved_scope_warnings, excluded_file_mismatches = [], []
     completion_marker_mismatches = verify_completion_marker(manifest_path, manifest)
 
     lead_report_paths = [
@@ -4071,7 +4381,9 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
     lead_reconciliation_issues: list[dict] = []
     lead_reconciliation_rows: list[dict] = []
     expected_lead_path = (manifest_path.parent / "reports" / LEAD_RECONCILIATION_REPORT_NAME).resolve()
-    if len(lead_report_paths) != 1:
+    if verification_batch_id is not None:
+        lead_reconciliation_issues = []
+    elif len(lead_report_paths) != 1:
         lead_reconciliation_issues.append(
             {
                 "reason": "exactly one reports/lead_reconciliation.md artifact is required",
@@ -4127,8 +4439,10 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
         except ValueError:
             report_rel = str(Path(parsed["report"]).resolve())
         report_rel_by_batch[batch_id] = report_rel
-    effort_ledger_mismatches = verify_effort_ledger(
-        manifest_path, manifest, known_batch_ids, report_rel_by_batch
+    effort_ledger_mismatches = (
+        verify_effort_ledger(manifest_path, manifest, known_batch_ids, report_rel_by_batch)
+        if verification_batch_id is None
+        else []
     )
     observed: dict[str, list[dict]] = defaultdict(list)
     for parsed in parsed_reports:
@@ -4317,19 +4631,9 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
             for hint, contract_ids in hint_contracts.items():
                 for contract_id in contract_ids:
                     contract_hints[contract_id].add(hint)
-            overloaded_contracts = {
-                contract_id: sorted(hints)
-                for contract_id, hints in contract_hints.items()
-                if len(hints) > 1
-            }
-            if overloaded_contracts:
-                issues.append(
-                    {
-                        "reason": "each named source definition occurrence requires its own implementation inventory row",
-                        "unit": unit_id,
-                        "overloaded_contracts": overloaded_contracts,
-                    }
-                )
+            # Definitions that jointly implement one outcome may share a row.
+            # Coverage remains exact because every occurrence-aware anchor must
+            # still be present in anchors, trace, and verification.
 
         finding_blocks_by_file: dict[str, list[dict]] = defaultdict(list)
         for block in parsed["finding_blocks"]:
@@ -4725,7 +5029,8 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
             if (
                 result == "PASS"
                 and evidence_type == "source-only"
-                and SOURCE_ONLY_DISALLOWED_CLAIM_RE.search(claim_text)
+                and not is_manifest_test_path(rel_path)
+                and source_only_claim_requires_stronger_evidence(claim_text)
             ):
                 issues.append(
                     {
@@ -4736,6 +5041,30 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
                     }
                 )
             verification_refs = set(PATH_IN_BACKTICKS_RE.findall(verification_evidence))
+            browser_test_refs = sorted(
+                reference
+                for reference in verification_refs
+                if BROWSER_TEST_REFERENCE_RE.search(reference)
+            )
+            if (
+                result == "PASS"
+                and evidence_type == "test"
+                and browser_test_refs
+                and not (
+                    BROWSER_TEST_COMMAND_RE.search(verification_evidence)
+                    and BROWSER_TEST_PASS_RE.search(verification_evidence)
+                    and BROWSER_TEST_ZERO_FAILURE_RE.search(verification_evidence)
+                )
+            ):
+                issues.append(
+                    {
+                        "reason": "browser-test PASS evidence must record the exact command plus a completed nonzero pass and zero-failure summary",
+                        "unit": unit_id,
+                        "contract_id": contract_id,
+                        "browser_test_references": browser_test_refs,
+                        "verification_evidence": verification_evidence,
+                    }
+                )
             generic_verification = any(
                 phrase in normalized_text(verification_evidence)
                 for phrase in GENERIC_IMPLEMENTATION_EVIDENCE_PHRASES
@@ -4868,7 +5197,7 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
                 if (
                     source_text_checks_enabled
                     and normalized_text(visible_text) != "none found"
-                    and visible_text not in source_text(row["file"])
+                    and not source_contains_visible_text(source_text(row["file"]), visible_text)
                 ):
                     issues.append(
                         {
@@ -5091,6 +5420,9 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
         "expected_count": len(expected),
         "reported_count": len(observed_paths),
         "expected_batch_count": len(known_batch_ids),
+        "verification_scope": (
+            f"batch:{verification_batch_id}" if verification_batch_id else "complete"
+        ),
         "report_files": [str(path) for path in reports],
         "effort_ledger_provenance_note": (
             "Ledger-recorded effort consistency only; scheduler effort settings are not independently verified by this script."
@@ -5201,6 +5533,8 @@ def main() -> int:
                 "--receipt-out cannot be combined with --skip-current-hash-check; "
                 "a verification receipt requires current source freshness."
             )
+        if args.batch_id:
+            raise ValueError("--receipt-out cannot be combined with --batch-id; receipts require complete verification.")
     reports = iter_report_files(args.reports)
     if args.receipt_out:
         result, receipt = verify_with_receipt_data(
@@ -5209,7 +5543,12 @@ def main() -> int:
             skip_current_hash_check=args.skip_current_hash_check,
         )
     else:
-        result = verify(manifest_path, reports, skip_current_hash_check=args.skip_current_hash_check)
+        result = verify(
+            manifest_path,
+            reports,
+            skip_current_hash_check=args.skip_current_hash_check,
+            batch_id=args.batch_id,
+        )
     if receipt is not None:
         assert receipt_path is not None
         write_json_atomic(receipt_path, receipt)

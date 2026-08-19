@@ -305,6 +305,10 @@ GENERATED_DIRS = {
     "tmp",
 }
 
+GENERATED_FILE_SUFFIXES = {
+    ".tsbuildinfo",
+}
+
 VENDOR_DIRS = {
     "bower_components",
     "node_modules",
@@ -522,6 +526,19 @@ INTERFACE_PATH_PARTS = {
     "widgets",
 }
 
+# Test and tooling directories can live beneath an otherwise UI-oriented
+# application root. They are audited as implementation, but their fixtures and
+# dependency metadata are not themselves user-facing interface surfaces.
+NON_INTERFACE_SOURCE_PARTS = {
+    "__tests__",
+    "e2e",
+    "fixtures",
+    "scripts",
+    "test",
+    "tests",
+    "tools",
+}
+
 INTERFACE_TEXT_PARTS = {
     "i18n",
     "lang",
@@ -616,6 +633,7 @@ KNOWN_GENERATED_ARTIFACTS = {
     "manifest.json",
     "queue_complete.json",
     "queue_complete.json.tmp",
+    "test_evidence_index.json",
     VERIFICATION_RECEIPT_NAME,
     "visual_evidence.json",
     "visual_journey_audit.md",
@@ -827,6 +845,55 @@ def run_git_files(repo: Path) -> list[str] | None:
     except (OSError, subprocess.CalledProcessError):
         return None
     return [os.fsdecode(item) for item in result.stdout.split(b"\0") if item]
+
+
+def run_git_deleted_paths(repo: Path) -> list[str] | None:
+    """Return tracked paths deleted from either the index or worktree."""
+
+    paths: set[str] = set()
+    for command in (
+        ("diff", "--name-only", "--diff-filter=D", "--no-renames", "-z"),
+        ("diff", "--cached", "--name-only", "--diff-filter=D", "--no-renames", "-z"),
+    ):
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(repo), *command],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            return None
+        paths.update(os.fsdecode(item) for item in result.stdout.split(b"\0") if item)
+    return sorted(paths)
+
+
+def git_deleted_path_evidence(repo: Path, rel_path: str) -> dict[str, object]:
+    """Capture baseline metadata for a deleted path without restoring it."""
+
+    for revision in (f":{rel_path}", f"HEAD:{rel_path}"):
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(repo), "show", revision],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            continue
+        if result.returncode == 0:
+            return {
+                "path": rel_path,
+                "baseline_sha256": hashlib.sha256(result.stdout).hexdigest(),
+                "baseline_size_bytes": len(result.stdout),
+                "baseline_available": True,
+            }
+    return {
+        "path": rel_path,
+        "baseline_sha256": None,
+        "baseline_size_bytes": None,
+        "baseline_available": False,
+    }
 
 
 def excluded_pathspecs(
@@ -1172,7 +1239,9 @@ def walk_requested_extra_files(
         path = Path(rel_path)
         if include_env and is_secret_env_file(path.name):
             yield rel_path
-        elif include_generated and has_dir_part(rel_path, GENERATED_DIRS):
+        elif include_generated and (
+            has_dir_part(rel_path, GENERATED_DIRS) or is_generated_file(rel_path)
+        ):
             yield rel_path
         elif include_vendor and has_dir_part(rel_path, VENDOR_DIRS):
             yield rel_path
@@ -1200,6 +1269,21 @@ def excluded_by_dir(rel_path: str, include_generated: bool, include_vendor: bool
             return f"excluded generated/build directory: {part}"
         if part in VENDOR_DIRS and not include_vendor:
             return f"excluded vendor directory: {part}"
+    return None
+
+
+def is_generated_file(rel_path: str) -> bool:
+    return Path(rel_path).suffix.lower() in GENERATED_FILE_SUFFIXES
+
+
+def excluded_generated_file_reason(
+    rel_path: str, include_generated: bool
+) -> str | None:
+    if not include_generated and is_generated_file(rel_path):
+        return (
+            "excluded generated/build file: "
+            f"{Path(rel_path).suffix.lower()}; pass --include-generated to audit"
+        )
     return None
 
 
@@ -1393,6 +1477,18 @@ def filename_words(name: str) -> set[str]:
     return {part.lower() for part in re.split(r"[^A-Za-z0-9]+", spaced) if part}
 
 
+def is_static_build_config_filename(name: str) -> bool:
+    """Identify JS/TS build configuration that has no rendered UI surface."""
+
+    lowered = name.lower()
+    return bool(
+        re.fullmatch(
+            r"(?:[a-z0-9_-]+\.)?config\.(?:[cm]?[jt]s|json|jsonc)",
+            lowered,
+        )
+    )
+
+
 def is_ui_asset_path(rel_path: str) -> bool:
     rel = Path(rel_path)
     suffix = rel.suffix.lower()
@@ -1425,6 +1521,12 @@ def is_interface_file(rel_path: str, fs_path: Path) -> bool:
         return True
     if is_message_catalog_path(rel_path, suffix):
         return True
+    if rel.name in LOCK_FILENAMES or rel.name in SOURCE_FILENAMES:
+        return False
+    if is_static_build_config_filename(rel.name):
+        return False
+    if parts & NON_INTERFACE_SOURCE_PARTS:
+        return has_interface_key_markers(fs_path)
     if parts & INTERFACE_TEXT_PARTS and suffix in CONFIG_EXTENSIONS:
         return True
     if parts & INTERFACE_TEXT_PARTS and suffix in SOURCE_EXTENSIONS | CONFIG_EXTENSIONS | MESSAGE_CATALOG_EXTENSIONS:
@@ -1447,7 +1549,11 @@ def should_warn_excluded(rel_path: str, fs_path: Path, reason: str | None, inclu
         return False
     if reason == "local Claude settings excluded":
         return False
-    if reason.startswith("excluded generated/build directory") or reason.startswith("excluded vendor directory"):
+    if reason.startswith((
+        "excluded generated/build directory",
+        "excluded generated/build file",
+        "excluded vendor directory",
+    )):
         return False
     if reason == "binary/static asset extension":
         return is_ui_asset_path(rel_path)
@@ -1467,11 +1573,12 @@ def collect_files(
     include_files: set[str] | None = None,
     include_globs: list[str] | None = None,
     output_rel_dirs: list[str] | None = None,
-) -> tuple[list[FileEntry], list[dict]]:
+) -> tuple[list[FileEntry], list[dict], list[dict[str, object]]]:
     output_rel_dirs = output_rel_dirs or []
     include_files = include_files or set()
     include_globs = include_globs or []
     git_ignored_paths: set[str] = set()
+    deleted_tracked_paths: set[str] = set()
     rel_paths = run_git_files(repo)
     glob_forced_paths = {
         rel_path
@@ -1483,6 +1590,7 @@ def collect_files(
     if rel_paths is None:
         rel_paths = sorted(set(walk_files(repo, include_generated, include_vendor)) | include_files | glob_forced_paths)
     else:
+        deleted_tracked_paths = set(run_git_deleted_paths(repo) or ())
         git_ignored_paths = set(run_git_ignored_files(repo, include_generated, include_vendor, output_rel_dirs))
         extra_paths = set(walk_secret_env_files(repo, include_generated, include_vendor))
         extra_paths.update(include_files)
@@ -1495,6 +1603,7 @@ def collect_files(
 
     entries: list[FileEntry] = []
     excluded: list[dict] = []
+    tracked_deletions: list[dict[str, object]] = []
     excluded.extend(
         summarize_pruned_dirs(
             repo,
@@ -1513,6 +1622,7 @@ def collect_files(
         reason = (
             excluded_by_output_dir(rel_path, output_rel_dirs)
             or excluded_by_dir(rel_path, include_generated, include_vendor)
+            or excluded_generated_file_reason(rel_path, include_generated)
             or matches_any_glob(rel_path, exclude_globs)
         )
         if force_reason and reason and not reason.startswith("audit output directory excluded"):
@@ -1525,6 +1635,9 @@ def collect_files(
                 reason = None
         path = repo / rel_path
 
+        if reason is None and rel_path in deleted_tracked_paths and not path.exists():
+            tracked_deletions.append(git_deleted_path_evidence(repo, rel_path))
+            continue
         if reason is None and not path.exists():
             reason = "path does not exist"
         if reason is None and not path.is_file():
@@ -1545,6 +1658,9 @@ def collect_files(
                 reason = "binary/static asset extension"
         if reason is None and is_hidden_path(rel_path, include_generated) and not force_reason:
             reason = "hidden tooling directory"
+        if reason is None and kind is None:
+            if include_generated and is_generated_file(rel_path):
+                kind = "generated/build metadata"
         if reason is None and kind is None:
             kind = classify(rel_path, include_config, include_env)
         if reason is None and kind is None and is_extensionless_script_candidate(rel_path, path):
@@ -1594,6 +1710,8 @@ def collect_files(
             continue
         if excluded_by_dir(rel_path, include_generated, include_vendor):
             continue
+        if excluded_generated_file_reason(rel_path, include_generated):
+            continue
         if not path.exists() or not path.is_file() or path.is_symlink():
             continue
         if path.name in EXCLUDED_FILENAMES:
@@ -1627,7 +1745,7 @@ def collect_files(
             }
         )
 
-    return entries, excluded
+    return entries, excluded, sorted(tracked_deletions, key=lambda item: str(item["path"]))
 
 
 def line_range_units_for(path: Path, max_unit_bytes: int) -> list[tuple[int, int, int]] | None:
@@ -2054,6 +2172,48 @@ Batch purpose: {purpose_for(entries)}
 
 You are a low-effort subagent performing a manual source-code audit for only this batch. Do not edit the audited repository; write only the exact audit artifact authorized above. Inspect every listed file directly and report only evidence you can tie to these files.
 
+## Cross-Batch Verification Guardrail
+
+Consult `{(report_path.parent.parent / 'test_evidence_index.json').resolve()}`
+before calling an owned responsibility untested. Inspect the named candidate
+tests, then make at most one behavior-specific manifest search when the index
+does not resolve the question. Tests in another batch may provide evidence but
+remain owned by that batch. Browser fixtures prove only client behavior; they
+do not prove persistence or external effects.
+
+Run only a relevant, bounded test. Preserve its completed result and exit
+status; partial streamed output is not a result. On environment failure, try
+one non-destructive isolated workaround. If no assertion or source defect is
+established, record one BLOCKED contract with the command and unblock condition,
+not repeated product findings. Inspect language, SDK, browser, or database
+runtime details only when the assigned files actually use that runtime or
+boundary, and never treat a shared database as disposable.
+
+## Pre-return Report Gate
+
+Do not call this batch complete from a prose review alone. Use one row per
+distinct contract responsibility. Multiple internal definitions may share a
+row only when the trace explains their role in the same outcome; separate entry
+points or independently observable outcomes remain separate rows. Each detected
+definition anchor must appear in a row's source anchors, ordered trace, and
+verification. Every GAP/BLOCKED has exactly one matching atomic finding.
+
+Anchor provenance is strict: copy a `name@L...:C...` anchor only when the
+parser recognizes that exact occurrence in the assigned source. Never invent a
+line or column such as `C1`. For JSON, Markdown, configuration, assets, and
+other manual/declarative responsibilities without a recognized occurrence, use
+`Discovery: manual` and an exact raw backticked token that literally occurs in
+the assigned unit (for example `lockfileVersion`), then repeat that same raw
+token in source anchors, trace, and verification. A synthesized
+`lockfileVersion@L...:C...` token is invalid because it is neither source text
+nor a parser-recognized occurrence.
+
+Save the draft, then validate only this batch:
+`verify_audit_results.py --manifest <audit-output>/manifest.json --batch-id
+batch_{batch_id:03d} --reports <exact-report-path> --json`.
+Repair any reported batch issue before returning. The lead runs the complete
+directory verifier after all reports and reconciliation artifacts exist.
+
 ## Files You Own
 
 {file_lines}
@@ -2100,7 +2260,7 @@ Include at least one row for every file or range unit listed above, using the ex
 
 | File/unit | Contract ID | Contract/responsibility | Entrypoints/source anchors | Implementation/data/side-effect trace | Failure/edge/permission/recovery trace | Verification evidence | Result |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `path`, `path#Lstart-Lend`, or `path#Bstart-end` | `batch_<3+ digits>:C<3+ digits>` (for example `batch_{batch_id:03d}:C001`) | one concrete responsibility; Basis: public-contract — `docs/requirements.md#L12-L18`; Discovery: parsed — `definition@L12:C5` or Discovery: manual — `manually enumerated source reference` | concrete backticked symbols/tokens from the assigned source unit; every parsed definition uses its backticked occurrence anchor such as `definition@L12:C5` (or `definition@B123` for a byte unit); use the unit SHA-256 only for an empty/non-text byte unit | `pass —` / `gap —` / `blocked —` / `not applicable —` then entry/registration -> validation/core logic -> dependency/persistence/side effect -> observable outcome | the same status prefix, then concrete failure, edge, authorization, trust, retry, rollback, cancellation, cleanup, or justified non-applicability evidence | the same status prefix, then `evidence-type: test`, `evidence-type: runtime`, or `evidence-type: source-only`; when test/runtime, one `evidence-ref: ...` declaration; when test/runtime PASS, one explicit `outcome: ...` or `result: ...`; exactly one concrete `counterfactual: ...` or `invariance: ...`; and a named behavior check tied to the anchors | PASS, GAP, or BLOCKED |
+| `path`, `path#Lstart-Lend`, or `path#Bstart-end` | `batch_<3+ digits>:C<3+ digits>` (for example `batch_{batch_id:03d}:C001`) | one concrete responsibility; Basis: public-contract — `docs/requirements.md#L12-L18`; Discovery: parsed — `definition@L12:C5` or Discovery: manual — `exact literal source token` | concrete backticked symbols/tokens from the assigned source unit; every parsed definition uses its exact parser-recognized occurrence anchor such as `definition@L12:C5` (or `definition@B123` for a byte unit), while manual/declarative responsibilities use an exact raw token present in the file such as `lockfileVersion`; use the unit SHA-256 only for an empty/non-text byte unit | `pass —` / `gap —` / `blocked —` / `not applicable —` then entry/registration -> validation/core logic -> dependency/persistence/side effect -> observable outcome | the same status prefix, then concrete failure, edge, authorization, trust, retry, rollback, cancellation, cleanup, or justified non-applicability evidence | the same status prefix, then `evidence-type: test`, `evidence-type: runtime`, or `evidence-type: source-only`; when test/runtime, one `evidence-ref: ...` declaration; when test/runtime PASS, one explicit `outcome: ...` or `result: ...`; exactly one concrete `counterfactual: ...` or `invariance: ...`; and a named behavior check tied to the anchors | PASS, GAP, or BLOCKED |
 
 Every `Contract/responsibility` cell must include exactly one explicit basis and
 one discovery statement. Use `Basis: <kind> — <concrete backticked reference>`,
@@ -2118,15 +2278,18 @@ or mark the contract `BLOCKED`. Use `Discovery: parsed — ...` only when the ro
 occurrence-aware named-definition anchor in its assigned source. Format the
 anchor as `<name>@L<absolute-line>:C<column>`, or `<name>@B<absolute-byte>` for
 a byte-range unit, and repeat that exact backticked anchor in the row's source
-anchors, implementation trace, and verification evidence. Every occurrence
-requires its own row: two methods named `__init__` at different coordinates are
-two responsibilities and cannot share one row. Otherwise use `Discovery:
-manual — ...` and cite what was manually enumerated. Every high-confidence named definition requires its own row. Declarative, unsupported, or unparsed
-responsibilities require manual discovery. If they cannot be manually
-enumerated, record `BLOCKED` and the exact unblock condition rather than a clean
-result.
+anchors, implementation trace, and verification evidence. Occurrences that
+jointly implement the same contract outcome may share a row only when every
+anchor is repeated through that row's trace and verification. Separate entry
+points or independently observable outcomes require separate rows. Otherwise use `Discovery:
+manual — ...` and cite an exact raw backticked token that appears literally in
+the assigned source unit. Do not add invented `@L...:C...` coordinates to a
+manual token. Every high-confidence named definition must appear in a row.
+Declarative, unsupported, or unparsed responsibilities require manual discovery.
+If they cannot be manually enumerated, record `BLOCKED` and the exact unblock
+condition rather than a clean result.
 
-Begin each of the three trace/evidence cells with exactly `pass —`, `gap —`, `blocked —`, or `not applicable —`. Set `Result` mechanically: any `gap` cell means `GAP`; otherwise any `blocked` cell means `BLOCKED`; otherwise use `PASS`. Every `Verification evidence` cell must declare exactly one `evidence-type: test`, `evidence-type: runtime`, or `evidence-type: source-only` and exactly one concrete `counterfactual: ...` or `invariance: ...`. A `test` claim also requires exactly one `evidence-ref: ...` declaration containing only backticked repo-relative test source path(s) present in the manifest. A `runtime` claim requires the same declaration with only backticked `evidence:<id>` reference(s) bound to valid audit artifacts in `visual_evidence.json`; never invent runtime artifacts. Every `PASS` using test or runtime evidence additionally requires exactly one explicit `outcome: ...` or `result: ...` statement naming what the cited check observed, not merely that it passed. A counterfactual states which changed input, configuration, state, dependency response, or failure must change the result; an invariance explains why the result must remain constant. `PASS` for persistence, integration, external-effect, or success claims requires test or runtime evidence and must never use `source-only`. A `PASS` row must mark both `Implementation/data/side-effect trace` and `Verification evidence` as `pass`; only a genuinely inapplicable failure/edge/permission/recovery path may be `not applicable`, and an all-`not applicable` row is never a pass. Use `PASS` only when that one responsibility is semantically implemented—not merely present or free of TODO markers—and the row cites concrete behavior-specific verification evidence. Follow inputs and configuration into the real calculation/domain behavior, state/persistence or external side effect, and observable result. Inventory every high-confidence named definition occurrence in the assigned source in its own responsibility row; do not cover only a working helper while omitting another entry point or collapse same-name methods. Use `GAP` for hard-coded substitutes, ignored inputs, incomplete plumbing, fake success, memory-only persistence presented as durable, test fixtures/mocks on production paths, missing branches/lifecycle work, missing/partial/unverified/unreachable behavior, or tests that prove only shape. Use `BLOCKED` only when an external condition prevents determining or completing the path, and name that condition. Every `GAP` or `BLOCKED` row must have a finding bound to the real repository file and cite its Contract ID; include the exact range unit too when applicable. Documentation, configuration, assets, package markers, and declarative files still require a concrete responsibility/consumer trace rather than an implementation-inventory sentinel.
+Begin each of the three trace/evidence cells with exactly `pass —`, `gap —`, `blocked —`, or `not applicable —`. Set `Result` mechanically: any `gap` cell means `GAP`; otherwise any `blocked` cell means `BLOCKED`; otherwise use `PASS`. Every `Verification evidence` cell must declare exactly one `evidence-type: test`, `evidence-type: runtime`, or `evidence-type: source-only` and exactly one concrete `counterfactual: ...` or `invariance: ...`. A `test` claim also requires exactly one `evidence-ref: ...` declaration containing only backticked repo-relative test source path(s) present in the manifest. A `runtime` claim requires the same declaration with only backticked `evidence:<id>` reference(s) bound to valid audit artifacts in `visual_evidence.json`; never invent runtime artifacts. Every `PASS` using test or runtime evidence additionally requires exactly one explicit `outcome: ...` or `result: ...` statement naming what the cited check observed, not merely that it passed. A counterfactual states which changed input, configuration, state, dependency response, or failure must change the result; an invariance explains why the result must remain constant. `PASS` for persistence, integration, external-effect, or success claims requires test or runtime evidence and must never use `source-only`. A `PASS` row must mark both `Implementation/data/side-effect trace` and `Verification evidence` as `pass`; only a genuinely inapplicable failure/edge/permission/recovery path may be `not applicable`, and an all-`not applicable` row is never a pass. Use `PASS` only when that one responsibility is semantically implemented—not merely present or free of TODO markers—and the row cites concrete behavior-specific verification evidence. Follow inputs and configuration into the real calculation/domain behavior, state/persistence or external side effect, and observable result. Inventory every high-confidence named definition occurrence in the assigned source; do not cover only a working helper while omitting another entry point. Use `GAP` for hard-coded substitutes, ignored inputs, incomplete plumbing, fake success, memory-only persistence presented as durable, test fixtures/mocks on production paths, missing branches/lifecycle work, missing/partial/unverified/unreachable behavior, or tests that prove only shape. Use `BLOCKED` only when an external condition prevents determining or completing the path, and name that condition. Every `GAP` or `BLOCKED` row must have a finding bound to the real repository file and cite its Contract ID; include the exact range unit too when applicable. Documentation, configuration, assets, package markers, and declarative files still require a concrete responsibility/consumer trace rather than an implementation-inventory sentinel.
 
 ## Interface Inventory
 For batches with interface-relevant files, include one or more rows for every interface-relevant file:
@@ -2369,6 +2532,7 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
     lead_reconciliation = manifest.get("lead_reconciliation", {})
     journey_required = bool(journey.get("required"))
     pruned_hints = manifest.get("pruned_directory_review_hints", [])
+    tracked_deletions = manifest.get("tracked_deletions", [])
     ledger = {
         "run_id": manifest["run_id"],
         "repo_root": manifest["repo_root"],
@@ -2417,6 +2581,26 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
                 "Lead must review pruned_directory_review_hints before claiming full coverage."
                 if manifest.get("pruned_directory_review_hint_count")
                 else "No pruned directories contained source-like samples."
+            ),
+        },
+        "tracked_deletion_review": {
+            "status": "pending" if manifest.get("tracked_deletion_count") else "not-applicable",
+            "removal_count": manifest.get("tracked_deletion_count", 0),
+            "decisions": [
+                {
+                    "path": removal.get("path"),
+                    "baseline_sha256": removal.get("baseline_sha256"),
+                    "decision": None,
+                    "rationale": None,
+                    "evidence": None,
+                }
+                for removal in tracked_deletions
+                if isinstance(removal, dict)
+            ],
+            "notes": (
+                "Lead must review every tracked removal against its baseline and current references before claiming full coverage."
+                if manifest.get("tracked_deletion_count")
+                else "No tracked files are deleted from the current worktree."
             ),
         },
         "lead_high_risk_review": {
@@ -2517,6 +2701,64 @@ HIGH_RISK_SOURCE_PATTERNS = (
 )
 HIGH_RISK_CODE_SUFFIXES = {"", ".c", ".cc", ".cpp", ".cs", ".go", ".java", ".js", ".jsx", ".kt", ".kts", ".m", ".mm", ".php", ".py", ".rb", ".rs", ".sh", ".swift", ".ts", ".tsx"}
 
+TEST_PATH_PARTS = {"__tests__", "spec", "specs", "test", "tests"}
+TEST_NAME_PATTERNS = (
+    re.compile(r"\b(?:async\s+)?def\s+(test_[A-Za-z0-9_]+)\s*\("),
+    re.compile(r"\bfunc\s+(test[A-Za-z0-9_]+)\s*\("),
+    re.compile(r"\b(?:function\s+)?(test[A-Za-z0-9_]+)\s*\("),
+    re.compile(r"\b(?:describe|it|test)\s*\(\s*['\"]([^'\"]{1,160})['\"]"),
+)
+
+
+def is_test_source_path(rel_path: str) -> bool:
+    path = PurePosixPath(rel_path)
+    name = path.name.casefold()
+    stem = path.stem.casefold()
+    return bool(
+        TEST_PATH_PARTS.intersection(part.casefold() for part in path.parts[:-1])
+        or name in {"self_test.py", "selftest.py"}
+        or stem.startswith(("test_", "spec_"))
+        or stem.endswith(("_test", "_spec", ".test", ".spec"))
+    )
+
+
+def build_test_evidence_index(repo: Path, entries: list[FileEntry], run_id: str) -> dict:
+    """Create one bounded, deterministic test inventory shared by every batch."""
+    records: list[dict] = []
+    for entry in entries:
+        if not is_test_source_path(entry.rel_path):
+            continue
+        try:
+            text = read_initial_bytes(repo / entry.rel_path, limit=1_000_000).decode(
+                "utf-8", errors="ignore"
+            )
+        except OSError:
+            text = ""
+        names: list[str] = []
+        for pattern in TEST_NAME_PATTERNS:
+            for match in pattern.finditer(text):
+                name = " ".join(match.group(1).split())
+                if name and name not in names:
+                    names.append(name)
+                if len(names) >= 200:
+                    break
+            if len(names) >= 200:
+                break
+        records.append(
+            {
+                "rel_path": entry.rel_path,
+                "sha256": entry.sha256,
+                "named_tests": names,
+                "named_tests_truncated": len(names) >= 200,
+            }
+        )
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "test_file_count": len(records),
+        "test_files": records,
+    }
+
 
 def high_risk_file_inventory(repo: Path, entries: list[FileEntry]) -> list[dict]:
     result: list[dict] = []
@@ -2615,6 +2857,7 @@ def write_outputs(
     out_dir: Path,
     entries: list[FileEntry],
     excluded: list[dict],
+    tracked_deletions: list[dict[str, object]],
     units: list[AuditUnit],
     batches: list[list[AuditUnit]],
     run_id: str,
@@ -2650,6 +2893,8 @@ def write_outputs(
     reports_dir.mkdir(exist_ok=True)
     logs_dir = out_dir / "logs"
     logs_dir.mkdir(exist_ok=True)
+    test_evidence_index = build_test_evidence_index(repo, entries, run_id)
+    write_json(out_dir / "test_evidence_index.json", test_evidence_index)
 
     batch_records = []
     all_batched_paths: list[str] = []
@@ -2751,6 +2996,7 @@ def write_outputs(
         "excluded_files.json",
         "manifest.json",
         "queue_complete.json",
+        "test_evidence_index.json",
         "lead_reconciliation.md",
         "final-report.md",
         "logs",
@@ -2774,6 +3020,8 @@ def write_outputs(
         "archived_reports_dir": archived_reports_dir,
         "artifact_marker": str(out_dir / ARTIFACT_MARKER),
         "effort_ledger": str(out_dir / "effort_ledger.json"),
+        "test_evidence_index": str(out_dir / "test_evidence_index.json"),
+        "test_evidence_file_count": test_evidence_index["test_file_count"],
         "generated_artifacts": generated_artifacts,
         "verifier_command": verifier_command,
         "verifier_args": verifier_args,
@@ -2781,6 +3029,7 @@ def write_outputs(
         "interface_file_count": sum(1 for item in entries if item.interface_relevant),
         "scope_warning_count": len(scope_warnings),
         "pruned_directory_review_hint_count": len(pruned_directory_review_hints),
+        "tracked_deletion_count": len(tracked_deletions),
         "high_risk_file_count": len(high_risk_files),
         "excluded_file_count": len(excluded),
         "excluded_files_sha256": canonical_json_sha256(excluded),
@@ -2805,6 +3054,7 @@ def write_outputs(
         },
         "scope_warnings": scope_warnings,
         "pruned_directory_review_hints": pruned_directory_review_hints,
+        "tracked_deletions": tracked_deletions,
         "high_risk_files": high_risk_files,
     }
     write_json(out_dir / "manifest.json", manifest)
@@ -2851,6 +3101,14 @@ def render_index(repo: Path, out_dir: Path, manifest: dict) -> str:
         )
     else:
         pruned_hint_text = "Pruned directories with source-like samples needing lead review: **0**"
+    tracked_deletion_count = manifest.get("tracked_deletion_count", 0)
+    if tracked_deletion_count:
+        tracked_deletion_text = (
+            f"Tracked worktree removals needing lead review: **{tracked_deletion_count}**\n"
+            "Inspect `manifest.json` key `tracked_deletions` and record one evidence-backed disposition per removal in `effort_ledger.json`."
+        )
+    else:
+        tracked_deletion_text = "Tracked worktree removals needing lead review: **0**"
     return f"""# Full Repo Audit Queue
 
 Repo root: `{repo}`
@@ -2863,6 +3121,7 @@ Source files queued: **{manifest['source_file_count']}**
 Interface-relevant files queued: **{manifest['interface_file_count']}**
 Excluded high-signal files needing lead review: **{manifest['scope_warning_count']}**
 {pruned_hint_text}
+{tracked_deletion_text}
 Batches: **{manifest['batch_count']}**
 All source files queued exactly once: **{str(invariant).lower()}**
 
@@ -2874,7 +3133,7 @@ All source files queued exactly once: **{str(invariant).lower()}**
 4. Each worker writes its complete report to the exact path embedded in its prompt and returns only the bounded `REPORT_SAVED` receipt. Do not request or accept the report body through the subagent response.
 5. Confirm `queue_complete.json` exists and its `run_id` matches `manifest.json` before dispatching batches.
 6. Fill `effort_ledger.json` with the subagent capability check, lead effort status, per-batch agent/effort status, and journey worker status.
-7. Inspect `excluded_files.json`; resolve any `scope_warning: true` exclusions and review any `pruned_directory_review_hints` before claiming full coverage.
+7. Inspect `excluded_files.json`; resolve any `scope_warning: true` exclusions, review any `pruned_directory_review_hints`, and disposition every `tracked_deletions` row before claiming full coverage.
 8. Confirm one Markdown report per batch exists under `reports/` using the exact filename `batch_###.md`, then verify artifact-backed subagent coverage:
    `{manifest['verifier_command']}`
 9. If the verifier reports missing reports or ledger/report drift after an interrupted run, treat the verifier and manifest as authoritative: rerun the missing batch/journey prompts, save the exact report filenames, update `effort_ledger.json`, and rerun the verifier before final synthesis.
@@ -2903,6 +3162,7 @@ All source files queued exactly once: **{str(invariant).lower()}**
 - `{VERIFICATION_RECEIPT_NAME}`: written only by a passing stable verifier run and required for manifest-bound consolidation.
 - `effort_ledger.json`: required lead/subagent capability and effort ledger.
 - `excluded_files.json`: skipped files and reasons.
+- `test_evidence_index.json`: one bounded test inventory shared across batches; workers inspect named candidates before any targeted fallback search.
 - `reports/`: required destination for returned `batch_###.md` subagent reports.
 - `logs/`: cold command output; do not paste full command logs into model context.
 - `final-report.md`: complete lead synthesis; chat receives only a compact artifact index.
@@ -2942,7 +3202,7 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    entries, excluded = collect_files(
+    entries, excluded, tracked_deletions = collect_files(
         repo,
         args.include_config,
         args.include_env,
@@ -2957,7 +3217,7 @@ def main() -> int:
     units = audit_units_for(repo, entries, args.max_batch_bytes)
     batches = batch_files(units, args.batch_size, args.max_batch_bytes)
     try:
-        write_outputs(repo, out_dir, entries, excluded, units, batches, run_id)
+        write_outputs(repo, out_dir, entries, excluded, tracked_deletions, units, batches, run_id)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2

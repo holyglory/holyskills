@@ -453,6 +453,33 @@ def main() -> int:
             assert isinstance(declaration_task_binding, str)
             assert declaration_task_binding
 
+            planning_end, planning_end_key = phase_emission(
+                session=session_binding,
+                runtime_family="codex",
+                surface="cli-interactive",
+                boundary="end",
+                phase="planning",
+                activity="model-active",
+                span="batch-endpoint-proof",
+            )
+            status, planning_end_response = request(
+                port,
+                settings["auth_token"],
+                "/v1/declarations",
+                {
+                    "session_binding": session_binding,
+                    "declarations": [
+                        {
+                            "observation": planning_end,
+                            "source_key": planning_end_key,
+                        }
+                    ],
+                },
+            )
+            assert status == 200
+            assert planning_end_response["ok"] is True
+            assert planning_end_response["recorded"] == 1
+
             declaration_prefix = [
                 sys.executable,
                 str(HERE / "recorder.py"),
@@ -471,17 +498,23 @@ def main() -> int:
                 "--state-dir",
                 str(state),
             ]
-            subprocess.run(
+            phase_start_process = subprocess.run(
                 declaration_prefix + ["start"] + declaration_common,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                check=True,
+                check=False,
             )
-            subprocess.run(
+            assert phase_start_process.returncode == 0, phase_start_process.stderr.decode(
+                "utf-8", errors="replace"
+            )
+            phase_end_process = subprocess.run(
                 declaration_prefix + ["end"] + declaration_common,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                check=True,
+                check=False,
+            )
+            assert phase_end_process.returncode == 0, phase_end_process.stderr.decode(
+                "utf-8", errors="replace"
             )
             report_process = subprocess.run(
                 [sys.executable, str(HERE / "recorder.py"), "report", "--state-dir", str(state)],

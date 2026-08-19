@@ -602,11 +602,20 @@ function resolvePlaywright() {
       if (item.trim()) candidates.push(item.trim());
     }
   }
+  if (process.platform === "win32") {
+    if (process.env.APPDATA) candidates.push(path.join(process.env.APPDATA, "npm", "node_modules"));
+    candidates.push(path.join(path.dirname(process.execPath), "node_modules"));
+  } else {
+    candidates.push(path.resolve(path.dirname(process.execPath), "..", "lib", "node_modules"));
+  }
   candidates.push(path.join(os.homedir(), ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules"));
   const errors = [];
-  for (const base of candidates) {
+  for (const base of [...new Set(candidates)]) {
     try {
-      const resolved = require.resolve("playwright", { paths: [base] });
+      const direct = path.join(base, "playwright");
+      const resolved = fs.existsSync(direct)
+        ? require.resolve(direct)
+        : require.resolve("playwright", { paths: [base] });
       return require(resolved);
     } catch (error) {
       errors.push(`${base}: ${error.message}`);
@@ -652,7 +661,9 @@ async function launchBrowser(chromium, executablePath) {
       const browser = await chromium.launch({ headless: true, ...attempt.options });
       return { browser, browserLabel: attempt.label };
     } catch (error) {
-      errors.push(`${attempt.label}: ${error.message.split("\n")[0]}`);
+      const detail = String(error.message || error)
+        .split("\n").slice(0, 8).join("\n");
+      errors.push(`${attempt.label}: ${detail}`);
     }
   }
   throw new Error(`Unable to launch a Chromium browser:\n${errors.join("\n")}`);
@@ -2123,8 +2134,21 @@ function ensureTargets(config) {
   const seen = new Set();
   const unique = [];
   for (const target of all) {
-    if (!target.url || seen.has(target.url)) continue;
-    seen.add(target.url);
+    if (!target.url) continue;
+    const signature = JSON.stringify({
+      url: target.url,
+      name: target.name || "",
+      includeBase: target.includeBase,
+      states: target.states || [],
+      areas: target.areas || [],
+      ignore: target.ignore || [],
+      allowTruncation: target.allowTruncation || [],
+      allowOverlap: target.allowOverlap || [],
+      waitFor: target.waitFor || null,
+      allowFailure: target.allowFailure || "",
+    });
+    if (seen.has(signature)) continue;
+    seen.add(signature);
     unique.push(target);
   }
   if (!unique.length) throw new Error("No targets to verify. Provide --url, --config targets, or --from-coordinator.");

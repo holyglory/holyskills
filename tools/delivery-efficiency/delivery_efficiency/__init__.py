@@ -1,8 +1,8 @@
 """Portable delivery-efficiency recorder shared by Codex and Claude Code."""
 
 SCHEMA_VERSION = "1.2"
-RECORDER_VERSION = "0.2.4"
-ADAPTER_VERSION = "0.2.3"
+RECORDER_VERSION = "0.2.9"
+ADAPTER_VERSION = "0.2.4"
 
 # Codex kills a command hook after the configured host timeout.  Runtime-owned
 # telemetry uses a smaller end-to-end budget so interpreter startup, bounded

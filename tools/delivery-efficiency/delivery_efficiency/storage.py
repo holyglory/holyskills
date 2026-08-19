@@ -283,6 +283,8 @@ class Recorder:
             raise ContractValidationError(
                 "agent declarations require the task-bound atomic batch path"
             )
+        raw_project = snapshot.get("source_identity", {}).get("project")
+        private_project_label = self._private_project_label(raw_project)
         identity = self._consume_source_identity(snapshot)
         source_key_hmac = self._hmac_hex(
             "source-key:" + snapshot["adapter"]["name"],
@@ -296,6 +298,7 @@ class Recorder:
             event_id=event_id,
             observed_monotonic=observed_monotonic,
             observed_at=observed_at,
+            private_project_label=private_project_label,
         )
 
     def record_declaration(
@@ -634,6 +637,11 @@ class Recorder:
                 )
             return str(existing["event_id"]), int(existing["sequence"]), True
 
+        if snapshot["event"] in {"span.start", "span.end"}:
+            self._validate_explicit_phase_boundary(
+                connection, snapshot, task_id
+            )
+
         sequence = self._next_sequence(connection)
         event = {
             "schema_version": SCHEMA_VERSION,
@@ -715,6 +723,7 @@ class Recorder:
         event_id: str,
         observed_monotonic: int,
         observed_at: str,
+        private_project_label: Optional[str] = None,
     ) -> RecordResult:
         """Insert a source-deidentified snapshot and then project it."""
 
@@ -738,6 +747,24 @@ class Recorder:
                     stored_event_id = str(collapse_row["event_id"])
                     connection.commit()
                     return self._finish_record(stored_event_id, sequence, True)
+                if private_project_label is not None and identity.get("project_id") is not None:
+                    self._record_private_project_label(
+                        connection,
+                        str(identity["project_id"]),
+                        private_project_label,
+                    )
+                if (
+                    snapshot["event"] == "usage.observed"
+                    and identity.get("task_id") is not None
+                ):
+                    declared = self._active_explicit_phase(
+                        connection, str(identity["task_id"])
+                    )
+                    if declared is not None:
+                        classification = dict(snapshot["classification"])
+                        classification["phase"] = declared["phase"]
+                        classification["phase_provenance"] = "agent-declared"
+                        snapshot["classification"] = classification
                 stable_value = dict(snapshot)
                 stable_value["identity"] = identity
                 stable_value["platform"] = self._platform.as_event_value()
@@ -791,6 +818,13 @@ class Recorder:
                         raise DedupeConflictError("source_key was reused for a different observation")
                     sequence = int(existing["sequence"])
                     stored_event_id = str(existing["event_id"])
+                    existing_event = self._verify_stored_row(existing)
+                    self._auto_close_phase_after_stop(
+                        connection,
+                        existing_event,
+                        observed_monotonic=observed_monotonic,
+                        observed_at=observed_at,
+                    )
                     connection.commit()
                     deduplicated = True
                 else:
@@ -836,6 +870,12 @@ class Recorder:
                         ),
                     )
                     self._set_metadata(connection, "next_sequence", str(sequence + 1))
+                    self._auto_close_phase_after_stop(
+                        connection,
+                        event,
+                        observed_monotonic=observed_monotonic,
+                        observed_at=observed_at,
+                    )
                     connection.commit()
                     stored_event_id = event_id
                     deduplicated = False
@@ -851,6 +891,221 @@ class Recorder:
             raise StorageUnavailableError("authoritative recorder spool is unavailable") from exc
 
         return self._finish_record(stored_event_id, sequence, deduplicated)
+
+    def _auto_close_phase_after_stop(
+        self,
+        connection: sqlite3.Connection,
+        event: Mapping[str, Any],
+        *,
+        observed_monotonic: int,
+        observed_at: str,
+    ) -> None:
+        """Close the one declared final phase after Codex has emitted usage."""
+
+        task_id = event.get("identity", {}).get("task_id")
+        if (
+            event.get("event") != "runtime.turn_stopped"
+            or event.get("runtime", {}).get("family") != "codex"
+            or not isinstance(task_id, str)
+        ):
+            return
+        open_spans, valid = self._explicit_phase_state(connection, task_id)
+        if not valid or len(open_spans) != 1:
+            return
+        span_id, declared = next(iter(open_spans.items()))
+        if declared.get("phase") != "reporting":
+            return
+        start_event: Optional[Dict[str, Any]] = None
+        rows = connection.execute(
+            "SELECT event_json, event_hmac FROM events "
+            "WHERE task_id = ? AND event_name = 'span.start' ORDER BY sequence DESC",
+            (task_id,),
+        )
+        for row in rows:
+            candidate = self._verify_stored_event(row["event_json"], row["event_hmac"])
+            if (
+                candidate.get("adapter", {}).get("name") == "agent-declaration"
+                and candidate.get("payload", {}).get("span_id") == span_id
+            ):
+                start_event = candidate
+                break
+        if start_event is None:
+            return
+        scoped_source_key = self._hmac_hex(
+            "source-key:codex-hooks",
+            "auto-phase-close\x1f{}\x1f{}".format(task_id, span_id).encode("ascii"),
+        )
+        existing = connection.execute(
+            "SELECT sequence, event_id, event_json, event_hmac FROM events "
+            "WHERE source_key_hmac = ?",
+            (scoped_source_key,),
+        ).fetchone()
+        if existing is not None:
+            self._verify_stored_row(existing)
+            return
+        end_event = json.loads(canonical_json(start_event))
+        end_event["event"] = "span.end"
+        end_event["adapter"] = {
+            "name": "codex-hooks",
+            "version": end_event["adapter"]["version"],
+        }
+        end_event["payload"]["source_event"] = "unknown"
+        end_event["measurement"] = {
+            "provenance": "runtime-observed",
+            "counter_source": "not-applicable",
+            "tokens": {
+                "input": None,
+                "cached_input": None,
+                "output": None,
+                "reasoning_output": None,
+                "tool": None,
+                "other": None,
+            },
+            "recorder_overhead_ns": None,
+        }
+        sequence = self._next_sequence(connection)
+        event_id = self._hmac_hex("event-id", scoped_source_key.encode("ascii"))[:32]
+        end_event.update(
+            {
+                "event_id": event_id,
+                "sequence": str(sequence),
+                "observed_at_utc": observed_at,
+                "monotonic_ns": str(observed_monotonic),
+                "clock_domain": self.clock_domain,
+                "recorder_version": RECORDER_VERSION,
+                "schema_version": SCHEMA_VERSION,
+            }
+        )
+        validate_durable_event(end_event)
+        event_json = canonical_json(end_event)
+        event_hmac = self._hmac_hex("event-json", event_json.encode("utf-8"))
+        observation_hmac = self._hmac_hex(
+            "observation", canonical_json({
+                key: end_event[key]
+                for key in (
+                    "runtime",
+                    "adapter",
+                    "platform",
+                    "identity",
+                    "classification",
+                    "measurement",
+                    "coverage",
+                    "event",
+                    "payload",
+                )
+            }).encode("utf-8")
+        )
+        connection.execute(
+            "INSERT INTO events "
+            "(sequence, event_id, source_key_hmac, observation_hmac, event_name, "
+            "project_id, session_id, task_id, event_json, event_hmac, exported) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            (
+                sequence,
+                event_id,
+                scoped_source_key,
+                observation_hmac,
+                end_event["event"],
+                end_event["identity"].get("project_id"),
+                end_event["identity"].get("session_id"),
+                task_id,
+                event_json,
+                event_hmac,
+            ),
+        )
+        self._set_metadata(connection, "next_sequence", str(sequence + 1))
+
+    @staticmethod
+    def _private_project_label(raw_project: Any) -> Optional[str]:
+        """Reduce a transient worktree root to one bounded private basename."""
+
+        if not isinstance(raw_project, str) or not raw_project or "\x00" in raw_project:
+            return None
+        try:
+            project = Path(raw_project)
+            if not project.is_absolute():
+                return None
+            label = project.name
+        except (UnicodeError, ValueError):
+            return None
+        return label if Recorder._valid_project_label(label) else None
+
+    @staticmethod
+    def _valid_project_label(label: Any) -> bool:
+        try:
+            encoded = label.encode("utf-8") if isinstance(label, str) else b""
+        except UnicodeError:
+            return False
+        return not (
+            not 1 <= len(encoded) <= 128
+            or label in {".", ".."}
+            or any(ord(character) < 32 or ord(character) == 127 for character in label)
+        )
+
+    def _project_label_hmac(self, project_id: str, label: str) -> str:
+        return self._hmac_hex(
+            "private-project-label",
+            "{}\x1f{}".format(project_id, label).encode("utf-8"),
+        )
+
+    def _record_private_project_label(
+        self, connection: sqlite3.Connection, project_id: str, label: str
+    ) -> None:
+        existing = connection.execute(
+            "SELECT display_label, label_hmac FROM project_labels WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        expected = self._project_label_hmac(project_id, label)
+        if existing is None:
+            connection.execute(
+                "INSERT INTO project_labels(project_id, display_label, label_hmac) VALUES (?, ?, ?)",
+                (project_id, label, expected),
+            )
+            return
+        stored_label = str(existing["display_label"])
+        stored_hmac = str(existing["label_hmac"])
+        if not hmac.compare_digest(
+            stored_hmac, self._project_label_hmac(project_id, stored_label)
+        ):
+            raise LedgerIntegrityError("private project label integrity check failed")
+        if not hmac.compare_digest(stored_label.encode("utf-8"), label.encode("utf-8")):
+            raise ContractValidationError(
+                "one opaque project identity cannot change its private display label"
+            )
+
+    def read_private_project_labels(self) -> Dict[str, str]:
+        """Return verified local-only repository labels for standalone reports."""
+
+        self._ensure_open()
+        try:
+            connection = self._connect()
+            try:
+                rows = connection.execute(
+                    "SELECT project_id, display_label, label_hmac FROM project_labels ORDER BY project_id"
+                )
+                result: Dict[str, str] = {}
+                for row in rows:
+                    project_id = str(row["project_id"])
+                    label = str(row["display_label"])
+                    supplied = str(row["label_hmac"])
+                    if not hmac.compare_digest(
+                        supplied, self._project_label_hmac(project_id, label)
+                    ):
+                        raise LedgerIntegrityError(
+                            "private project label integrity check failed"
+                        )
+                    if not self._valid_project_label(label):
+                        raise LedgerIntegrityError("private project label is invalid")
+                    result[project_id] = label
+                return result
+            finally:
+                connection.close()
+        except RecorderError:
+            raise
+        except (sqlite3.Error, OSError) as exc:
+            raise StorageUnavailableError(
+                "private project label index is unavailable"
+            ) from exc
 
     def _finish_record(self, event_id: str, sequence: int, deduplicated: bool) -> RecordResult:
         self.project_pending()
@@ -1031,7 +1286,94 @@ class Recorder:
             return identity
         bound = dict(identity)
         bound["task_id"] = start["identity"]["task_id"]
+        for field in ("lineage_id", "project_id", "revision_id"):
+            bound[field] = start["identity"].get(field)
         return bound
+
+    def _explicit_phase_state(
+        self, connection: sqlite3.Connection, task_id: str
+    ) -> Tuple[Dict[str, Dict[str, str]], bool]:
+        """Return open agent-declared phase spans and history validity."""
+
+        rows = connection.execute(
+            "SELECT event_json, event_hmac FROM events "
+            "WHERE task_id = ? AND event_name IN ('span.start', 'span.end') "
+            "ORDER BY sequence",
+            (task_id,),
+        )
+        open_spans: Dict[str, Dict[str, str]] = {}
+        valid = True
+        for row in rows:
+            event = self._verify_stored_event(row["event_json"], row["event_hmac"])
+            adapter_name = event.get("adapter", {}).get("name")
+            is_declared_start = (
+                event["event"] == "span.start" and adapter_name == "agent-declaration"
+            )
+            is_runtime_close = (
+                event["event"] == "span.end"
+                and adapter_name == "codex-hooks"
+                and event.get("payload", {}).get("source_event") == "unknown"
+            )
+            if not (is_declared_start or is_runtime_close or adapter_name == "agent-declaration"):
+                continue
+            classification = event.get("classification", {})
+            if classification.get("phase_provenance") != "agent-declared":
+                continue
+            span_id = event.get("payload", {}).get("span_id")
+            if not isinstance(span_id, str):
+                valid = False
+                continue
+            value = {
+                "phase": classification.get("phase"),
+                "activity_state": classification.get("activity_state"),
+            }
+            if event["event"] == "span.start":
+                if span_id in open_spans or open_spans:
+                    valid = False
+                open_spans[span_id] = value
+            else:
+                started = open_spans.pop(span_id, None)
+                if started != value:
+                    valid = False
+        return open_spans, valid
+
+    def _active_explicit_phase(
+        self, connection: sqlite3.Connection, task_id: str
+    ) -> Optional[Dict[str, str]]:
+        open_spans, valid = self._explicit_phase_state(connection, task_id)
+        if not valid or len(open_spans) != 1:
+            return None
+        return next(iter(open_spans.values()))
+
+    def _validate_explicit_phase_boundary(
+        self,
+        connection: sqlite3.Connection,
+        snapshot: Mapping[str, Any],
+        task_id: str,
+    ) -> None:
+        """Keep explicit phase declarations non-overlapping and balanced."""
+
+        open_spans, valid = self._explicit_phase_state(connection, task_id)
+        if not valid:
+            raise ContractValidationError(
+                "task has conflicting explicit phase declaration history"
+            )
+        span_id = snapshot["payload"].get("span_id")
+        classification = snapshot["classification"]
+        value = {
+            "phase": classification.get("phase"),
+            "activity_state": classification.get("activity_state"),
+        }
+        if snapshot["event"] == "span.start":
+            if open_spans:
+                raise ContractValidationError(
+                    "explicit phase declarations cannot overlap"
+                )
+            return
+        if not isinstance(span_id, str) or open_spans.get(span_id) != value:
+            raise ContractValidationError(
+                "explicit phase end does not match the open declaration"
+            )
 
     def _bind_codex_runtime_target(
         self,
@@ -1519,6 +1861,12 @@ class Recorder:
                     "CREATE UNIQUE INDEX IF NOT EXISTS events_one_first_activity "
                     "ON events(task_id, event_name) "
                     "WHERE event_name = 'task.first_activity' AND task_id IS NOT NULL"
+                )
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS project_labels ("
+                    "project_id TEXT PRIMARY KEY NOT NULL,"
+                    "display_label TEXT NOT NULL,"
+                    "label_hmac TEXT NOT NULL) WITHOUT ROWID"
                 )
                 defaults = {
                     "store_schema_version": STORE_SCHEMA_VERSION,

@@ -14,6 +14,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import stat
@@ -30,6 +31,8 @@ from .process_identity import (
 
 
 DEFERRED_SCHEMA_VERSION = 1
+DEFERRED_REQUEST_SCHEMA_VERSION = 2
+_HISTORICAL_DEFERRED_OBSERVATION_VERSIONS = frozenset({"0.2.4", "0.2.5", "0.2.6"})
 DEFAULT_WAIT_SECONDS = 86_400
 MAX_WAIT_SECONDS = 604_800
 MAX_REQUEST_BYTES = 512 * 1024
@@ -40,6 +43,8 @@ QUIESCENCE_SECONDS = 0.5
 WAIT_POLL_SECONDS = 1.0
 QUIESCENCE_POLL_SECONDS = 0.1
 STATE_HEARTBEAT_SECONDS = 300.0
+MANAGED_DAEMON_CONTROL_TIMEOUT_SECONDS = 15.0
+MANAGED_DAEMON_EXIT_TIMEOUT_SECONDS = 15.0
 _JOB_ID_LENGTH = 32
 _RECEIPT_BASENAME = "deferred-install-result.json"
 _TERMINAL_STATUSES = {
@@ -69,6 +74,7 @@ _RECEIPT_FIELDS = {
 _RECEIPT_PHASES = {
     "preparing",
     "waiting",
+    "stopping-managed-daemons",
     "quiescing",
     "applying",
     "verifying",
@@ -95,6 +101,9 @@ _FAILURE_CODES = {
     "wait-timeout",
     "process-inspection-failed",
     "target-relaunched",
+    "managed-daemon-stop-failed",
+    "managed-daemon-exit-timeout",
+    "legacy-daemon-transition-failed",
     "installer-failure",
     "worker-lost",
 }
@@ -124,6 +133,12 @@ class DeferredInstallExpired(DeferredInstallError):
 
 class DeferredTargetRace(DeferredInstallError):
     pass
+
+
+class ManagedDaemonStopError(DeferredInstallError):
+    def __init__(self, failure_code: str) -> None:
+        super().__init__(failure_code)
+        self.failure_code = failure_code
 
 
 def _utc_now() -> str:
@@ -522,11 +537,21 @@ def _release_active_job(
         active_path.unlink()
 
 
-def _load_reviewed_plan(journal: Path, plan_digest: str) -> Any:
-    from .installer import load_plan
+def _load_reviewed_plan(
+    journal: Path, plan_digest: str, *, allow_historical_observation: bool = False
+) -> Any:
+    from .installer import load_plan, load_plan_for_deferred_observation
 
     journal = _assert_safe_absolute(journal, "transaction journal")
-    plan = load_plan(journal, expected_plan_digest=_valid_digest(plan_digest))
+    digest = _valid_digest(plan_digest)
+    if allow_historical_observation:
+        plan = load_plan_for_deferred_observation(
+            journal,
+            expected_plan_digest=digest,
+            allowed_historical_versions=_HISTORICAL_DEFERRED_OBSERVATION_VERSIONS,
+        )
+    else:
+        plan = load_plan(journal, expected_plan_digest=digest)
     if plan.journal_path != journal:
         raise DeferredInstallError("transaction journal binding changed")
     return plan
@@ -559,6 +584,443 @@ def _snapshot_payload(source: Path, destination: Path, expected_digest: str) -> 
         raise
 
 
+_TARGET_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+_CODEX_FEATURE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_MANAGED_CODEX_PROTOCOL = "codex-app-server-daemon-stop-v2"
+_HISTORICAL_MANAGED_CODEX_PROTOCOL = "codex-app-server-daemon-stop-v1"
+_MAX_DAEMON_CONTROL_BYTES = 16 * 1024
+
+
+def _bounded_runtime_version(value: Any, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 64
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+    ):
+        raise DeferredInstallError("{} is invalid".format(label))
+    return value
+
+
+def _regular_file_id(path: Path) -> str:
+    try:
+        metadata = path.stat()
+    except OSError as error:
+        raise DeferredInstallError("managed Codex executable is unavailable") from error
+    if not stat.S_ISREG(metadata.st_mode):
+        raise DeferredInstallError("managed Codex executable is not a regular file")
+    return "{}:{}".format(int(metadata.st_dev), int(metadata.st_ino))
+
+
+def _trusted_native_control_path(environment: Mapping[str, str]) -> str:
+    """Return a platform-owned search path without inheriting caller entries."""
+
+    if os.name != "nt":
+        return os.defpath
+    root_value = next(
+        (
+            value
+            for name, value in environment.items()
+            if name.upper() in {"SYSTEMROOT", "WINDIR"}
+        ),
+        None,
+    )
+    if not root_value:
+        raise DeferredInstallError("Windows native control requires a system root")
+    root = _assert_safe_absolute(Path(root_value), "Windows system root")
+    if not root.is_dir():
+        raise DeferredInstallError("Windows system root is unavailable")
+    return os.pathsep.join((str(root / "System32"), str(root)))
+
+
+def _codex_control_kwargs(home: Path, *, capture: bool) -> Dict[str, Any]:
+    environment = _sanitized_environment()
+    environment["CODEX_HOME"] = str(home)
+    environment["PATH"] = _trusted_native_control_path(environment)
+    kwargs: Dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE if capture else subprocess.DEVNULL,
+        "stderr": subprocess.PIPE if capture else subprocess.DEVNULL,
+        "cwd": str(home),
+        "env": environment,
+        "close_fds": True,
+        "check": False,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(
+            subprocess, "CREATE_NO_WINDOW", 0x08000000
+        )
+    return kwargs
+
+
+def _run_bound_codex_daemon_control(
+    executable_path: str,
+    executable_file_id: str,
+    home: Path,
+    action: str,
+    *,
+    bootstrap_features: Sequence[str] = (),
+) -> subprocess.CompletedProcess:
+    if action not in {"bootstrap", "version", "stop"}:
+        raise DeferredInstallError("managed Codex control action is invalid")
+    if (
+        (bootstrap_features and action != "bootstrap")
+        or len(bootstrap_features) > 16
+        or len(set(bootstrap_features)) != len(bootstrap_features)
+        or any(
+            not isinstance(feature, str)
+            or _CODEX_FEATURE_PATTERN.fullmatch(feature) is None
+            for feature in bootstrap_features
+        )
+    ):
+        raise DeferredInstallError("managed Codex bootstrap feature set is invalid")
+    executable = _assert_safe_absolute(
+        Path(executable_path), "managed Codex executable"
+    )
+    if _regular_file_id(executable) != executable_file_id:
+        raise DeferredInstallError("managed Codex executable path changed")
+    timeout = MANAGED_DAEMON_CONTROL_TIMEOUT_SECONDS
+    try:
+        command = [str(executable), "app-server", "daemon", action]
+        for feature in bootstrap_features:
+            command.extend(("--enable", feature))
+        return subprocess.run(
+            command,
+            timeout=timeout,
+            **_codex_control_kwargs(home, capture=action == "version"),
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        failure_code = (
+            "legacy-daemon-transition-failed"
+            if action == "bootstrap"
+            else "managed-daemon-stop-failed"
+        )
+        raise ManagedDaemonStopError(failure_code) from error
+
+
+def _run_exact_codex_daemon_control(
+    inspector: ProcessInspector,
+    daemon: ProcessIdentity,
+    home: Path,
+    action: str,
+) -> subprocess.CompletedProcess:
+    if action not in {"version", "stop"}:
+        raise DeferredInstallError("exact Codex control action is invalid")
+    if not inspector.is_exact(daemon) or not inspector.executable_path_matches(daemon):
+        raise DeferredInstallError("managed Codex daemon identity changed")
+    return _run_bound_codex_daemon_control(
+        daemon.executable_path, daemon.executable_file_id, home, action
+    )
+
+
+def _read_bound_codex_daemon_status(
+    executable_path: str,
+    executable_file_id: str,
+    home: Path,
+) -> Dict[str, Any]:
+    result = _run_bound_codex_daemon_control(
+        executable_path, executable_file_id, home, "version"
+    )
+    stdout = result.stdout or b""
+    stderr = result.stderr or b""
+    if (
+        result.returncode != 0
+        or len(stdout) + len(stderr) > _MAX_DAEMON_CONTROL_BYTES
+    ):
+        raise DeferredInstallError("managed Codex daemon control could not be verified")
+    try:
+        value = json.loads(stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise DeferredInstallError("managed Codex daemon control returned invalid status") from error
+    if not isinstance(value, dict):
+        raise DeferredInstallError("managed Codex daemon control returned invalid status")
+    return value
+
+
+def _probe_bound_codex_daemon(
+    executable_path: str,
+    executable_file_id: str,
+    home: Path,
+) -> Tuple[str, str, str]:
+    value = _read_bound_codex_daemon_status(
+        executable_path, executable_file_id, home
+    )
+    if value.get("status") != "running":
+        raise DeferredInstallError("managed Codex daemon is not running")
+    managed_path_value = value.get("managedCodexPath")
+    if not isinstance(managed_path_value, str) or not Path(managed_path_value).is_absolute():
+        raise DeferredInstallError("managed Codex daemon executable proof is invalid")
+    try:
+        managed_path = Path(managed_path_value).resolve(strict=True)
+    except OSError as error:
+        raise DeferredInstallError("managed Codex daemon executable proof is unavailable") from error
+    if _regular_file_id(managed_path) != executable_file_id:
+        raise DeferredInstallError("managed Codex daemon differs from its control target")
+    return (
+        (
+            _bounded_runtime_version(value.get("backend"), "Codex daemon backend")
+            if value.get("backend") is not None
+            else "legacy-ephemeral"
+        ),
+        _bounded_runtime_version(value.get("cliVersion"), "Codex CLI version"),
+        _bounded_runtime_version(
+            value.get("appServerVersion"), "Codex app-server version"
+        ),
+    )
+
+
+def _probe_managed_codex_daemon(
+    inspector: ProcessInspector,
+    daemon: ProcessIdentity,
+    home: Path,
+) -> Tuple[str, str, str]:
+    if not inspector.is_exact(daemon) or not inspector.executable_path_matches(daemon):
+        raise DeferredInstallError("managed Codex daemon identity changed")
+    return _probe_bound_codex_daemon(
+        daemon.executable_path, daemon.executable_file_id, home
+    )
+
+
+# Backward-compatible internal name retained for existing focused fixtures.
+def _run_codex_daemon_control(
+    inspector: ProcessInspector, daemon: ProcessIdentity, home: Path, action: str
+) -> subprocess.CompletedProcess:
+    return _run_exact_codex_daemon_control(inspector, daemon, home, action)
+
+
+def _plan_codex_homes(plan: Any) -> Dict[str, Path]:
+    result: Dict[str, Path] = {}
+    for value in plan.journal.get("codex_homes", []):
+        if not isinstance(value, dict):
+            raise DeferredInstallError("reviewed Codex target binding is invalid")
+        name = value.get("name")
+        home_value = value.get("home")
+        if (
+            not isinstance(name, str)
+            or _TARGET_NAME_PATTERN.fullmatch(name) is None
+            or name in result
+            or not isinstance(home_value, str)
+        ):
+            raise DeferredInstallError("reviewed Codex target binding is invalid")
+        result[name] = _assert_safe_absolute(Path(home_value), "reviewed Codex home")
+    return result
+
+
+def _prepare_managed_codex_daemons(
+    plan: Any,
+    inspector: ProcessInspector,
+    targets: Sequence[ProcessIdentity],
+    daemon_pids: Optional[Mapping[str, int]],
+    client_pids: Optional[Mapping[str, Sequence[int]]],
+    member_pids: Optional[Mapping[str, Sequence[int]]],
+    bootstrap_features: Optional[Mapping[str, Sequence[str]]] = None,
+) -> List[Dict[str, Any]]:
+    daemon_pids = dict(daemon_pids or {})
+    client_pids = {name: list(values) for name, values in (client_pids or {}).items()}
+    member_pids = {name: list(values) for name, values in (member_pids or {}).items()}
+    bootstrap_features = {
+        name: list(values) for name, values in (bootstrap_features or {}).items()
+    }
+    if not daemon_pids:
+        if client_pids or member_pids or bootstrap_features:
+            raise DeferredInstallError("managed Codex clients or members lack a daemon")
+        return []
+    if (
+        set(client_pids).difference(daemon_pids)
+        or set(member_pids).difference(daemon_pids)
+        or set(bootstrap_features).difference(daemon_pids)
+    ):
+        raise DeferredInstallError("managed Codex process group names differ")
+    homes = _plan_codex_homes(plan)
+    targets_by_pid = {item.pid: item for item in targets}
+    used_pids = set()
+    actions: List[Dict[str, Any]] = []
+    for name in sorted(daemon_pids):
+        if name not in homes:
+            raise DeferredInstallError("managed Codex daemon is not a reviewed target")
+        daemon_pid = daemon_pids[name]
+        clients_raw = client_pids.get(name, [])
+        members_raw = member_pids.get(name, [])
+        all_values = [daemon_pid] + clients_raw + members_raw
+        if (
+            not isinstance(daemon_pid, int)
+            or isinstance(daemon_pid, bool)
+            or daemon_pid <= 0
+            or not clients_raw
+            or len(clients_raw) > 64
+            or len(members_raw) > 64
+            or any(
+                not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0
+                for pid in all_values
+            )
+            or len(set(all_values)) != len(all_values)
+            or used_pids.intersection(all_values)
+            or any(pid not in targets_by_pid for pid in all_values)
+        ):
+            raise DeferredInstallError("managed Codex process group is invalid")
+        daemon = targets_by_pid[daemon_pid]
+        clients = [targets_by_pid[pid] for pid in clients_raw]
+        members = [targets_by_pid[pid] for pid in members_raw]
+        if any(not client.same_image(daemon) for client in clients):
+            raise DeferredInstallError("managed Codex client image differs from its daemon")
+        backend, cli_version, app_server_version = _probe_managed_codex_daemon(
+            inspector, daemon, homes[name]
+        )
+        if (
+            backend == "legacy-ephemeral"
+            and not inspector.supports_exact_graceful_termination()
+        ):
+            raise DeferredInstallError(
+                "legacy Codex daemon lacks exact graceful transition support"
+            )
+        features = bootstrap_features.get(name, [])
+        if (
+            len(features) > 16
+            or len(set(features)) != len(features)
+            or any(
+                not isinstance(feature, str)
+                or _CODEX_FEATURE_PATTERN.fullmatch(feature) is None
+                for feature in features
+            )
+            or (features and backend != "legacy-ephemeral")
+        ):
+            raise DeferredInstallError(
+                "managed Codex bootstrap feature binding is invalid"
+            )
+        used_pids.update(all_values)
+        actions.append(
+            {
+                "target_name": name,
+                "home": homes[name],
+                "daemon": daemon,
+                "clients": clients,
+                "members": members,
+                "backend": backend,
+                "bootstrap_features": features,
+                "cli_version": cli_version,
+                "app_server_version": app_server_version,
+            }
+        )
+    return actions
+
+
+def _managed_codex_private_value(action: Mapping[str, Any]) -> Dict[str, Any]:
+    return {
+        "protocol": _MANAGED_CODEX_PROTOCOL,
+        "target_name": action["target_name"],
+        "home": str(action["home"]),
+        "daemon_process": action["daemon"].private_value(),
+        "client_processes": [item.private_value() for item in action["clients"]],
+        "member_processes": [item.private_value() for item in action["members"]],
+        "backend": action["backend"],
+        "bootstrap_features": list(action["bootstrap_features"]),
+        "cli_version": action["cli_version"],
+        "app_server_version": action["app_server_version"],
+    }
+
+
+def _validated_managed_codex_daemon(value: Any) -> Dict[str, Any]:
+    historical_expected = {
+        "protocol",
+        "target_name",
+        "home",
+        "daemon_process",
+        "client_processes",
+        "member_processes",
+        "cli_version",
+        "app_server_version",
+    }
+    expected = historical_expected | {"backend", "bootstrap_features"}
+    if not isinstance(value, dict):
+        raise DeferredInstallError("managed Codex daemon request shape is invalid")
+    if (
+        value.get("protocol") == _HISTORICAL_MANAGED_CODEX_PROTOCOL
+        and set(value) == historical_expected
+    ):
+        backend_value = "historical-unbound"
+    elif value.get("protocol") == _MANAGED_CODEX_PROTOCOL and set(value) == expected:
+        backend_value = _bounded_runtime_version(
+            value.get("backend"), "reviewed Codex daemon backend"
+        )
+    else:
+        raise DeferredInstallError("managed Codex daemon request shape is invalid")
+    name = value.get("target_name")
+    home_value = value.get("home")
+    raw_clients = value.get("client_processes")
+    raw_members = value.get("member_processes")
+    raw_features = value.get("bootstrap_features", [])
+    if (
+        not isinstance(name, str)
+        or _TARGET_NAME_PATTERN.fullmatch(name) is None
+        or not isinstance(home_value, str)
+        or not isinstance(raw_clients, list)
+        or not 1 <= len(raw_clients) <= 64
+        or not isinstance(raw_members, list)
+        or len(raw_members) > 64
+        or not isinstance(raw_features, list)
+        or len(raw_features) > 16
+        or len(set(raw_features)) != len(raw_features)
+        or any(
+            not isinstance(feature, str)
+            or _CODEX_FEATURE_PATTERN.fullmatch(feature) is None
+            for feature in raw_features
+        )
+        or (raw_features and backend_value != "legacy-ephemeral")
+    ):
+        raise DeferredInstallError("managed Codex daemon request is invalid")
+    daemon = ProcessIdentity.from_private_value(value.get("daemon_process"))
+    clients = [ProcessIdentity.from_private_value(item) for item in raw_clients]
+    members = [ProcessIdentity.from_private_value(item) for item in raw_members]
+    all_processes = [daemon] + clients + members
+    if len({item.pid for item in all_processes}) != len(all_processes):
+        raise DeferredInstallError("managed Codex process identities overlap")
+    return {
+        "target_name": name,
+        "home": _assert_safe_absolute(Path(home_value), "managed Codex home"),
+        "daemon": daemon,
+        "clients": clients,
+        "members": members,
+        "backend": backend_value,
+        "bootstrap_features": raw_features,
+        "cli_version": _bounded_runtime_version(
+            value.get("cli_version"), "reviewed Codex CLI version"
+        ),
+        "app_server_version": _bounded_runtime_version(
+            value.get("app_server_version"), "reviewed Codex app-server version"
+        ),
+    }
+
+
+def _bind_managed_codex_daemons(
+    plan: Any,
+    targets: Sequence[ProcessIdentity],
+    actions: Sequence[Mapping[str, Any]],
+) -> set[int]:
+    homes = _plan_codex_homes(plan)
+    targets_by_pid = {item.pid: item for item in targets}
+    used_pids = set()
+    daemon_owned_pids = set()
+    names = set()
+    for action in actions:
+        name = action["target_name"]
+        if name in names or homes.get(name) != action["home"]:
+            raise DeferredInstallError("managed Codex daemon differs from reviewed plan")
+        names.add(name)
+        daemon = action["daemon"]
+        clients = action["clients"]
+        members = action["members"]
+        group = [daemon] + list(clients) + list(members)
+        if (
+            any(targets_by_pid.get(item.pid) != item for item in group)
+            or any(not client.same_image(daemon) for client in clients)
+            or used_pids.intersection(item.pid for item in group)
+        ):
+            raise DeferredInstallError("managed Codex process binding changed")
+        used_pids.update(item.pid for item in group)
+        daemon_owned_pids.add(daemon.pid)
+        daemon_owned_pids.update(item.pid for item in members)
+    return daemon_owned_pids
+
+
 def _request_value(
     *,
     journal: Path,
@@ -568,15 +1030,19 @@ def _request_value(
     payload_digest: str,
     targets: Sequence[ProcessIdentity],
     peers: Sequence[ProcessIdentity],
+    managed_codex_daemons: Sequence[Mapping[str, Any]] = (),
 ) -> Dict[str, Any]:
     return {
-        "schema_version": DEFERRED_SCHEMA_VERSION,
+        "schema_version": DEFERRED_REQUEST_SCHEMA_VERSION,
         "job_id": job_id,
         "journal": str(journal),
         "plan_sha256": plan_digest,
         "payload_sha256": payload_digest,
         "wait_seconds": wait_seconds,
         "created_at_utc": _utc_now(),
+        "managed_codex_daemons": [
+            _managed_codex_private_value(item) for item in managed_codex_daemons
+        ],
         "target_processes": [item.private_value() for item in targets],
         "baseline_image_peers": [item.private_value() for item in peers],
     }
@@ -594,9 +1060,19 @@ def _validated_request(value: Any, request_path: Path) -> Dict[str, Any]:
         "target_processes",
         "baseline_image_peers",
     }
-    if not isinstance(value, dict) or set(value) != expected_fields:
+    if not isinstance(value, dict):
         raise DeferredInstallError("deferred request shape is invalid")
-    if value.get("schema_version") != DEFERRED_SCHEMA_VERSION:
+    request_schema = value.get("schema_version")
+    if request_schema == DEFERRED_SCHEMA_VERSION and set(value) == expected_fields:
+        raw_managed_daemons: Any = []
+    elif (
+        request_schema == DEFERRED_REQUEST_SCHEMA_VERSION
+        and set(value) == expected_fields | {"managed_codex_daemons"}
+    ):
+        raw_managed_daemons = value.get("managed_codex_daemons")
+        if not isinstance(raw_managed_daemons, list) or len(raw_managed_daemons) > 32:
+            raise DeferredInstallError("managed Codex daemon set is invalid")
+    else:
         raise DeferredInstallError("deferred request schema is unsupported")
     job_id = _valid_job_id(value.get("job_id"))
     journal_value = value.get("journal")
@@ -624,11 +1100,15 @@ def _validated_request(value: Any, request_path: Path) -> Dict[str, Any]:
     peers = [ProcessIdentity.from_private_value(item) for item in raw_peers]
     if len({item.pid for item in targets}) != len(targets):
         raise DeferredInstallError("deferred target process identities are duplicated")
+    managed_daemons = [
+        _validated_managed_codex_daemon(item) for item in raw_managed_daemons
+    ]
     value = dict(value)
     value["_journal_path"] = journal
     value["_paths"] = paths
     value["_targets"] = targets
     value["_peers"] = peers
+    value["_managed_daemons"] = managed_daemons
     return value
 
 
@@ -638,6 +1118,7 @@ def _safe_public_result(
     status: str,
     target_count: int,
     wait_seconds: int,
+    managed_daemon_count: int = 0,
     phase: Optional[str] = None,
     receipt_raw: Optional[bytes] = None,
     terminal: Optional[Mapping[str, Any]] = None,
@@ -649,6 +1130,8 @@ def _safe_public_result(
         "targets": target_count,
         "wait_seconds": wait_seconds,
     }
+    if managed_daemon_count:
+        result["managed_daemons"] = managed_daemon_count
     if phase is not None:
         result["phase"] = phase
     if receipt_raw is not None:
@@ -730,6 +1213,11 @@ def arm_deferred_install(
     plan_digest: str,
     target_pids: Sequence[int],
     wait_seconds: int = DEFAULT_WAIT_SECONDS,
+    *,
+    managed_codex_daemon_pids: Optional[Mapping[str, int]] = None,
+    managed_codex_client_pids: Optional[Mapping[str, Sequence[int]]] = None,
+    managed_codex_member_pids: Optional[Mapping[str, Sequence[int]]] = None,
+    managed_codex_bootstrap_features: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> Dict[str, Any]:
     """Persist, snapshot, detach, and prove readiness of one reviewed job."""
 
@@ -747,6 +1235,7 @@ def arm_deferred_install(
         raise DeferredInstallError("canonical recorder source changed after review")
     inspector = ProcessInspector()
     targets = inspector.capture_many(target_pids)
+    inspector.bind_reviewed_pid_namespaces(targets)
     if os.getpid() in {item.pid for item in targets}:
         raise DeferredInstallError("deferred launcher cannot wait for itself")
     launcher_identity = inspector.capture(os.getpid())
@@ -754,6 +1243,15 @@ def arm_deferred_install(
         raise DeferredInstallError(
             "target executable is ambiguous with the deferred worker interpreter"
         )
+    managed_daemons = _prepare_managed_codex_daemons(
+        plan,
+        inspector,
+        targets,
+        managed_codex_daemon_pids,
+        managed_codex_client_pids,
+        managed_codex_member_pids,
+        managed_codex_bootstrap_features,
+    )
     peers = inspector.baseline_image_peers(targets)
     job_id = secrets.token_hex(16)
     paths = _job_paths(journal, job_id)
@@ -780,6 +1278,7 @@ def arm_deferred_install(
             payload_digest=payload_digest,
             targets=targets,
             peers=peers,
+            managed_codex_daemons=managed_daemons,
         )
         request_raw = _canonical_bytes(request)
         if len(request_raw) > MAX_REQUEST_BYTES:
@@ -805,6 +1304,7 @@ def arm_deferred_install(
                     status="armed",
                     target_count=len(targets),
                     wait_seconds=wait_seconds,
+                    managed_daemon_count=len(managed_daemons),
                 )
             if process.poll() is not None:
                 break
@@ -847,6 +1347,7 @@ def arm_deferred_install(
             status=str(receipt.get("status", "failed-unapplied")),
             target_count=len(targets),
             wait_seconds=wait_seconds,
+            managed_daemon_count=len(managed_daemons),
             phase=str(receipt.get("phase", "preparing")),
             receipt_raw=receipt_raw,
             terminal=receipt,
@@ -969,6 +1470,165 @@ def _rollback_after_post_apply_failure(journal: Path, plan_digest: str) -> str:
     return "rolled-back" if result.get("status") == "rolled-back" else "blocked"
 
 
+def _exact_alive_processes(
+    inspector: ProcessInspector, identities: Sequence[ProcessIdentity]
+) -> List[ProcessIdentity]:
+    alive: List[ProcessIdentity] = []
+    for identity in identities:
+        if inspector.is_exact(identity):
+            alive.append(identity)
+        elif inspector.is_alive(identity):
+            raise ProcessIdentityError("managed Codex process image changed")
+    return alive
+
+
+def _wait_exact_group_exit(
+    inspector: ProcessInspector,
+    group: Sequence[ProcessIdentity],
+    mutation_guard: Any,
+) -> None:
+    exit_deadline = time.monotonic() + MANAGED_DAEMON_EXIT_TIMEOUT_SECONDS
+    while True:
+        alive = _exact_alive_processes(inspector, group)
+        if not alive:
+            break
+        if time.monotonic() >= exit_deadline:
+            raise ManagedDaemonStopError("managed-daemon-exit-timeout")
+        mutation_guard()
+        time.sleep(
+            min(
+                WAIT_POLL_SECONDS,
+                max(0.0, exit_deadline - time.monotonic()),
+            )
+        )
+    mutation_guard()
+
+
+def _bootstrap_and_stop_bound_codex_daemon(action: Mapping[str, Any]) -> None:
+    daemon: ProcessIdentity = action["daemon"]
+    home: Path = action["home"]
+    result = _run_bound_codex_daemon_control(
+        daemon.executable_path,
+        daemon.executable_file_id,
+        home,
+        "bootstrap",
+        bootstrap_features=action["bootstrap_features"],
+    )
+    if result.returncode != 0:
+        raise ManagedDaemonStopError("legacy-daemon-transition-failed")
+    observed = _probe_bound_codex_daemon(
+        daemon.executable_path, daemon.executable_file_id, home
+    )
+    if observed[0] == "legacy-ephemeral":
+        raise ManagedDaemonStopError("legacy-daemon-transition-failed")
+    result = _run_bound_codex_daemon_control(
+        daemon.executable_path, daemon.executable_file_id, home, "stop"
+    )
+    if result.returncode != 0:
+        raise ManagedDaemonStopError("legacy-daemon-transition-failed")
+    deadline = time.monotonic() + MANAGED_DAEMON_EXIT_TIMEOUT_SECONDS
+    while True:
+        status = _read_bound_codex_daemon_status(
+            daemon.executable_path, daemon.executable_file_id, home
+        )
+        if status.get("status") != "running":
+            break
+        if time.monotonic() >= deadline:
+            raise ManagedDaemonStopError("legacy-daemon-transition-failed")
+        time.sleep(
+            min(WAIT_POLL_SECONDS, max(0.0, deadline - time.monotonic()))
+        )
+
+
+def _wait_for_relaunch_quiescence(relaunch_detected: Any) -> None:
+    """Allow reviewed native stop to finish, but reject a persistent relaunch."""
+
+    deadline = time.monotonic() + MANAGED_DAEMON_EXIT_TIMEOUT_SECONDS
+    while relaunch_detected():
+        now = time.monotonic()
+        if now >= deadline:
+            raise DeferredTargetRace("a matching process relaunched")
+        time.sleep(
+            min(
+                QUIESCENCE_POLL_SECONDS,
+                max(0.0, deadline - now),
+            )
+        )
+
+
+def _stop_managed_codex_daemons(
+    inspector: ProcessInspector,
+    actions: Sequence[Mapping[str, Any]],
+    mutation_guard: Any,
+) -> None:
+    for action in actions:
+        daemon: ProcessIdentity = action["daemon"]
+        members: List[ProcessIdentity] = list(action["members"])
+        group = [daemon] + members
+        alive = _exact_alive_processes(inspector, group)
+        if not alive:
+            continue
+        if daemon not in alive:
+            raise ManagedDaemonStopError("managed-daemon-stop-failed")
+        observed_versions = _probe_managed_codex_daemon(
+            inspector, daemon, action["home"]
+        )
+        if observed_versions != (
+            action["backend"],
+            action["cli_version"],
+            action["app_server_version"],
+        ):
+            raise ManagedDaemonStopError("managed-daemon-stop-failed")
+        mutation_guard()
+        if action["backend"] == "legacy-ephemeral":
+            # A legacy app-server can keep its SIGTERM handler pending while an
+            # owned host helper is still active. Retire only the exact bound
+            # helpers first, then retire the exact daemon incarnation. Every
+            # signal remains pidfd-bound and graceful; an unbound or changed
+            # process is never touched.
+            try:
+                alive_members = _exact_alive_processes(inspector, members)
+                for member in alive_members:
+                    inspector.terminate_exact_gracefully(member)
+            except ProcessIdentityError as error:
+                raise ManagedDaemonStopError(
+                    "legacy-daemon-transition-failed"
+                ) from error
+            _wait_exact_group_exit(inspector, members, mutation_guard)
+            try:
+                alive_daemons = _exact_alive_processes(inspector, [daemon])
+                if alive_daemons:
+                    inspector.terminate_exact_gracefully(daemon)
+            except ProcessIdentityError as error:
+                raise ManagedDaemonStopError(
+                    "legacy-daemon-transition-failed"
+                ) from error
+            _wait_exact_group_exit(inspector, [daemon], mutation_guard)
+            _bootstrap_and_stop_bound_codex_daemon(action)
+            continue
+        result = _run_codex_daemon_control(
+            inspector, daemon, action["home"], "stop"
+        )
+        if result.returncode != 0:
+            raise ManagedDaemonStopError("managed-daemon-stop-failed")
+        mutation_guard()
+        exit_deadline = time.monotonic() + MANAGED_DAEMON_EXIT_TIMEOUT_SECONDS
+        while True:
+            alive = _exact_alive_processes(inspector, group)
+            if not alive:
+                break
+            if time.monotonic() >= exit_deadline:
+                raise ManagedDaemonStopError("managed-daemon-exit-timeout")
+            mutation_guard()
+            time.sleep(
+                min(
+                    WAIT_POLL_SECONDS,
+                    max(0.0, exit_deadline - time.monotonic()),
+                )
+            )
+        mutation_guard()
+
+
 def _run_deferred_install_once(request_path: Path, request_digest: str) -> Dict[str, Any]:
     """Run one detached job; normal errors become categorical private receipts."""
 
@@ -987,6 +1647,7 @@ def _run_deferred_install_once(request_path: Path, request_digest: str) -> Dict[
     plan_digest = str(request["plan_sha256"])
     targets: List[ProcessIdentity] = request["_targets"]
     peers: List[ProcessIdentity] = request["_peers"]
+    managed_daemons: List[Dict[str, Any]] = request["_managed_daemons"]
     wait_seconds = int(request["wait_seconds"])
     started_at = _utc_now()
     claim = {
@@ -1010,6 +1671,25 @@ def _run_deferred_install_once(request_path: Path, request_digest: str) -> Dict[
         raise DeferredInstallError(
             "reviewed target exited or changed before worker readiness"
         )
+    inspector.bind_reviewed_pid_namespaces(targets)
+    daemon_owned_pids = _bind_managed_codex_daemons(
+        plan, targets, managed_daemons
+    )
+    passive_targets = [
+        item for item in targets if item.pid not in daemon_owned_pids
+    ]
+    for action in managed_daemons:
+        observed_versions = _probe_managed_codex_daemon(
+            inspector, action["daemon"], action["home"]
+        )
+        if observed_versions != (
+            action["backend"],
+            action["cli_version"],
+            action["app_server_version"],
+        ):
+            raise DeferredInstallError(
+                "managed Codex daemon changed before worker readiness"
+            )
     worker_identity = inspector.capture(os.getpid())
     ready = {
         "schema_version": DEFERRED_SCHEMA_VERSION,
@@ -1057,7 +1737,7 @@ def _run_deferred_install_once(request_path: Path, request_digest: str) -> Dict[
 
     while True:
         try:
-            targets_alive = any(inspector.is_alive(item) for item in targets)
+            targets_alive = any(inspector.is_alive(item) for item in passive_targets)
         except ProcessIdentityError:
             return finish_before_apply(
                 "failed-unapplied", "waiting", "process-inspection-failed"
@@ -1074,10 +1754,60 @@ def _run_deferred_install_once(request_path: Path, request_digest: str) -> Dict[
             last_heartbeat = now
         time.sleep(min(WAIT_POLL_SECONDS, max(0.0, deadline - now)))
 
-    _publish_state(paths, _state_value(job_id, "armed", "quiescing", len(targets)))
-    quiescence_deadline = min(deadline, time.monotonic() + QUIESCENCE_SECONDS)
-    while time.monotonic() < quiescence_deadline:
+    if managed_daemons:
         if cancelled():
+            return finish_before_apply("cancelled", "waiting", "cancelled")
+        if time.monotonic() >= deadline:
+            return finish_before_apply("expired", "waiting", "wait-timeout")
+        try:
+            mutation_guard()
+        except ProcessIdentityError:
+            return finish_before_apply(
+                "failed-unapplied", "waiting", "process-inspection-failed"
+            )
+        except DeferredTargetRace:
+            return finish_before_apply(
+                "target-race", "waiting", "target-relaunched"
+            )
+
+        # Cancellation and the user-wait deadline freeze before host-native
+        # shutdown begins. A late cancel cannot leave a stopped host without
+        # completing the already reviewed install transaction.
+        stopping_phase = "stopping-managed-daemons"
+        _publish_state(
+            paths,
+            _state_value(job_id, "armed", stopping_phase, len(targets)),
+        )
+        try:
+            _stop_managed_codex_daemons(
+                inspector, managed_daemons, mutation_guard
+            )
+            _wait_for_relaunch_quiescence(relaunch_detected)
+        except ProcessIdentityError:
+            return finish_before_apply(
+                "failed-unapplied", stopping_phase, "process-inspection-failed"
+            )
+        except DeferredTargetRace:
+            return finish_before_apply(
+                "target-race", stopping_phase, "target-relaunched"
+            )
+        except ManagedDaemonStopError as error:
+            return finish_before_apply(
+                "failed-unapplied", stopping_phase, error.failure_code
+            )
+        except DeferredInstallError:
+            return finish_before_apply(
+                "failed-unapplied", stopping_phase, "managed-daemon-stop-failed"
+            )
+
+    _publish_state(paths, _state_value(job_id, "armed", "quiescing", len(targets)))
+    quiescence_deadline = (
+        time.monotonic() + QUIESCENCE_SECONDS
+        if managed_daemons
+        else min(deadline, time.monotonic() + QUIESCENCE_SECONDS)
+    )
+    while time.monotonic() < quiescence_deadline:
+        if not managed_daemons and cancelled():
             return finish_before_apply("cancelled", "quiescing", "cancelled")
         try:
             relaunched = relaunch_detected()
@@ -1095,16 +1825,16 @@ def _run_deferred_install_once(request_path: Path, request_digest: str) -> Dict[
                 max(0.0, quiescence_deadline - time.monotonic()),
             )
         )
-    if time.monotonic() >= deadline:
+    if not managed_daemons and time.monotonic() >= deadline:
         return finish_before_apply("expired", "quiescing", "wait-timeout")
 
-    # Cancellation and expiry freeze at this boundary.  Once applying is
-    # published, the transactional mutation guard retains only process and
-    # relaunch safety; a late cancel/timeout cannot interrupt the transaction.
-    if cancelled():
-        return finish_before_apply("cancelled", "quiescing", "cancelled")
-    if time.monotonic() >= deadline:
-        return finish_before_apply("expired", "quiescing", "wait-timeout")
+    # Without a managed daemon, cancellation and expiry freeze here as before.
+    # With one, they froze immediately before the reviewed native stop.
+    if not managed_daemons:
+        if cancelled():
+            return finish_before_apply("cancelled", "quiescing", "cancelled")
+        if time.monotonic() >= deadline:
+            return finish_before_apply("expired", "quiescing", "wait-timeout")
     try:
         mutation_guard()
     except ProcessIdentityError:
@@ -1289,11 +2019,23 @@ def run_deferred_install(request_path: Path, request_digest: str) -> Dict[str, A
         return _recover_post_ready_failure(request_path, request_digest)
 
 
-def _validated_job(journal: Path, plan_digest: str, job_id: str) -> Tuple[Any, Dict[str, Path], Dict[str, Any]]:
+def _validated_job(
+    journal: Path,
+    plan_digest: str,
+    job_id: str,
+    *,
+    allow_historical_observation: bool = False,
+) -> Tuple[Any, Dict[str, Path], Dict[str, Any]]:
     journal = _assert_safe_absolute(Path(journal), "transaction journal")
-    plan = _load_reviewed_plan(journal, _valid_digest(plan_digest))
+    plan = _load_reviewed_plan(
+        journal,
+        _valid_digest(plan_digest),
+        allow_historical_observation=allow_historical_observation,
+    )
     paths = _job_paths(journal, _valid_job_id(job_id))
-    request = _read_object(paths["request"], MAX_REQUEST_BYTES)
+    request = _validated_request(
+        _read_object(paths["request"], MAX_REQUEST_BYTES), paths["request"]
+    )
     if request.get("job_id") != job_id or request.get("plan_sha256") != plan_digest:
         raise DeferredInstallError("deferred request differs from active-job binding")
     if paths["active"].exists():
@@ -1312,7 +2054,7 @@ def _read_no_mutation_receipt_after_device_identity_change(
 ) -> Dict[str, Any]:
     """Read one exact failure receipt without authorizing transaction reuse."""
 
-    from . import installer
+    from . import RECORDER_VERSION, installer
 
     journal = _assert_safe_absolute(Path(journal), "transaction journal")
     plan_digest = _valid_digest(plan_digest)
@@ -1331,7 +2073,17 @@ def _read_no_mutation_receipt_after_device_identity_change(
         or journal_value.get("status") != "planned"
     ):
         raise DeferredInstallError("transaction journal cannot support receipt recovery")
-    installer._validate_journal_bindings(journal_value)
+    recorder_version = journal_value.get("recorder_version")
+    if not isinstance(recorder_version, str) or (
+        recorder_version != RECORDER_VERSION
+        and recorder_version not in _HISTORICAL_DEFERRED_OBSERVATION_VERSIONS
+    ):
+        raise DeferredInstallError(
+            "transaction journal recorder version is not observable"
+        )
+    installer._validate_journal_bindings(
+        journal_value, expected_recorder_version=recorder_version
+    )
 
     expected_identity = journal_value.get("transaction_identity")
     current_identity = installer._directory_identity(
@@ -1401,6 +2153,7 @@ def _read_no_mutation_receipt_after_device_identity_change(
         status=str(value["status"]),
         target_count=target_count,
         wait_seconds=wait_seconds,
+        managed_daemon_count=len(request["_managed_daemons"]),
         phase=str(value["phase"]),
         receipt_raw=raw,
         terminal=value,
@@ -1413,7 +2166,12 @@ def read_deferred_install_status(
     from .installer import InstallerTransactionIdentityConflict
 
     try:
-        _plan, paths, request = _validated_job(journal, plan_digest, job_id)
+        _plan, paths, request = _validated_job(
+            journal,
+            plan_digest,
+            job_id,
+            allow_historical_observation=True,
+        )
     except InstallerTransactionIdentityConflict:
         # security-assumptions.md keeps every mutation fail-closed.  This
         # device-only recovery reads one exact non-success/no-mutation receipt;
@@ -1435,6 +2193,7 @@ def read_deferred_install_status(
             status=str(value.get("status")),
             target_count=target_count,
             wait_seconds=wait_seconds,
+            managed_daemon_count=len(request["_managed_daemons"]),
             phase=str(value.get("phase")),
             receipt_raw=raw,
             terminal=value,
@@ -1460,6 +2219,7 @@ def read_deferred_install_status(
         status=status_value,
         target_count=target_count,
         wait_seconds=wait_seconds,
+        managed_daemon_count=len(request["_managed_daemons"]),
         phase=phase,
     )
 
@@ -1467,7 +2227,12 @@ def read_deferred_install_status(
 def cancel_deferred_install(
     journal: Path, plan_digest: str, job_id: str
 ) -> Dict[str, Any]:
-    _plan, paths, request = _validated_job(journal, plan_digest, job_id)
+    _plan, paths, request = _validated_job(
+        journal,
+        plan_digest,
+        job_id,
+        allow_historical_observation=True,
+    )
     if paths["receipt"].exists():
         return read_deferred_install_status(journal, plan_digest, job_id)
     marker = {
@@ -1486,6 +2251,7 @@ def cancel_deferred_install(
         status="cancel-requested",
         target_count=len(request.get("target_processes", [])),
         wait_seconds=int(request.get("wait_seconds", DEFAULT_WAIT_SECONDS)),
+        managed_daemon_count=len(request["_managed_daemons"]),
         phase="cancelling",
     )
 

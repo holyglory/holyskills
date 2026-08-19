@@ -62,6 +62,8 @@ TOOLING_SECTIONS = [
 VISUAL_SECTIONS = [
     "run id",
     "worker",
+    "mockup and asset inventory",
+    "visual tooling",
     "journey decision model",
     "rendered journey usability",
     "visual comparison checks",
@@ -866,7 +868,13 @@ def verify_effort_ledger(manifest_path: Path, manifest: dict) -> list[dict]:
             if not row.get("runtime_provenance"):
                 issues.append({"path": str(ledger_path), "batch_id": batch["id"], "field": "runtime_provenance", "expected": "non-empty string", "actual": row.get("runtime_provenance")})
     if manifest.get("ui_implementation_audit", {}).get("visual_required"):
-        for key in ("mockup_asset_worker", "visual_tooling_worker", "visual_comparison_worker"):
+        audit = manifest["ui_implementation_audit"]
+        expected_worker_keys = ["visual_comparison_worker"]
+        if audit.get("mockup_asset_prompt"):
+            expected_worker_keys.append("mockup_asset_worker")
+        if audit.get("visual_tooling_prompt"):
+            expected_worker_keys.append("visual_tooling_worker")
+        for key in expected_worker_keys:
             row = ledger.get(key, {})
             if not isinstance(row, dict) or row.get("status") not in {"completed", "manual-fallback-completed"}:
                 issues.append({"path": str(ledger_path), "field": f"{key}.status", "actual": row.get("status") if isinstance(row, dict) else None})
@@ -924,11 +932,12 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
 
     all_source_files = set(manifest["_source_hashes"])
     if manifest.get("ui_implementation_audit", {}).get("visual_required"):
-        expected_aux = [
-            ("mockup_asset_audit.md", MOCKUP_SECTIONS, "mockup_asset_audit"),
-            ("visual_tooling_audit.md", TOOLING_SECTIONS, "visual_tooling_audit"),
-            ("visual_comparison_audit.md", VISUAL_SECTIONS, "visual_comparison_audit"),
-        ]
+        audit = manifest["ui_implementation_audit"]
+        expected_aux = [("visual_comparison_audit.md", VISUAL_SECTIONS, "visual_comparison_audit")]
+        if audit.get("mockup_asset_prompt"):
+            expected_aux.append(("mockup_asset_audit.md", MOCKUP_SECTIONS, "mockup_asset_audit"))
+        if audit.get("visual_tooling_prompt"):
+            expected_aux.append(("visual_tooling_audit.md", TOOLING_SECTIONS, "visual_tooling_audit"))
         for filename, sections, worker in expected_aux:
             report = reports_by_name.get(filename)
             if not report:

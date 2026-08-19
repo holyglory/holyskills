@@ -3,20 +3,26 @@
 Direction: Confirmed: user decisions favor concise rationale that preserves project direction,
 complete truthful end-to-end behavior, informed choices, outcome-aware efficiency measurement that
 cannot reward reduced scope or verification,
-production-grade foundations, canonical ownership, scoped persistent memory for user-indicated
+production-grade foundations, canonical ownership, persistent account- and repository-attributed
+efficiency evidence with explicit phase attribution and optional bounded Coordinator projection,
+mutually trusted VPS workspaces with equal exact-path repository access while account-local
+telemetry remains separate,
+scoped persistent memory for user-indicated
 mistakes, realistic verification, audits that begin only
 after their target implementation exists, explicit user activation for exhaustive repository and
 implemented-UI audits, complete diagnostic passes before batch repair,
-unacceptable under-engineering and proportional approval questions only for material expansions
-where an unresolved answer could cause rework or over-engineering, security controls grounded in
+unacceptable under-engineering, every planned addition outside the evidence-backed agreed scope
+requiring prior approval even when small, proportional questions for materially distinct in-scope
+choices, reader-first active completion ledgers, and security controls grounded in
 user-confirmed project assumptions without reopening a settled baseline for routine reviewed tool use,
 relevant bounded agent context, proportionate runtime effort, software-owned concurrent activation
-proof with opaque per-target attribution, one-shot installer handoff instead of user-operated shell
-choreography, and interfaces whose visible hierarchy matches the task and promised content and whose
+proof with opaque per-target attribution, and a proxy-aware one-shot installer handoff with exact
+native managed-daemon control instead of user-operated shell choreography or raw process killing,
+and interfaces whose visible hierarchy matches the task and promised content and whose
 enabled controls and requested journeys are proven through rendered interactions, with concise
 self-explanatory headings and labels instead of redundant default descriptions, and autonomous
 in-scope browser QA and local runtime coordination without repeat authorization prompts
-(D-20260805-02, D-20260805-01, D-20260804-01, D-20260802-02, D-20260802-01, D-20260801-03, D-20260801-02, D-20260801-01,
+(D-20260819-01, D-20260815-01, D-20260812-01, D-20260809-01, D-20260805-02, D-20260805-01, D-20260804-01, D-20260802-02, D-20260802-01, D-20260801-03, D-20260801-02, D-20260801-01,
 D-20260714-03, D-20260713-03,
 D-20260713-04, D-20260714-04, D-20260720-01, D-20260731-01, D-20260731-02,
 D-20260729-01,
@@ -25,6 +31,79 @@ D-20260710-05). Inferred: repeated choices indicate a taste for compact low-nois
 stable ordering and grouping, visible exceptions, contextual actions, and durable state rather than
 volatile cleverness (D-20260707-01, D-20260707-02, D-20260707-07, D-20260707-08); apply these
 patterns by default while treating them as inference when a new context materially differs.
+
+## [D-20260819-01 — Complete agreed scope does not authorize invented scope](DecisionDetails/D-20260819-01.md)
+
+Decision: Implement every agreed detail end to end or keep its exact gap active in a
+reader-first `CompletionLedger.md`. Before implementing any agent-proposed addition outside the
+request, acceptance criteria, recorded decisions, user-confirmed assumptions, current-system
+evidence, or minimum end-to-end implementation, obtain explicit user approval regardless of the
+addition's size. Materiality controls whether an in-scope choice needs a question and how much
+decision detail to present; it does not authorize extra behavior.
+
+Why: Options: selected approval for every planned out-of-scope addition plus proportional questions
+and plain-language incomplete-work reporting over a material-only approval gate, an interview for
+every optional idea merely noticed, silent precautionary work, or fast placeholders and invented UI
+values. This preserves complete production-grade delivery without letting imagined edge cases become
+scope or making the user decode implementation jargon. Prior attempts: the every-potential rule
+caused broad irrelevant interviews, while its material-only replacement let agents silently add
+smaller recovery, preservation, encryption, and related behavior. Intent: complete exactly the
+agreed result without either shortcuts or unapproved additions, and make every open gap understandable
+before its technical detail. This supersedes only D-20260801-03's engineering-expansion authorization
+threshold; its materiality rule for in-scope choices, unresolved security assumptions, and routine
+scope-preserving tool use remains in force. Revisit only if: the user chooses another durable
+scope-approval threshold or a reliable evidence-based boundary proves too narrow for necessary work.
+
+## [D-20260815-01 — VPS development accounts share repository access](DecisionDetails/D-20260815-01.md)
+
+Decision: Treat `holyglory`, `holygloryTT`, `slawa`, and `axel` as mutually
+trusted workspaces of one operator for repositories under `/home`. Give each
+account immediate inherited ACL access to every repository-associated marker
+root; use a shared group for future sessions and exact per-account Git
+safe-directory entries only for Git-validated working trees, linked worktrees,
+metadata directories, and bare repositories. Keep unrelated home data and
+account-local telemetry separate.
+
+Why: Options: selected exact repository ACLs, a shared group, and exact Git
+trust over whole-home sharing, a global Git trust wildcard, ownership changes,
+or account-by-account exceptions. This provides equal immediate and inherited
+access without requiring a new login, changing repository owners, trusting
+unrelated paths, or combining recorder stores. Prior attempts: ad-hoc ACLs and
+a few safe-directory entries caused access to work only for selected
+account/repository pairs while Git owner checks blocked the rest.
+Intent: every user-owned VPS workspace can work in any repository without
+making unrelated home data or telemetry account-global. Revisit only if: the
+server gains another human operator, an untrusted account, or repositories
+outside the confirmed `/home` boundary.
+
+## [D-20260812-01 — Efficiency evidence is persistent, phase-attributed, and optionally projected](DecisionDetails/D-20260812-01.md)
+
+Decision: Treat verified target-bound history, not an expiring watch, as persistent activation state. Bind tasks to installation-local repository identity with private readable labels, attribute exact task-local provider counters through balanced phases, provide standalone task/repository reports, and publish an opaque cumulative snapshot only when a local Coordinator advertises the compatible capability.
+
+Why: Options: selected persistent verified history, exact local task correlation, readable standalone reports, and optional replaceable projection over rejected expiring watches, estimated phase allocation, opaque-only local output, or a centralized raw-event store. Prior attempts: expiry obscured healthy state, exported counters and declarations split across tasks, opaque IDs were unusable without Coordinator, and central raw history would duplicate an indefinitely growing ledger. Intent: preserve exact private account/repository attribution and useful native counters without paths or content. Revisit only if: the runtime exposes stronger exact counters, privacy requirements change, or Coordinator ceases to be optional.
+
+## [D-20260809-01 — Remote Codex handoff owns the persistent app-server boundary](DecisionDetails/D-20260809-01.md)
+
+Decision: For a remote Codex client backed by a persistent same-user app-server,
+bind clients, daemon, helpers, executable, home, versions, backend, and required
+features separately. Use native daemon stop only with a reported backend. For a
+Linux legacy remote server, allow one exact pidfd-bound graceful transition to
+Codex's managed backend, then stop natively before apply. Never use user-run
+SSH/Terminal, a bare-PID signal, `SIGKILL`, or a historical mutation plan.
+
+Why: Quitting the macOS client ended its proxy but left the VPS app-server/helper alive, so passive
+all-process waiting could never finish. Options: selected identity-fenced
+legacy migration with native stop over passive waiting, user-operated shell
+work, live mutation, or a privileged installer because it preserves the
+zero-Terminal journey and exact same-user control without added privilege.
+Prior attempts: passive waiting failed because it treated the durable server as
+a client; native control failed because it lacked the fixed path Codex needs
+for `ps`; and backend proof failed because a responsive legacy socket was
+mistaken for a managed backend. Intent:
+lifecycle plumbing stays agent-owned, required remote capabilities are
+preserved explicitly, and host trust stays user-owned.
+Revisit only if: Codex exposes a safer lifecycle with equivalent identity,
+feature, rollback, and receipt binding.
 
 ## [D-20260805-02 — In-scope browser QA and runtime coordination have standing permission](DecisionDetails/D-20260805-02.md)
 

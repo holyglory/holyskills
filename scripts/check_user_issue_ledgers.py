@@ -190,9 +190,20 @@ def find_ledger_violations(text: str) -> list[str]:
     return inspect_ledger(text)[0]
 
 
+def _project_anchor(path: Path) -> Path | None:
+    absolute = Path.cwd() / path if not path.is_absolute() else path
+    try:
+        Path(os.path.abspath(absolute)).relative_to(Path(os.path.abspath(ROOT)))
+    except ValueError:
+        return None
+    return ROOT
+
+
 def _probe_root(root: Path) -> str | None:
     try:
-        secure_reader.read_text_nofollow(root / ".user-issue-ledger-probe")
+        secure_reader.read_text_nofollow(
+            root / ".user-issue-ledger-probe", anchor=_project_anchor(root)
+        )
     except (OSError, secure_reader.LedgerError) as exc:
         return str(exc)
     return None
@@ -276,7 +287,9 @@ def scan_ledgers(root: Path) -> tuple[list[str], int]:
                     "business-logic perspective"
                 )
             try:
-                text = secure_reader.read_text_nofollow(path)
+                text = secure_reader.read_text_nofollow(
+                    path, anchor=_project_anchor(root)
+                )
             except (OSError, secure_reader.LedgerError) as exc:
                 violations.append(f"{relative}: {exc}")
                 continue

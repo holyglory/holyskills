@@ -63,7 +63,7 @@ class InstallerTestCase(unittest.TestCase):
             encoding="utf-8",
         )
         (package / "__init__.py").write_text(
-            "RECORDER_VERSION = '0.2.4'\nSCHEMA_VERSION = '1.2'\nADAPTER_VERSION = '0.2.3'\n",
+            "RECORDER_VERSION = '0.2.9'\nSCHEMA_VERSION = '1.2'\nADAPTER_VERSION = '0.2.4'\n",
             encoding="utf-8",
         )
         (package / "cli.py").write_text("def main(): return 0\n", encoding="utf-8")
@@ -93,7 +93,7 @@ class InstallerTestCase(unittest.TestCase):
             process.communicate(timeout=2)
 
     def test_current_source_uses_unused_immutable_version(self) -> None:
-        self.assertEqual(installer.RECORDER_VERSION, "0.2.4")
+        self.assertEqual(installer.RECORDER_VERSION, "0.2.9")
         occupied = self.state / "installs" / "0.1.2"
         (occupied / "delivery_efficiency").mkdir(parents=True)
         (occupied / "contract").mkdir()
@@ -105,8 +105,41 @@ class InstallerTestCase(unittest.TestCase):
             "{}\n", encoding="utf-8"
         )
         plan = self._plan()
-        self.assertEqual(Path(plan.journal["target"]["install_root"]).name, "0.2.4")
+        self.assertEqual(Path(plan.journal["target"]["install_root"]).name, "0.2.9")
         self.assertEqual((occupied / "recorder.py").read_text(), "old immutable payload\n")
+
+    def test_historical_deferred_observation_never_authorizes_apply(self) -> None:
+        with mock.patch.object(installer, "RECORDER_VERSION", "0.2.4"):
+            historical = self._plan()
+        with self.assertRaisesRegex(
+            installer.InstallerConflict, "recorder version"
+        ):
+            installer.load_plan(historical.journal_path, historical.plan_digest)
+
+        observed = installer.load_plan_for_deferred_observation(
+            historical.journal_path,
+            historical.plan_digest,
+            {"0.2.4"},
+        )
+        self.assertEqual(observed.journal["recorder_version"], "0.2.4")
+        with self.assertRaisesRegex(
+            installer.InstallerConflict, "recorder version"
+        ):
+            installer._validate_journal_bindings(
+                observed.journal, expected_recorder_version=""
+            )
+        with self.assertRaisesRegex(
+            installer.InstallerConflict, "recorder version"
+        ):
+            installer.apply_install(observed, plan_digest=historical.plan_digest)
+        with self.assertRaisesRegex(
+            installer.InstallerConflict, "not observable"
+        ):
+            installer.load_plan_for_deferred_observation(
+                historical.journal_path,
+                historical.plan_digest,
+                {"0.2.3"},
+            )
 
     def test_runtime_target_refs_are_stable_distinct_and_path_hiding(self) -> None:
         token = "a" * 64
@@ -3203,14 +3236,14 @@ class InstallerTestCase(unittest.TestCase):
         self.assertNotEqual(path_failure.returncode, 0)
         self.assertIn("outside the versioned state location", path_failure.stderr)
 
-        next_install = self.state / "installs" / "0.2.5"
+        next_install = self.state / "installs" / "0.2.10"
         next_install.mkdir(parents=True)
         (next_install / "recorder.py").write_text(
             "import os\nprint(os.environ.get('HOLYSKILLS_DELIVERY_EFFICIENCY_STATE_DIR', 'missing'))\n",
             encoding="utf-8",
         )
         next_settings = json.loads(original_settings)
-        next_settings["recorder_version"] = "0.2.5"
+        next_settings["recorder_version"] = "0.2.10"
         next_settings["install_root"] = str(next_install)
         settings_path.write_text(json.dumps(next_settings), encoding="utf-8")
         next_execution = subprocess.run(
@@ -3226,14 +3259,14 @@ class InstallerTestCase(unittest.TestCase):
         self.assertEqual(next_execution.stdout, str(self.state) + "\n")
         self.assertEqual(launcher.read_bytes(), installer.stable_launcher_bytes())
 
-        linked_install = self.state / "installs" / "0.2.6"
+        linked_install = self.state / "installs" / "0.2.11"
         try:
             linked_install.symlink_to(next_install, target_is_directory=True)
         except (OSError, NotImplementedError):
             pass
         else:
             linked_settings = json.loads(original_settings)
-            linked_settings["recorder_version"] = "0.2.6"
+            linked_settings["recorder_version"] = "0.2.11"
             linked_settings["install_root"] = str(linked_install)
             settings_path.write_text(json.dumps(linked_settings), encoding="utf-8")
             linked_failure = subprocess.run(
@@ -3339,7 +3372,7 @@ class ClaudeHomeInstallerTests(unittest.TestCase):
         contract.mkdir()
         (self.source / "recorder.py").write_text("print('runtime')\n", encoding="utf-8")
         (package / "__init__.py").write_text(
-            "RECORDER_VERSION = '0.2.4'\nSCHEMA_VERSION = '1.2'\nADAPTER_VERSION = '0.2.3'\n",
+            "RECORDER_VERSION = '0.2.9'\nSCHEMA_VERSION = '1.2'\nADAPTER_VERSION = '0.2.4'\n",
             encoding="utf-8",
         )
         (contract / "adapter-event-v1.schema.json").write_text("{}\n", encoding="utf-8")
@@ -3638,11 +3671,11 @@ class ClaudeHomeInstallerTests(unittest.TestCase):
         }
         source_version = self.source / "delivery_efficiency" / "__init__.py"
         source_version.write_text(
-            "RECORDER_VERSION = '0.2.5'\nSCHEMA_VERSION = '1.2'\nADAPTER_VERSION = '0.2.3'\n",
+            "RECORDER_VERSION = '0.2.10'\nSCHEMA_VERSION = '1.2'\nADAPTER_VERSION = '0.2.4'\n",
             encoding="utf-8",
         )
 
-        with mock.patch.object(installer, "RECORDER_VERSION", "0.2.5"):
+        with mock.patch.object(installer, "RECORDER_VERSION", "0.2.10"):
             upgrade = self._plan(codex_homes={"codex-main": self.codex_home})
             self.assertEqual(upgrade.auth_token, first.auth_token)
             self.assertEqual(upgrade.journal["receiver"]["listen_port"], 4364)

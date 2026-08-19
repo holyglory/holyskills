@@ -43,6 +43,31 @@ settings editor.
 - Never persist prompts, responses, commands, tool payloads, credentials, or
   other content in installation evidence.
 
+## Route by requested mode
+
+Choose the narrowest workflow before doing prerequisite or target discovery:
+
+- **Verify or troubleshoot:** use read-only status and existing-journal
+  inspection first. Run `<python> <state>/recorder.py status --state-dir
+  <state>` when the installed launcher is known; use the existing journal's
+  read-only verifier from the recovery section only when status cannot settle
+  the question and the reviewed journal and digest are already available, and
+  use `install deferred-status` only
+  for an existing deferred job. Inspect repository coverage only when the
+  symptom requires it. Do not create a plan, private transaction, credential,
+  target mutation, or prerequisite installation merely to verify status.
+- **Activate an existing verified installation:** inspect status and the
+  existing journal first, then perform only the host trust/reload and fresh-task
+  proof described below. Do not create a plan unless inspection proves repair
+  is required and repair is within the user's request.
+- **Install, upgrade, repair, rotate, or retire:** use the complete mutating
+  workflow below, retaining all managed targets unless the user explicitly
+  retires one. Credential rotation and retirement remain explicit-only.
+
+Stop after the selected mode's success criterion. A read-only invocation that
+finds a needed mutation reports the exact next action; it does not silently
+cross into the mutating workflow.
+
 ## 1. Inventory the requested runtimes
 
 1. Identify the host environment as macOS, Linux, native Windows, or WSL.
@@ -159,16 +184,56 @@ recorder-only upgrade must render the same host configuration, leave those
 actions unchanged, and require neither a host restart nor renewed hook trust.
 Credential changes and upgrades from a pre-`0.1.2` recorder retain the reviewed
 port-rotation behavior.
+Recorder `0.2.9` includes the reviewed Codex app-server handoff for remote
+desktop clients whose transient connection exits while their same-user daemon
+remains alive and supplies native lifecycle helpers only a fixed platform
+system search path, never the caller's `PATH`. Existing `0.2.4` through `0.2.6`
+deferred jobs remain available to status and cancel observation after this
+upgrade, but a historical plan can never pass
+the current installer mutation gate.
 
 ## 4. Arm the agent-owned deferred install
 
 The agent owns target-process discovery. From the changed runtime actions,
-identify every live same-user Codex or Claude process that must exit, including
-background helpers. Use the privacy-bounded inventory method from step 1 and
-pass each exact live PID once; never ask the user to find a PID, inspect a
-process list, open Terminal, or copy a command. Do not persist a full command
-line or environment. Platform-specific process identity and detached-worker
-behavior are defined in
+identify every live same-user Codex or Claude process that must exit. Classify
+each exact process before arming:
+
+- A passive target is a host, client, proxy, or ordinary helper that exits when
+  the user closes the affected runtime. The worker only waits for it.
+- A Codex daemon group has one persistent app-server daemon, one or more
+  transient clients or proxies that must exit first, and zero or more exact host
+  helpers proven to own host-loaded state and to exit with the daemon. Do not
+  classify a per-task MCP server, tool worker, or other naturally churning
+  child as a daemon member merely because its owner or parent matches; confirm
+  its lifecycle and relevance to the settings being replaced. A volatile task
+  helper remains outside the target and relaunch inventory unless its own
+  host-loaded state actually changes. Every selected group member is also a
+  `--target-pid`; additionally bind the daemon with
+  `--managed-codex-daemon <target>=<pid>`, each transient connection with
+  `--managed-codex-client <target>=<pid>`, and each owned helper with
+  `--managed-codex-member <target>=<pid>`.
+
+For every Codex daemon group, invoke the captured executable's
+`app-server daemon version` with that reviewed target's exact `CODEX_HOME` and
+verify a running daemon, executable identity, both reported versions, and the
+reported lifecycle backend before arming. A nonempty backend selects native
+daemon stop. A running response without `backend` is legacy/ephemeral, never
+managed-control proof. On Linux only, it may select the reviewed migration
+bridge when pidfd-bound graceful termination is available and every required
+bootstrap feature is explicit. Bind each feature with
+`--managed-codex-bootstrap-feature <target>=<feature>`; for the macOS remote
+workflow this includes `code_mode_host`. The recorder repeats and privately
+binds every proof. Do not infer a daemon or feature from a name or parent alone.
+If topology, home, executable, lifecycle mode, migration support, required
+features, or at least one transient client cannot be proven, fail before
+asking the user to close anything. Never redirect the user to SSH or a server
+Terminal, signal a bare PID, use `SIGKILL`, or publish a manual kill/stop
+fallback.
+
+Use the privacy-bounded inventory method from step 1 and pass each exact live
+PID once; never ask the user to find a PID, inspect a process list, open
+Terminal, or copy a command. Do not persist a full command line or environment.
+Platform-specific process identity and detached-worker behavior are defined in
 [platform-prerequisites.md](references/platform-prerequisites.md).
 
 Stop submitting new work to the affected runtimes and leave the old receiver
@@ -182,6 +247,10 @@ approves the reviewed plan, the agent runs the canonical recorder itself:
   --plan-digest <plan_sha256>
   --target-pid <exact-live-pid>
   [--target-pid <another-exact-live-pid> ...]
+  [--managed-codex-daemon <target>=<daemon-pid>]
+  [--managed-codex-client <target>=<client-or-proxy-pid> ...]
+  [--managed-codex-member <target>=<owned-helper-pid> ...]
+  [--managed-codex-bootstrap-feature <target>=<feature> ...]
   [--wait-seconds 86400]
 ```
 
@@ -191,18 +260,53 @@ The command creates one private digest-bound request, launches the one-shot
 worker, and waits for its ready handshake. It succeeds only by emitting exactly
 one bounded `DEFERRED_INSTALL_ARMED` receipt containing a nonsecret `job_id`,
 the private status-report `filename`, `status="armed"`, target count, and wait
-limit. It never emits a PID, path, credential, command, environment value, or
-raw error. `armed` proves only that the detached worker owns the request and
-exact process identities; it is not installation or verification success.
+limit, plus a managed-daemon count when applicable. It never emits a PID, path,
+credential, command, environment value, or raw error. `armed` proves only that
+the detached worker owns the request, exact process identities, and reviewed
+managed actions; it is not installation or verification success.
 
 Only after that ready receipt may the agent ask the user to fully close each
-affected Codex and Claude host once. Closing a window while its reviewed
-background process remains alive is not an exit. The detached worker never
-signals a PID. It waits for the exact captured process instances to end,
-rejects detected PID reuse or same-image relaunch races, reopens the exact
-journal with the reviewed digest, and invokes the existing transactional
-apply-and-verify path. Drift, collision, timeout, cancellation, or an
-unclassifiable process fails closed.
+affected Codex and Claude client or host once. For ordinary passive targets,
+closing a window while its reviewed background process remains alive is not an
+exit. For a reviewed Codex daemon group, the user closes only the normal
+client; the worker waits for every bound transient client or proxy to exit
+before it touches the persistent service. It freezes cancellation and the
+user-wait deadline and rechecks the exact daemon image, executable pathname,
+home, backend, versions, and same-image relaunch guard. For a managed backend,
+it invokes only the captured executable's `app-server daemon stop` in a minimal
+environment with exact `CODEX_HOME` and a fixed platform system path required
+by lifecycle helpers such as `ps`; it never inherits caller `PATH`.
+
+For a Linux legacy/ephemeral server with no backend, the worker opens pidfds
+for each exact bound host helper and the exact reviewed daemon incarnation,
+rechecks every complete identity, sends graceful `SIGTERM` to the helpers
+before the daemon, and never falls back to a bare PID or `SIGKILL`. After every
+bound daemon/helper exits, it invokes Codex's own
+`app-server daemon bootstrap` with only the reviewed feature enables, requires
+a real nonempty backend, then invokes Codex's native stop so apply occurs with
+host settings unloaded. This one-time bridge exists because Codex cannot adopt
+an already-running macOS-remote legacy server. Other platforms fail before the
+close request unless they already expose a managed backend.
+
+The worker then performs quiescence and relaunch checks, reopens the exact
+journal/digest, and invokes transactional apply-and-verify. No shell, manual
+command, cross-account access, or privileged process control is used.
+
+Native stop may report the managed daemon stopped before its process image has
+fully disappeared. After stop, the worker owns a bounded process-quiescence
+wait. It permits only matching processes that actually exit within that bound;
+a persistent reopened client or daemon still fails closed as a relaunch. The
+user's announced settling delay is ergonomic only and never counts as readiness
+or verification evidence.
+
+A native-stop failure, daemon/helper exit timeout, drift, collision, user-wait
+timeout, pre-stop cancellation, PID reuse, premature same-image relaunch,
+an unclassifiable process, or legacy migration failure fails closed with no
+apply. Once shutdown begins,
+a late cancel cannot strand a stopped service without completing the reviewed
+transaction. The worker never uses raw kill semantics. An agent may use an
+unaffected observer, but the normal user journey remains approve, close the
+client, wait, reopen it, review trust when required, and start a fresh task.
 
 If an unaffected agent or host-owned observer remains available, it may poll
 the saved job while the affected hosts are closed. Otherwise the first action
@@ -280,58 +384,62 @@ manual activation step pauses the workflow. Never edit Codex's trust store or
 claim trust from filesystem installation alone. Never invoke or recommend
 `--dangerously-bypass-hook-trust` in this workflow; it is not hook activation.
 
-## 6. Prove fresh task correlation
+## 6. Prove persistent task correlation
 
-For Codex, start one agent-owned watch for every reviewed target in the plan.
-Use repeatable `--target <name>` only when the user requested a subset; without
-it the helper selects all reviewed Codex homes.
+For Codex, inspect every reviewed target from durable verified history. Use
+repeatable `--target <name>` only when the user requested a subset; without it
+the helper selects all reviewed Codex homes.
 
 ```text
 <python> <skill>/scripts/activation_status.py \
   --journal <absolute-journal.json> \
   --plan-digest <plan_sha256> \
   --runtime codex \
-  --watch \
-  --wait-seconds 300 \
-  [--target <reviewed-name> ...]
+  [--target <reviewed-name> ...] \
+  --require-active
 ```
 
-Start the watch before asking the user to act. Then tell the user only to start
-one fresh harmless task in each selected Codex instance. The instances may run
-concurrently. Do not ask the user to open Terminal, copy a sequence, quit or
-isolate another Codex app, or perform baseline choreography. The helper owns
-the post-start sequence baseline and watches all selected homes for at most 900
-seconds.
+The user may start a harmless task in each selected Codex instance at any
+time; instances may run concurrently. No watch, deadline, sequence copy,
+Terminal, client isolation, or baseline choreography is part of the normal
+journey. `--watch` remains only a bounded fresh-evidence diagnostic for
+installer development and troubleshooting, never an activation state or
+prerequisite.
 
 The helper binds the current canonical recorder source to the reviewed journal,
 re-verifies installed targets and receiver health, reads only the recorder's
 integrity-checked authoritative snapshot, and derives expected opaque target
 identities in memory from the exact reviewed plan and private installed
-credential. A Codex home is active only when one post-baseline task has a
-target-bound hook `task.start`, target-bound hook evidence, and a nonempty
-provider-native `codex-otel` usage observation with runtime-observed provenance
-on that same target and task. A missing, null, legacy, or different target on
-usage cannot activate the home.
+credential. A Codex home is active only when one recorded task under the
+current target identity has a target-bound hook `task.start`, target-bound hook
+evidence, and a nonempty runtime-observed provider-native usage observation on
+that same target and task. Usage may come from exact `codex-otel` correlation or
+the recorder's strictly allowlisted, exact-task local rollout fallback. A
+missing, null, legacy, or different target on usage cannot activate the home.
 
-The helper writes the complete bounded result under the recorder state's
-private `activation-reports/` directory and emits exactly one concise
-`REPORT_SAVED` receipt naming the file, status, active and pending counts,
-SHA-256, and byte count. The report contains reviewed target names and bounded
-counts only—never home paths, raw events, task/session/event identities, target
-references, source content, or credentials. A timeout still saves the partial
-report and returns nonzero. Treat only `status=active` with every selected
-target active as per-home proof.
+The helper emits one bounded `ACTIVATION_STATUS` object with reviewed target
+names and counts only—never home paths, raw events, task/session/event
+identities, target references, source content, or credentials. Treat only
+`status=active` with every selected target active as per-home proof. Persistent
+proof survives tasks, sessions, receiver restarts, and client reconnects; a
+changed target identity starts unproven. The diagnostic watch may save a
+private `REPORT_SAVED` artifact, but expiry or timeout never describes the
+recorder or its persistent activation state.
 
 Installer apply, verify, and rollback remain exact. For activation
 inspection only, a changed Codex `config.toml` action's whole-file hash drift
 may conform when the target remains a safe regular no-link file, its managed
-OTel block is byte-exact—including reviewed newline encoding—for the reviewed
-installed settings, and supported single-line TOML outside that block has no
-competing OTel definition. Multiline-string syntax outside the block and every
-other action or malformed, duplicate, missing, or edited ownership remain
-fail-closed. Target-aware hook and OTel evidence requires recorder `0.2.3` and
-schema `1.2`. A legacy Codex installation may still produce honest fresh
-family-level evidence, but the report marks every requested home unproven and
+OTel payload is byte-exact—including reviewed newline encoding—for the reviewed
+installed settings, and supported single-line TOML outside that payload has no
+competing OTel definition. A host writer may displace content between that
+byte-exact payload and its end marker only when the first semantic displaced
+line opens a different TOML table and no displaced content defines OTel; this
+covers Codex writing reviewed `[hooks.state]` trust records. Multiline-string
+syntax outside the payload and every other action or malformed, duplicate,
+missing, or edited ownership remain fail-closed. Target-aware hook and OTel
+evidence requires recorder `0.2.3` and
+schema `1.2`. A legacy Codex installation may still produce honest
+family-level evidence, but status marks every requested home unproven and
 returns nonzero; never assign family events to homes by timing or user action.
 Upgrade through a new reviewed plan to obtain target-aware proof. Claude remains
 on its independent family-level workflow; do not use or claim Codex target
@@ -347,10 +455,29 @@ hook listed in a file is not enough. Diagnose a failure in this order:
 3. Codex hook reviewed and trusted, or Claude settings source active.
 4. Hooks feature and higher-precedence policy/settings.
 5. Receiver health, endpoint/credential rotation, and bounded runtime gaps.
-6. Fresh same-target task/hook/OTLP correlation rather than historical,
-   family-only, null-target, or cross-target events.
+6. Same-target task, hook, and provider-counter correlation for the current
+   reviewed target identity rather than family-only, null-target, or
+   cross-target events.
 
-Do not declare complete while a requested runtime lacks fresh task-bound
+Read measurements directly from the installed per-account recorder; no
+Coordinator, external checkout, or shared service is required:
+
+```text
+<python> <state>/recorder.py status
+<python> <state>/recorder.py report --tasks
+<python> <state>/recorder.py report --repositories
+```
+
+The task view uses a private bounded repository basename plus chronological
+task numbers and shows native counter categories, coverage, status, and phase
+attribution. The repository view aggregates those same verified events. Neither
+view retains or prints a worktree path, prompt, response, tool payload, or
+credential. If DevCoordinator is installed and advertises the compatible
+capability, it may receive the existing opaque bounded aggregate for an
+optional shared UI; its absence or failure never changes recorder health,
+activation, attribution, or these standalone readings.
+
+Do not declare complete while a requested runtime lacks task-bound
 evidence. Report installed and activated targets separately, along with
 versions, the reviewed plan digest, health, verification evidence, remaining
 manual trust/restart steps, any per-home attribution limitation, the deferred
@@ -362,8 +489,8 @@ and raw telemetry out of the handoff.
 The deferred receipt proves installation and receiver health for every target
 in its exact plan, not fresh Claude task correlation. Claude remains on its
 independent family-level activation workflow. Use its active settings sources,
-hooks, and fresh task-bound evidence; never infer Claude activation from the
-Codex concurrent watch or from successful installation alone.
+hooks, and task-bound evidence; never infer Claude activation from the
+Codex activation proof or from successful installation alone.
 
 ## 8. Recovery only: direct installer commands
 

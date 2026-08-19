@@ -32,8 +32,8 @@ additional properties:
   valid and readable, but the recorder never writes new `1.0` rows.
 - `adapter-event-v1.1.schema.json` is legacy schema `1.1`. Existing rows remain
   valid and readable, but the recorder never writes new `1.1` rows.
-- `adapter-event-v1.2.schema.json` is current schema `1.2`. Recorder `0.2.4`
-  with adapter `0.2.3` writes only this shape.
+- `adapter-event-v1.2.schema.json` is current schema `1.2`. Recorder `0.2.9`
+  with adapter `0.2.4` writes only this shape.
 
 One ledger may contain validated immutable `1.0` and `1.1` history followed by
 new `1.2` rows. Reporting states per-version event counts and whether metadata
@@ -94,6 +94,22 @@ concurrent task start cannot divide one batch. Any validation or dedupe conflict
 rolls back every new item. Exact same-task replay, including an exact terminal
 batch replay, deduplicates; new declarations after a terminal are rejected, and
 the same declaration shape on a later task receives a distinct durable event.
+- Explicit phase declarations form one balanced, non-overlapping span per task.
+  While exactly one valid phase span is open, later authoritative usage for
+  that task receives its phase with `agent-declared` attribution; usage before,
+  after, or amid conflicting phase history stays `unattributed`. Phase labels
+  never alter provider counters or measurement provenance.
+- A managed Codex hook may use the host-supplied rollout only after proving it
+  is a bounded regular non-symlinked `rollout-*.jsonl` beneath the exact
+  target's recorded Codex session directories. It scans from the exact task
+  boundary and accepts only task-boundary and provider-token fields; all
+  content-bearing records are ignored. If this task-local source exists,
+  reporting uses its complete counter sequence and excludes duplicate Codex
+  exporter usage for that task. Coverage remains partial until runtime Stop.
+- A terminal declaration may be written while the final reporting span remains
+  open. Codex Stop records the final task-local counter first, then closes only
+  that one valid reporting span with a runtime-observed boundary. Other open,
+  ambiguous, or non-reporting phase history is never closed by inference.
 - Compaction resumes the same task; it never creates a new lineage.
 - The receiver returns an opaque signed task binding only when requested. A
   later `lineage.link` resolves that binding to the earlier task and lineage
@@ -108,6 +124,13 @@ the same declaration shape on a later task receives a distinct durable event.
   do not, reporting retains the original evidence.
 - Later continuation, retry, rollback, defect repair, and rework events link to
   the original lineage without rewriting prior records.
+
+The core may retain one bounded integrity-protected repository basename in its
+private authoritative database for local display. The basename is not part of
+the event schema, cold JSONL, exported repository projection, or identity key.
+Standalone reports combine it with chronological task ordinals and an opaque
+suffix only when equal basenames need disambiguation. Missing labels remain
+explicitly opaque rather than reconstructed from content.
 
 Supported Claude hosts expose one UUID-v4 `prompt_id` across task-specific
 hooks and the matching OTLP `prompt.id`. The adapter carries it only as a

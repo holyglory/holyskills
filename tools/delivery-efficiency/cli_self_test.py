@@ -383,10 +383,12 @@ def assert_cli_declaration_interfaces(root: Path) -> None:
             "_record_declarations",
             return_value={"ok": True, "recorded": 2, "task_binding": task_binding},
         ) as record_declarations,
+        mock.patch.object(cli_module, "_export_repository_summary_to_coordinator") as export,
         redirect_stdout(stdout),
     ):
         assert main(terminal_arguments) == 0
     assert json.loads(stdout.getvalue()) == {"task_binding": task_binding}
+    export.assert_called_once()
     call = record_declarations.call_args
     assert call.args[1:3] == ("cli-session", False)
     emissions = call.args[3]
@@ -429,12 +431,16 @@ def assert_cli_declaration_interfaces(root: Path) -> None:
     empty_scope_arguments = complete_terminal_arguments(root)
     scope_index = empty_scope_arguments.index("--scope-change")
     empty_scope_arguments[scope_index : scope_index + 2] = ["--no-scope-changes"]
-    with mock.patch.object(
-        cli_module,
-        "_record_declarations",
-        return_value={"ok": True, "recorded": 2, "task_binding": task_binding},
-    ) as record_declarations:
+    with (
+        mock.patch.object(
+            cli_module,
+            "_record_declarations",
+            return_value={"ok": True, "recorded": 2, "task_binding": task_binding},
+        ) as record_declarations,
+        mock.patch.object(cli_module, "_export_repository_summary_to_coordinator") as export,
+    ):
         assert main(empty_scope_arguments) == 0
+    export.assert_called_once()
     empty_scope_terminal = record_declarations.call_args.args[3][-1][0]["payload"]
     assert empty_scope_terminal["task_metadata"]["approved_scope_change_ids"] == []
     assert (
@@ -561,6 +567,71 @@ def assert_cli_declaration_interfaces(root: Path) -> None:
         assert stderr.getvalue() == "delivery-efficiency error: DeclarationError\n"
 
 
+def assert_optional_coordinator_projection(root: Path) -> None:
+    project = str(root / "private repository")
+    executable = "/usr/local/bin/devcoordinator"
+    capability = SimpleNamespace(
+        returncode=0,
+        stdout=json.dumps(
+            {
+                "ok": True,
+                "capabilities": {
+                    "efficiency": {"schema_version": 1, "actions": ["ingest"]}
+                },
+            }
+        ).encode("utf-8"),
+    )
+    with mock.patch.object(cli_module.subprocess, "run", return_value=capability) as run:
+        assert cli_module._coordinator_supports_efficiency(executable, project)
+    assert run.call_args.args[0] == [executable, "capabilities", "--project", project]
+    assert run.call_args.kwargs["cwd"] == project
+
+    missing = SimpleNamespace(returncode=0, stdout=b'{"ok":true,"capabilities":{}}')
+    with mock.patch.object(cli_module.subprocess, "run", return_value=missing):
+        assert not cli_module._coordinator_supports_efficiency(executable, project)
+
+    opaque = "id_" + "7" * 32
+    repository = {
+        "project_id": opaque,
+        "task_count": 1,
+        "complete_task_count": 1,
+        "outcomes": {"complete": 1},
+        "causes": {"not-applicable": 1},
+        "tokens": {},
+        "tokens_by_phase": {},
+        "request_to_delivery_ns": {},
+        "execution_to_delivery_ns": {},
+        "automation_opportunities": [],
+    }
+    recorder = mock.MagicMock()
+    recorder.__enter__.return_value = recorder
+    recorder.__exit__.return_value = False
+    recorder.opaque_id.return_value = opaque
+    recorder.read_verified_events.return_value = [{"private": "must-not-export"}]
+    ingested = SimpleNamespace(returncode=0, stdout=b"")
+    with (
+        mock.patch.object(cli_module.shutil, "which", return_value=executable),
+        mock.patch.object(cli_module, "_discover_worktree", return_value=project),
+        mock.patch.object(cli_module, "_coordinator_supports_efficiency", return_value=True),
+        mock.patch("delivery_efficiency.storage.Recorder", return_value=recorder),
+        mock.patch(
+            "delivery_efficiency.reporting.summarize_repositories",
+            return_value={"repositories": [repository]},
+        ),
+        mock.patch.object(cli_module.subprocess, "run", return_value=ingested) as run,
+    ):
+        assert cli_module._export_repository_summary_to_coordinator(root)
+    call = run.call_args
+    assert call.args[0] == [executable, "efficiency", "ingest", "--project", project]
+    payload = json.loads(call.kwargs["input"].decode("utf-8"))
+    assert payload == {"schema_version": 1, "summary": repository}
+    assert project not in call.kwargs["input"].decode("utf-8")
+    assert "must-not-export" not in call.kwargs["input"].decode("utf-8")
+
+    with mock.patch.object(cli_module.shutil, "which", return_value=None):
+        assert not cli_module._export_repository_summary_to_coordinator(root)
+
+
 def main_test() -> int:
     assert _hook_gap_code(MalformedSourceEvent("private source detail")) == "malformed-source-event"
     assert _hook_gap_code(UnsupportedHookRuntime("private runtime detail")) == "unsupported-runtime-event"
@@ -576,6 +647,7 @@ def main_test() -> int:
         assert_runtime_target_validation(root)
         assert_install_apply_uses_transactional_activation(root)
         assert_cli_declaration_interfaces(root)
+        assert_optional_coordinator_projection(root)
         unavailable_state = root / "receiver unavailable"
         arguments = argparse.Namespace(
             state_dir=str(unavailable_state),
@@ -606,15 +678,19 @@ def main_test() -> int:
         assert gap["gap_code"] == "malformed-source-event"
 
         state = root / "authoritative report"
+        project = root / "readable repository"
+        (project / ".git").mkdir(parents=True)
         recorder = Recorder(state)
         observation, source_key = translate_hook(
             {
                 "hook_event_name": "UserPromptSubmit",
                 "session_id": "session-1",
                 "turn_id": "turn-1",
+                "cwd": str(project),
                 "prompt": "PROMPT-MUST-NOT-PERSIST",
             },
             surface="cli-interactive",
+            source_project=str(project),
         )[0]
         recorder.record(observation, source_key=source_key)
         recorder.close()
@@ -625,7 +701,24 @@ def main_test() -> int:
             assert main(["report", "--state-dir", str(state)]) == 0
         report = json.loads(stdout.getvalue())
         assert report["task_count"] == 1
+        assert report["tasks"][0]["display_name"] == "readable repository task 1"
         assert "PROMPT-MUST-NOT-PERSIST" not in stdout.getvalue()
+        assert str(project) not in stdout.getvalue()
+
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            assert main(["report", "--tasks", "--state-dir", str(state)]) == 0
+        task_report = json.loads(stdout.getvalue())
+        assert task_report["tasks"][0]["repository"] == "readable repository"
+        assert task_report["tasks"][0]["display_name"] == "readable repository task 1"
+        assert str(project) not in stdout.getvalue()
+
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            assert main(["report", "--repositories", "--state-dir", str(state)]) == 0
+        repository_report = json.loads(stdout.getvalue())
+        assert repository_report["repositories"][0]["display_name"] == "readable repository"
+        assert str(project) not in stdout.getvalue()
 
         ledger = state / "EfficiencyLedger.jsonl"
         event = json.loads(ledger.read_text(encoding="utf-8"))

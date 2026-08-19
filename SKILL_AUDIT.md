@@ -11,10 +11,9 @@ incident, document set, or runtime will be interpreted correctly.
 ## Ownership and installation topology
 
 The service coordinator, PostgreSQL protection skill, native Board, and web
-Console moved together to the independent
-[DevCoordinator repository](https://github.com/holyglory/DevCoordinator). Holy
-Skills retains no source, build, runtime, CI checkout, or pinned dependency on
-that repository. The formal web verifier can optionally receive the path of a
+Console moved together to an independently versioned repository. Holy Skills
+retains no source, build, runtime, CI checkout, or pinned dependency on that
+repository. The formal web verifier can optionally receive the path of a
 separately installed coordinator at runtime; this is caller-supplied discovery,
 not a repository dependency.
 
@@ -158,7 +157,8 @@ Honest description: a cross-platform agent workflow for installing the shared
 delivery-efficiency recorder into explicit Codex and Claude homes, enabling the
 Codex hooks feature when the host permits it, preserving host-native trust
 review, and proving fresh per-home Codex hook/task/token correlation with one
-bounded concurrent watch and filename-bearing receipt. Claude activation stays
+bounded persistent-history proof and filename-bearing diagnostic receipts.
+Claude activation stays
 host-owned and independent. The skill invokes the recorder's canonical
 transactional installer; it is not another recorder, settings writer, package
 manager, or trust authority.

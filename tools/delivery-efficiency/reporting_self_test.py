@@ -15,7 +15,13 @@ sys.path.insert(0, str(HERE))
 
 from delivery_efficiency import ADAPTER_VERSION, RECORDER_VERSION
 from delivery_efficiency.contract import canonical_json
-from delivery_efficiency.reporting import ReportingError, read_ledger, summarize
+from delivery_efficiency.reporting import (
+    ReportingError,
+    read_ledger,
+    summarize,
+    summarize_repositories,
+    summarize_tasks,
+)
 
 
 def event(event_id: str, sequence: int, kind: str, mono: int, **overrides):
@@ -1045,6 +1051,61 @@ def main() -> int:
         "active_interval_union_ns"
     ] is None
     assert cross_clock_agents["summed_per_agent_active_ns"] is None
+
+    # Repository projection keeps opaque identity and exact known/unknown
+    # counter coverage. Automation stays conservative until three comparable
+    # non-automated terminal declarations exist.
+    repeated = []
+    for index in range(3):
+        task_id = "id_" + str(index + 4) * 32
+        lineage_id = "id_" + str(index + 5) * 32
+        project_id = "id_" + "9" * 32
+        start = set_task_identity(
+            event_v12(("8{}".format(index)) * 16, 30 + index * 3, "task.start", 300 + index * 30),
+            task_id=task_id,
+            lineage_id=lineage_id,
+        )
+        start["identity"]["project_id"] = project_id
+        measured = set_task_identity(
+            usage(("9{}".format(index)) * 16, 31 + index * 3, "implementation", "agent-declared", "5"),
+            task_id=task_id,
+            lineage_id=lineage_id,
+        )
+        measured["identity"]["project_id"] = project_id
+        terminal = set_task_identity(
+            event_v12(("a{}".format(index)) * 16, 32 + index * 3, "task.terminal", 320 + index * 30,
+                payload={"outcome": "complete"}),
+            task_id=task_id,
+            lineage_id=lineage_id,
+        )
+        terminal["identity"]["project_id"] = project_id
+        terminal["payload"]["task_metadata"].update(
+            {"task_type": "implementation", "scope_size": "small", "method": "direct"}
+        )
+        repeated.extend([start, measured, terminal])
+    repository_report = summarize_repositories(repeated)
+    assert repository_report["repository_count"] == 1
+    repository = repository_report["repositories"][0]
+    assert repository["project_id"] == "id_" + "9" * 32
+    assert "display_name" not in repository
+    assert repository["tokens"]["input"] == {
+        "known_sum": "15", "known_task_count": 3, "task_count": 3, "coverage": "complete"
+    }
+    assert repository["tokens_by_phase"]["implementation"]["input"]["known_sum"] == "15"
+    assert len(repository["automation_opportunities"]) == 1
+    assert repository["automation_opportunities"][0]["occurrence_count"] == 3
+    two_task_report = summarize_repositories(repeated[:6])
+    assert two_task_report["repositories"][0]["automation_opportunities"] == []
+    labels = {project_id: "example-repository"}
+    labeled_repository = summarize_repositories(repeated, labels)["repositories"][0]
+    assert labeled_repository["display_name"] == "example-repository"
+    task_index = summarize_tasks(repeated, labels)
+    assert [item["display_name"] for item in task_index["tasks"]] == [
+        "example-repository task 1",
+        "example-repository task 2",
+        "example-repository task 3",
+    ]
+    assert all(item["repository"] == "example-repository" for item in task_index["tasks"])
 
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)

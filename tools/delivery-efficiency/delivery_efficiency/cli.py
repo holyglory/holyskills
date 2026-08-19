@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import sys
 import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -61,6 +63,47 @@ def _named_paths(values: Sequence[str], label: str) -> Dict[str, Path]:
     return result
 
 
+def _named_pids(
+    values: Sequence[str], label: str, *, one_per_name: bool
+) -> Dict[str, List[int]]:
+    result: Dict[str, List[int]] = {}
+    for raw in values:
+        if "=" not in raw:
+            raise ValueError("{} must use NAME=PID".format(label))
+        name, raw_pid = raw.split("=", 1)
+        try:
+            pid = int(raw_pid)
+        except ValueError as error:
+            raise ValueError("{} PIDs must be positive integers".format(label)) from error
+        if not name or pid <= 0 or (one_per_name and name in result):
+            raise ValueError(
+                "{} names must be nonempty{} and PIDs positive".format(
+                    label, " and unique" if one_per_name else ""
+                )
+            )
+        entries = result.setdefault(name, [])
+        if pid in entries:
+            raise ValueError("{} PIDs must not repeat".format(label))
+        entries.append(pid)
+    return result
+def _named_features(values: Sequence[str], label: str) -> Dict[str, List[str]]:
+    result: Dict[str, List[str]] = {}
+    pattern = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+    for raw in values:
+        if "=" not in raw:
+            raise ValueError("{} must use NAME=FEATURE".format(label))
+        name, feature = raw.split("=", 1)
+        if not name or pattern.fullmatch(feature) is None:
+            raise ValueError("{} names and feature identifiers are invalid".format(label))
+        entries = result.setdefault(name, [])
+        if feature in entries or len(entries) >= 16:
+            raise ValueError("{} features must be unique and bounded".format(label))
+        entries.append(feature)
+    return result
+
+
+
+
 def _surface(runtime_family: str) -> str:
     override = os.environ.get("HOLYSKILLS_AGENT_SURFACE")
     if override in {"cli-interactive", "cli-exec", "desktop", "ide", "unknown"}:
@@ -104,6 +147,95 @@ def _read_hook_input() -> bytes:
     return raw
 
 
+def _discover_worktree(cwd: object) -> Optional[str]:
+    """Return a canonical Git worktree root for private HMAC consumption.
+
+    This bounded read-only discovery never invokes Git. The absolute result is
+    transient source identity and must not be included in reports or exports.
+    """
+
+    if not isinstance(cwd, str) or not cwd or "\x00" in cwd:
+        return None
+    try:
+        if len(cwd.encode("utf-8")) > 4096:
+            return None
+        current = Path(cwd).resolve(strict=True)
+    except (OSError, RuntimeError, UnicodeError):
+        return None
+    if not current.is_dir():
+        return None
+    for _ in range(128):
+        marker = current / ".git"
+        try:
+            if marker.is_dir() and not marker.is_symlink():
+                return os.path.normcase(str(current))
+            if marker.is_file() and not marker.is_symlink():
+                raw = marker.read_bytes()
+                if len(raw) <= 8192:
+                    text = raw.decode("utf-8").strip()
+                    if text.startswith("gitdir: "):
+                        target = Path(text[8:])
+                        if not target.is_absolute():
+                            target = current / target
+                        if target.resolve(strict=True).is_dir():
+                            return os.path.normcase(str(current))
+        except (OSError, RuntimeError, UnicodeError):
+            return None
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+    return None
+
+
+def _managed_codex_home(state: Path, runtime_target: object) -> Optional[Path]:
+    """Resolve one hook target to its exact private managed Codex home."""
+
+    if not isinstance(runtime_target, str) or _RUNTIME_TARGET_PATTERN.fullmatch(
+        runtime_target
+    ) is None:
+        return None
+    try:
+        from .installer import _runtime_target_ref
+        from .runtime import load_settings
+
+        raw = (state / "managed-targets.json").read_bytes()
+        if len(raw) > 64 * 1024:
+            return None
+        document = json.loads(raw.decode("utf-8"))
+        if (
+            type(document) is not dict
+            or set(document) != {"managed_id", "schema_version", "targets"}
+            or document.get("schema_version") != 1
+            or type(document.get("targets")) is not list
+            or len(document["targets"]) > 1024
+        ):
+            return None
+        token = load_settings(state)["auth_token"]
+        matches: List[Path] = []
+        for item in document["targets"]:
+            if (
+                type(item) is not dict
+                or set(item) != {"home", "name", "runtime"}
+                or item.get("runtime") != "codex"
+                or not isinstance(item.get("home"), str)
+            ):
+                continue
+            home = Path(item["home"])
+            if not home.is_absolute():
+                continue
+            resolved = home.resolve(strict=True)
+            if not resolved.is_dir() or resolved.is_symlink():
+                continue
+            if _runtime_target_ref(token, "codex", resolved) == runtime_target:
+                matches.append(resolved)
+        if len(matches) == 1:
+            return matches[0]
+    except (OSError, RuntimeError, UnicodeError, ValueError):
+        return None
+    return None
+
+
 def _remaining_hook_budget(deadline: float) -> float:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -142,7 +274,12 @@ def _hook(args: argparse.Namespace) -> int:
     response: Optional[Dict[str, Any]] = None
     try:
         raw = _read_hook_input()
-        from .codex import MalformedSourceEvent, translate_hook
+        from .codex import (
+            MalformedSourceEvent,
+            safe_session_id,
+            translate_hook,
+            translate_transcript_usage,
+        )
 
         try:
             source = json.loads(raw.decode("utf-8"))
@@ -151,6 +288,7 @@ def _hook(args: argparse.Namespace) -> int:
         if not isinstance(source, dict):
             raise MalformedSourceEvent("hook source must be a JSON object")
         event_name = source.get("hook_event_name")
+        source_project = _discover_worktree(source.get("cwd"))
         budget = CODEX_HOOK_TELEMETRY_BUDGET_SECONDS
         if args.runtime == "claude":
             if event_name == "SessionStart":
@@ -191,18 +329,41 @@ def _hook(args: argparse.Namespace) -> int:
             from .claude import translate_hook as translate_runtime_hook
         else:
             raise UnsupportedHookRuntime("unsupported hook runtime")
+        transcript_pairs = []
         if args.runtime == "codex":
+            source_session = safe_session_id(source.get("session_id"))
+            source_turn = safe_session_id(source.get("turn_id"))
+            managed_home = _managed_codex_home(state, runtime_target)
+            if (
+                source_session is not None
+                and source_turn is not None
+                and managed_home is not None
+            ):
+                transcript_pairs = translate_transcript_usage(
+                    source.get("transcript_path"),
+                    codex_home=managed_home,
+                    session=source_session,
+                    turn=source_turn,
+                    surface=_surface(args.runtime),
+                    runtime_version=source.get("version"),
+                )
             pairs = translate_runtime_hook(
                 raw,
                 surface=_surface(args.runtime),
                 runtime_target=runtime_target,
+                source_project=source_project,
             )
         else:
-            pairs = translate_runtime_hook(raw, surface=_surface(args.runtime))
+            pairs = translate_runtime_hook(
+                raw,
+                surface=_surface(args.runtime),
+                source_project=source_project,
+            )
         settings = ensure_receiver(
             state,
             timeout_seconds=_remaining_hook_budget(deadline),
         )
+        pairs = transcript_pairs + pairs
         if pairs:
             from .runtime import post_observations_to_receiver
 
@@ -239,7 +400,12 @@ def _hook(args: argparse.Namespace) -> int:
                 "Delivery-efficiency recording is active for this {} session. At meaningful "
                 "phase changes and immediately before final delivery, execute the installed "
                 "launcher argv prefix {} with its declare phase or declare terminal command "
-                "plus {}. A complete terminal needs an acceptance-baseline id, explicit task "
+                "plus {}. Keep explicit phase spans non-overlapping. Close each ordinary phase at "
+                "its meaningful boundary. For final delivery, start reporting, leave that final "
+                "reporting span open, and immediately before the final response declare the terminal "
+                "outcome while it remains open; the runtime Stop boundary captures final-response usage "
+                "and closes that span. Provider usage observed while one span is open inherits that "
+                "phase, while usage outside it remains unattributed. A complete terminal needs an acceptance-baseline id, explicit task "
                 "type, linked-work kind, scope size and method, an explicit approved "
                 "scope-change set (`--scope-change` for each change or "
                 "`--no-scope-changes`), and evidence references for every requirement; leave "
@@ -320,13 +486,25 @@ def _status(args: argparse.Namespace) -> int:
 
 
 def _report(args: argparse.Namespace) -> int:
-    from .reporting import summarize
+    from .reporting import summarize, summarize_repositories, summarize_tasks
     from .storage import Recorder
 
     state = _state(args.state_dir)
     with Recorder(state) as recorder:
         events = recorder.read_verified_events()
-    _json(summarize(events))
+        labels = recorder.read_private_project_labels()
+        current_project = _discover_worktree(os.getcwd())
+        if current_project is not None:
+            current_label = Recorder._private_project_label(current_project)
+            if current_label is not None:
+                labels[recorder.opaque_id("project", current_project)] = current_label
+    if args.repositories:
+        result = summarize_repositories(events, labels)
+    elif args.tasks:
+        result = summarize_tasks(events, labels)
+    else:
+        result = summarize(events, labels)
+    _json(result)
     return 0
 
 
@@ -390,6 +568,7 @@ def _deferred_line(marker: str, value: Mapping[str, Any]) -> None:
         "filename",
         "status",
         "targets",
+        "managed_daemons",
         "wait_seconds",
         "phase",
         "sha256",
@@ -411,11 +590,29 @@ def _deferred_line(marker: str, value: Mapping[str, Any]) -> None:
 def _install_defer(args: argparse.Namespace) -> int:
     from .deferred_install import arm_deferred_install
 
+    daemon_values = _named_pids(
+        args.managed_codex_daemon, "--managed-codex-daemon", one_per_name=True
+    )
+    client_values = _named_pids(
+        args.managed_codex_client, "--managed-codex-client", one_per_name=False
+    )
+    member_values = _named_pids(
+        args.managed_codex_member, "--managed-codex-member", one_per_name=False
+    )
+    feature_values = _named_features(
+        args.managed_codex_bootstrap_feature, "--managed-codex-bootstrap-feature"
+    )
     result = arm_deferred_install(
         Path(args.journal),
         args.plan_digest,
         args.target_pid,
         args.wait_seconds,
+        managed_codex_daemon_pids={
+            name: values[0] for name, values in daemon_values.items()
+        },
+        managed_codex_client_pids=client_values,
+        managed_codex_member_pids=member_values,
+        managed_codex_bootstrap_features=feature_values,
     )
     armed = result.get("status") == "armed"
     _deferred_line(
@@ -598,12 +795,93 @@ def _declare_terminal(args: argparse.Namespace) -> int:
         requirement_evidence=evidence,
         **_terminal_metadata(args),
     )
-    result = _record_declarations(
-        _state(args.state_dir), session, uses_binding, emissions
-    )
+    state = _state(args.state_dir)
+    result = _record_declarations(state, session, uses_binding, emissions)
+    _export_repository_summary_to_coordinator(state)
     if args.emit_task_binding:
         _json({"task_binding": result["task_binding"]})
     return 0
+
+
+def _coordinator_supports_efficiency(
+    executable: str, project: str
+) -> bool:
+    """Return whether this checkout's Coordinator advertises ingestion."""
+
+    try:
+        completed = subprocess.run(
+            [executable, "capabilities", "--project", project],
+            cwd=project,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            check=False,
+        )
+        if completed.returncode != 0 or len(completed.stdout) > 16 * 1024:
+            return False
+        document = json.loads(completed.stdout.decode("utf-8"))
+        capability = document.get("capabilities", {}).get("efficiency")
+        return bool(
+            document.get("ok") is True
+            and isinstance(capability, dict)
+            and capability.get("schema_version") == 1
+            and "ingest" in capability.get("actions", [])
+        )
+    except Exception:
+        return False
+
+
+def _export_repository_summary_to_coordinator(state: Path) -> bool:
+    """Publish this account's cumulative repository snapshot when supported.
+
+    A repository path is used transiently only to select the local Coordinator
+    target. The projection contains opaque identity, aggregate counters,
+    coverage, and bounded low-cardinality classifications only.
+    """
+
+    executable = shutil.which("devcoordinator")
+    project = _discover_worktree(os.getcwd())
+    if executable is None or project is None:
+        return False
+    if not _coordinator_supports_efficiency(executable, project):
+        return False
+    try:
+        from .reporting import summarize_repositories
+        from .storage import Recorder
+
+        with Recorder(state) as recorder:
+            project_id = recorder.opaque_id("project", project)
+            report = summarize_repositories(recorder.read_verified_events())
+        summary = next(
+            (
+                item
+                for item in report.get("repositories", [])
+                if item.get("project_id") == project_id
+            ),
+            None,
+        )
+        if summary is None:
+            return False
+        encoded = json.dumps(
+            {"schema_version": 1, "summary": summary},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(encoded) > 64 * 1024:
+            return False
+        completed = subprocess.run(
+            [executable, "efficiency", "ingest", "--project", project],
+            cwd=project,
+            input=encoded,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            check=False,
+        )
+        return completed.returncode == 0
+    except Exception:
+        return False
 
 
 def _declare_lineage(args: argparse.Namespace) -> int:
@@ -667,13 +945,15 @@ def _declare_terminal_correction(args: argparse.Namespace) -> int:
         cause=args.cause,
         **_terminal_metadata(args),
     )
+    state = _state(args.state_dir)
     result = _record_declarations(
-        _state(args.state_dir),
+        state,
         session,
         uses_binding,
         [emission],
         target_task_binding=args.target_task_binding,
     )
+    _export_repository_summary_to_coordinator(state)
     if args.emit_task_binding:
         _json({"task_binding": result["task_binding"]})
     return 0
@@ -784,6 +1064,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     report = commands.add_parser("report", help="summarize outcome-aware efficiency events")
     report.add_argument("--state-dir")
+    report_view = report.add_mutually_exclusive_group()
+    report_view.add_argument(
+        "--repositories",
+        action="store_true",
+        help="emit a bounded privacy-safe repository summary",
+    )
+    report_view.add_argument(
+        "--tasks",
+        action="store_true",
+        help="emit a bounded human-readable standalone task index",
+    )
     report.set_defaults(handler=_report)
 
     install = commands.add_parser("install", help="transactional copied-runtime installation")
@@ -835,6 +1126,34 @@ def build_parser() -> argparse.ArgumentParser:
     defer.add_argument("--journal", required=True)
     defer.add_argument("--plan-digest", required=True)
     defer.add_argument("--target-pid", action="append", required=True, type=int)
+    defer.add_argument(
+        "--managed-codex-daemon",
+        action="append",
+        default=[],
+        metavar="TARGET=PID",
+        help="exact persistent app-server process for one reviewed Codex target",
+    )
+    defer.add_argument(
+        "--managed-codex-client",
+        action="append",
+        default=[],
+        metavar="TARGET=PID",
+        help="client or proxy that must exit before its persistent app-server is stopped",
+    )
+    defer.add_argument(
+        "--managed-codex-member",
+        action="append",
+        default=[],
+        metavar="TARGET=PID",
+        help="helper process expected to exit with its managed app-server",
+    )
+    defer.add_argument(
+        "--managed-codex-bootstrap-feature",
+        action="append",
+        default=[],
+        metavar="TARGET=FEATURE",
+        help="reviewed Codex feature to preserve when migrating an unmanaged daemon",
+    )
     defer.add_argument(
         "--wait-seconds",
         type=int,

@@ -71,7 +71,39 @@ class Finding:
     detail: str
 
 
+def snapshot_paths(repo: Path) -> list[Path]:
+    """Treat every file as publishable when immutable input has no Git metadata."""
+
+    return sorted(
+        (
+            path.relative_to(repo)
+            for path in repo.rglob("*")
+            if path.is_file() or path.is_symlink()
+        ),
+        key=lambda path: path.as_posix(),
+    )
+
+
 def publishable_paths(repo: Path) -> list[Path]:
+    probe = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if probe.returncode != 0:
+        git_entry = repo / ".git"
+        if git_entry.exists() or git_entry.is_symlink():
+            detail = probe.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(detail or "repository Git metadata is unreadable")
+        return snapshot_paths(repo)
+    try:
+        top_level = Path(probe.stdout.decode("utf-8", errors="strict").strip()).resolve()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RuntimeError(f"could not resolve repository root: {exc}") from exc
+    if top_level != repo:
+        raise RuntimeError("--repo must name the exact Git worktree root")
     result = subprocess.run(
         ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         cwd=repo,

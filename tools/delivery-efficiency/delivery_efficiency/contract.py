@@ -814,5 +814,5 @@ def adapter_versions_are_current(observation: Mapping[str, Any]) -> bool:
 
     return (
         observation.get("adapter", {}).get("version") == ADAPTER_VERSION
-        and RECORDER_VERSION == "0.2.4"
+        and RECORDER_VERSION == "0.2.9"
     )

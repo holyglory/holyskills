@@ -253,6 +253,32 @@ def actual_verifier_gate_self_test() -> None:
 
 
 def main() -> int:
+    check(
+        MODULE.descriptor_budget_target(1024, 4096, 1500) == 1500,
+        "descriptor budget should raise a low soft limit to the audit closure requirement",
+    )
+    check(
+        MODULE.descriptor_budget_target(4096, 8192, 1500) == 4096,
+        "descriptor budget should not lower an already sufficient soft limit",
+    )
+    check(
+        MODULE.evidence_descriptor_budget(735) == 3229,
+        "audit closure budget must cover both source and parent-directory guards",
+    )
+    expect_error(
+        lambda: MODULE.descriptor_budget_target(1024, 1100, 1200),
+        "hard limit",
+    )
+    check(
+        LEDGER.status_classification(
+            "Blocked - administrator-owned coordinator runtime ACL repair or a completed GitHub Actions run is required"
+        ) == "active",
+        "a completed external run that is still required must remain an active blocker",
+    )
+    check(
+        LEDGER.status_classification("Open - implementation completed") == "terminal",
+        "a row that claims implementation completed must remain terminal",
+    )
     actual_verifier_gate_self_test()
     escaped = LEDGER.LedgerRow(
         "Q-EXISTING",

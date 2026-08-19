@@ -93,6 +93,9 @@ def _terminal_match_is_pending(key: str, active_end: int, terminal_start: int) -
     """
 
     context = key[active_end:terminal_start]
+    trailing = key[terminal_start:]
+    if re.search(r"\b(?:is|are|be|must be|needs? to be)\s+required\b", trailing):
+        return True
     clause = re.split(r"(?:[/|,;]|\s[-–—:]\s)", context)[-1]
     words = re.findall(r"[a-z0-9]+", clause)
     if set(words) & FUTURE_STATUS_MARKERS:
@@ -222,7 +225,7 @@ def parse_ledger(text: str) -> list[LedgerRow]:
     return rows
 
 
-def read_text_nofollow(path: Path) -> str | None:
+def read_text_nofollow(path: Path, *, anchor: Path | None = None) -> str | None:
     """Read a regular UTF-8 file without following any supplied path symlink.
 
     ``None`` means the path does not exist.  Other unsafe objects and unstable
@@ -232,18 +235,35 @@ def read_text_nofollow(path: Path) -> str | None:
     expanded = path.expanduser()
     if ".." in expanded.parts:
         raise LedgerError(f"ledger path contains a parent traversal component: {path}")
-    raw_path = os.path.abspath(os.fspath(expanded))
-    parts = Path(raw_path).parts
-    if len(parts) < 2:
+    raw_path = Path(os.path.abspath(os.fspath(expanded)))
+    if anchor is None:
+        parts = raw_path.parts
+        start = parts[0]
+        components = parts[1:]
+    else:
+        expanded_anchor = anchor.expanduser()
+        if ".." in expanded_anchor.parts:
+            raise LedgerError(f"ledger anchor contains a parent traversal component: {anchor}")
+        anchor_path = Path(os.path.abspath(os.fspath(expanded_anchor)))
+        try:
+            relative = raw_path.relative_to(anchor_path)
+        except ValueError as exc:
+            raise LedgerError(f"ledger path escapes its trusted project root: {path}") from exc
+        start = os.fspath(anchor_path)
+        components = relative.parts
+    if not components:
         raise LedgerError(f"ledger path is not a regular file: {path}")
 
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | nofollow
     file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow
-    directory_fd = os.open(parts[0], directory_flags)
+    try:
+        directory_fd = os.open(start, directory_flags)
+    except OSError as exc:
+        raise LedgerError(f"ledger anchor is symlinked or unsafe: {path}") from exc
     file_fd: int | None = None
     try:
-        for component in parts[1:-1]:
+        for component in components[:-1]:
             try:
                 next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
             except FileNotFoundError:
@@ -256,7 +276,7 @@ def read_text_nofollow(path: Path) -> str | None:
             directory_fd = next_fd
 
         try:
-            file_fd = os.open(parts[-1], file_flags, dir_fd=directory_fd)
+            file_fd = os.open(components[-1], file_flags, dir_fd=directory_fd)
         except FileNotFoundError:
             return None
         except OSError as exc:
@@ -289,7 +309,7 @@ def read_text_nofollow(path: Path) -> str | None:
         if before_identity != after_identity:
             raise LedgerError(f"ledger changed while it was being read: {path}")
         try:
-            path_after = os.stat(parts[-1], dir_fd=directory_fd, follow_symlinks=False)
+            path_after = os.stat(components[-1], dir_fd=directory_fd, follow_symlinks=False)
         except FileNotFoundError as exc:
             raise LedgerError(f"ledger was replaced while it was being read: {path}") from exc
         path_identity = (
@@ -303,8 +323,8 @@ def read_text_nofollow(path: Path) -> str | None:
             raise LedgerError(f"ledger was replaced while it was being read: {path}")
         rebound_directory_fd: int | None = None
         try:
-            rebound_directory_fd = os.open(parts[0], directory_flags)
-            for component in parts[1:-1]:
+            rebound_directory_fd = os.open(start, directory_flags)
+            for component in components[:-1]:
                 next_fd = os.open(component, directory_flags, dir_fd=rebound_directory_fd)
                 os.close(rebound_directory_fd)
                 rebound_directory_fd = next_fd

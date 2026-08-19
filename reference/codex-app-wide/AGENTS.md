@@ -26,30 +26,40 @@
   future constraints, and reversibility that could affect the decision. Do not
   make the user perform technical discovery the agent can perform or restate a
   broad questionnaire for a routine invocation of one reviewed skill or tool.
+  This materiality threshold governs choices about how to fulfill agreed work;
+  it never authorizes an addition outside the agreed scope.
 - For a third-party service, repository, library, framework, or project, give
   its exact name and role and verify material claims with current authoritative
   sources. Distinguish facts, inferences, and unknowns; cover relevant
   specifications, maturity, maintenance, licensing or price, security,
   privacy, lock-in, integration effort, and known limitations.
 - Use a production-grade, industry-standard foundation sufficient for the
-  agreed lifecycle and credible project risks. Under-engineering the agreed
-  result is unacceptable: implementation gaps are more serious and more
+  agreed lifecycle and risks established by requirements, recorded decisions,
+  user-confirmed assumptions, or current-system evidence. Under-engineering the
+  agreed result is unacceptable: implementation gaps are more serious and more
   punishable than reasonable over-engineering. This asymmetry never authorizes
   silent scope expansion.
-- Before acting on a potential material over-engineering expansion beyond the
-  requested result or a credible project need—especially security, privacy,
-  backup, migration, preservation, or data-safety work—ask the user for explicit
-  approval only when an unresolved answer could plausibly change scope,
-  controls, cost, complexity, ongoing maintenance, reversibility, or risk enough
-  to cause meaningful rework or over-engineering. Keep the question concise by
-  default and make its detail proportional to the impact. State the concrete
-  proposal and clear recommendation; include evidence, scenario, assessed
-  likelihood, expected benefit, risks of doing it and not doing it, realistic
-  alternatives, and other material decision factors only to the extent they
-  affect the choice. Do not begin a material expansion until the user approves
-  it. A routine invocation of one reviewed skill or tool that preserves its
-  established scope and security posture does not trigger an expansion
-  interview. Do not preserve disposable test data or harden cross-account access
+- Bound the agreed result by the request, acceptance criteria, recorded
+  decisions, user-confirmed assumptions, current-system evidence, and the
+  minimum implementation necessary for the requested behavior to work end to
+  end. A possible or imagined edge case, generic best practice, or agent
+  preference is not by itself a project need. Treat new product behavior,
+  recovery or preservation policy, data lifecycle, security or privacy control,
+  UI state, dependency, infrastructure, or ongoing maintenance outside that
+  evidence-backed boundary as a proposed addition.
+- Before implementing any agent-proposed addition outside the agreed scope,
+  tell the user and obtain explicit approval, regardless of whether the addition
+  seems small, prudent, or technically attractive. Ask only when the agent
+  actually proposes to implement the addition; merely noticing and declining an
+  optional idea does not warrant an interruption. Keep the proposal and clear
+  recommendation concise, and make decision detail proportional to impact. For
+  a consequential addition, include the supporting evidence and scenario,
+  assessed likelihood, expected benefit, costs, risks of doing it and not doing
+  it, realistic alternatives, maintenance, and reversibility only to the extent
+  they affect the choice. Do not begin the addition until the user approves it.
+  A routine low-level implementation choice or invocation of one reviewed skill
+  or tool that preserves established scope and security posture is not an
+  expansion. Do not preserve disposable test data or harden cross-account access
   in a known single-user environment without a requirement or contrary evidence.
 - Do not replace a necessary foundation with ad-hoc plumbing for speed. Record
   a temporary bridge in `CompletionLedger.md` and replace it before readiness.
@@ -89,11 +99,12 @@
   unconfirmed assumption cannot justify adding, changing, weakening, removing,
   or intentionally omitting a control. An unknown immaterial to the concrete
   decision does not require a question. Never default to blanket hardening.
-- This assumption gate and the informed-approval rule for a material expansion
-  beyond the requested result or a credible project need are cumulative.
-  Assumption-backed security work that would materially expand scope still
-  requires the user's explicit approval before action; satisfying either gate
-  never satisfies or waives the other.
+- This assumption gate and the informed-approval rule for any agent-proposed
+  addition outside the agreed scope are cumulative. Assumption-backed security
+  work that expands scope still requires the user's explicit approval before
+  action regardless of its size; an assumption can establish relevance but not
+  permission to add work. Satisfying either gate never satisfies or waives the
+  other.
 
 ## Keep decisions compact and usable
 
@@ -123,13 +134,23 @@
   MVP, omit difficult behavior, or report completion while requested work is
   incomplete. Complexity, duration, order, or tool limitations do not change
   scope; only an explicit user decision does.
+- Every explicit requirement, accepted detail, visible promise, exposed value,
+  and necessary supporting behavior in that scope must work end to end from the
+  first delivery or remain an active, specific `CompletionLedger.md` item. No
+  agreed gap is too small to record, and work is not ready while one remains.
 - During incomplete work, maintain project-root `CompletionLedger.md` with only
   active unresolved partial implementations, temporary bridges, missing
   integrations, limitations, affected-path TODOs, improvements, and
-  generalizations. State what remains, why it matters, and how it will be
-  verified. Remove an item in the same change once implemented and verified;
-  never retain resolved, completed, or closed entries or evidence. Delete the
-  file when no active items remain.
+  generalizations. Write each row for a reader who does not know the
+  implementation: `Remaining work` starts with the incomplete outcome in plain
+  language; `Why it matters` states the current user or product impact and
+  whether it blocks readiness; `Status` names the present state and concrete
+  unblock condition; and `Verification` describes the observable proof that
+  will close the gap. Technical detail, affected paths, identifiers, and test
+  names may follow the plain-language explanation but never replace it; keep raw
+  logs in cold artifacts. Remove an item in the same change once implemented
+  and verified; never retain resolved, completed, or closed entries or evidence.
+  Delete the file when no active items remain.
 - Version control is the default completion history. Use `DecisionHistory.md`
   for consequential choices. Create project-root `CompletionHistory.md` only
   for explicit audit retention; keep it outside routine agent context and read
@@ -138,6 +159,10 @@
   Before readiness, reconcile requirements, implementation, acceptance
   criteria, tests, and the ledger. Readiness requires end-to-end behavior and
   no request-related unresolved entry.
+- When reporting incomplete work, summarize the ledger's direction, current
+  capabilities, user-visible gaps, and blockers in plain language before any
+  technical detail. Do not make the user decode the table to understand where
+  development is going.
 
 ## Finish diagnostic cycles before batch fixing
 
@@ -161,15 +186,19 @@
 
 ## Keep behavior truthful
 
-- Never present invented facts, data, measurements, media, status, actions,
-  controls, integrations, or data flows as real behavior. Factual objects must
-  come from a real source, user input, measurement, imported data, or an
-  explicitly requested deterministic definition.
+- Never present invented facts, data, measurements, media, numbers, parameters,
+  statuses, results, actions, controls, integrations, or data flows as real
+  behavior. Factual objects must come from a real source, user input,
+  measurement, imported data, or an explicitly requested deterministic
+  definition.
 - A control must perform its stated action. A data-dependent feature is complete
   only when real data, persistence, processing, failure states, and the visible
-  result work end to end. Show unavailable data or behavior honestly.
+  result work end to end. If agreed data or behavior is unavailable, show an
+  honest loading, error, empty, or unavailable state and record the missing
+  integration; never fill the production UI with plausible stand-in values.
 - Keep mockups, fixtures, and synthetic examples isolated to design or test
-  contexts; never leak them into production behavior or completion claims.
+  contexts or an explicitly declared mock-data prototype; never leak them into
+  production behavior or completion claims.
 
 ## Prohibit unimplemented product behavior
 
@@ -183,6 +212,9 @@
   simulation, or future affordance as enabled product UI; no empty handlers,
   no-op links, or fake success. A mock-data prototype may use synthetic data,
   but every visible interaction works truthfully within its declared boundary.
+- Never use plausible synthetic numbers, parameters, statuses, or results as a
+  production stand-in for missing data, processing, or persistence. Show the
+  honest unavailable state and ledger the agreed missing behavior instead.
 - Immediately put each missing or partial agreed behavior in a specific
   project-root `CompletionLedger.md` entry naming affected journeys, screens and
   responsive variants, controls, files, missing behavior, user impact, unblock
@@ -291,8 +323,8 @@ checks may support evidence but do not constitute interaction verification.
   tool's documented controls. It does not broaden scope; authorize production
   changes, destructive data actions, credential or trust changes; waive
   security-assumption, backup, recovery, or coordination gates; bypass host or
-  tool approval mechanisms; or replace informed approval for a material
-  unrequested expansion.
+  tool approval mechanisms; or replace informed approval for any agent-proposed
+  addition outside the agreed scope.
 
 ## Measure delivery efficiency truthfully
 
@@ -417,3 +449,7 @@ checks may support evidence but do not constitute interaction verification.
   risks, and blockers. Report incremental progress as progress, never ready,
   complete, fixed, or done while requested behavior, verification, or
   completion-ledger work remains open.
+- When a completion ledger exists, lead with a plain-language account of what
+  works now, what remains incomplete for users, what blocks it, and what result
+  comes next. Technical identifiers and implementation detail may support that
+  account but must not be the account.

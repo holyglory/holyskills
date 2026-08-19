@@ -1,0 +1,114 @@
+{
+  "credentials": {},
+  "defaults": {
+    "environment": {
+      "NODE_PATH": "/opt/holyskills-validation-runtime/node_modules"
+    },
+    "network": "none",
+    "timeout_seconds": 900
+  },
+  "evidence_policies": {
+    "handoff": {
+      "allow_reuse": true,
+      "intent": "handoff",
+      "max_age_seconds": 86400,
+      "required_targets": [
+        "tests"
+      ]
+    },
+    "release": {
+      "allow_reuse": false,
+      "intent": "release",
+      "max_age_seconds": 3600,
+      "required_targets": [
+        "tests"
+      ]
+    }
+  },
+  "fixtures": {},
+  "global_inputs": [
+    ".codex/tests.json"
+  ],
+  "intents": {
+    "change": {
+      "allow_reuse": false,
+      "source_mode": "live"
+    },
+    "checkpoint": {
+      "allow_reuse": false,
+      "source_mode": "live"
+    },
+    "handoff": {
+      "allow_reuse": true,
+      "source_mode": "immutable"
+    },
+    "manual": {
+      "allow_reuse": false,
+      "source_mode": "immutable"
+    },
+    "release": {
+      "allow_reuse": false,
+      "source_mode": "immutable"
+    }
+  },
+  "schema_version": 3,
+  "targets": {
+    "formal-web-ui-verification": {
+      "argv": [
+        "{python}",
+        "scripts/run_validation_test.py",
+        "--formal-web-ui-verification"
+      ],
+      "cwd": ".",
+      "depends_on": [],
+      "driver": "automation",
+      "network": "loopback",
+      "inputs": [
+        ".codex/tests.json",
+        "scripts/run_validation_test.py",
+        "skills/formal-web-ui-verification/**"
+      ],
+      "intents": [
+        "change",
+        "checkpoint",
+        "handoff",
+        "release",
+        "manual"
+      ],
+      "reporter": "automation-events",
+      "retry": {
+        "max_attempts": 2,
+        "retry_on": [
+          "lease_expired_before_launch"
+        ]
+      }
+    },
+    "tests": {
+      "argv": [
+        "{python}",
+        "scripts/run_validation_test.py"
+      ],
+      "cwd": ".",
+      "depends_on": [],
+      "driver": "automation",
+      "network": "loopback",
+      "inputs": [
+        "**"
+      ],
+      "intents": [
+        "change",
+        "checkpoint",
+        "handoff",
+        "release",
+        "manual"
+      ],
+      "reporter": "automation-events",
+      "retry": {
+        "max_attempts": 2,
+        "retry_on": [
+          "lease_expired_before_launch"
+        ]
+      }
+    }
+  }
+}

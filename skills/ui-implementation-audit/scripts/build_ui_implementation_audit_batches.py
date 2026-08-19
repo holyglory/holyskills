@@ -140,6 +140,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-file", action="append", default=[])
     parser.add_argument("--include-glob", action="append", default=[])
     parser.add_argument("--mockup", action="append", default=[], help="Repo-relative mockup/design asset to force into visual evidence.")
+    parser.add_argument(
+        "--split-visual-discovery",
+        action="store_true",
+        help="Use separate asset and visual-tooling workers for unusually large or specialized evidence inventories.",
+    )
     parser.add_argument("--journey-file", action="append", default=[], help="Repo-relative journey/requirements file to force into evidence.")
     parser.add_argument(
         "--implemented-ui-file",
@@ -675,6 +680,12 @@ Write exactly these sections to the report path above:
 ## Worker
 visual_comparison_audit
 
+## Mockup And Asset Inventory
+List the assets and requirements actually used, their role, and any material ambiguity. Keep this concise; use `None.` when no mockup is available.
+
+## Visual Tooling
+Name the safe render/capture path and desktop/mobile viewport plan, or the concrete blocker.
+
 ## Journey Decision Model
 | Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -702,6 +713,7 @@ List visual blockers, missing mockups, unclear routes, or `None.`
 
 def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
     ui_required = bool(manifest.get("ui_implementation_audit", {}).get("visual_required"))
+    audit = manifest.get("ui_implementation_audit", {})
     ledger = {
         "run_id": manifest["run_id"],
         "repo_root": manifest["repo_root"],
@@ -724,19 +736,19 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
         },
         "fallback": {"status": "not-started", "reason": ""},
         "mockup_asset_worker": {
-            "status": "pending" if ui_required else "not-applicable",
-            "prompt": "mockup_asset_audit.md" if ui_required else None,
-            "required_reasoning_effort": "low" if ui_required else None,
-            "report": "reports/mockup_asset_audit.md" if ui_required else None,
+            "status": "pending" if audit.get("mockup_asset_prompt") else "not-applicable",
+            "prompt": audit.get("mockup_asset_prompt"),
+            "required_reasoning_effort": "low" if audit.get("mockup_asset_prompt") else None,
+            "report": audit.get("mockup_asset_report"),
             "agent_id": None,
             "actual_reasoning_effort": None,
             "runtime_provenance": None,
         },
         "visual_tooling_worker": {
-            "status": "pending" if ui_required else "not-applicable",
-            "prompt": "visual_tooling_audit.md" if ui_required else None,
-            "required_reasoning_effort": "low" if ui_required else None,
-            "report": "reports/visual_tooling_audit.md" if ui_required else None,
+            "status": "pending" if audit.get("visual_tooling_prompt") else "not-applicable",
+            "prompt": audit.get("visual_tooling_prompt"),
+            "required_reasoning_effort": "low" if audit.get("visual_tooling_prompt") else None,
+            "report": audit.get("visual_tooling_report"),
             "agent_id": None,
             "actual_reasoning_effort": None,
             "runtime_provenance": None,
@@ -802,13 +814,14 @@ def render_index(repo: Path, out_dir: Path, manifest: dict) -> str:
     if not rows:
         rows = "| None | None | 0 | 0 | No interface source files queued |"
     audit = manifest["ui_implementation_audit"]
-    visual_prompts = (
-        "- Mockup/assets prompt: `mockup_asset_audit.md` -> `reports/mockup_asset_audit.md`\n"
-        "- Visual tooling prompt: `visual_tooling_audit.md` -> `reports/visual_tooling_audit.md`\n"
-        "- Visual comparison prompt: `visual_comparison_audit.md` -> `reports/visual_comparison_audit.md`"
-        if audit["visual_required"]
-        else "- No visual worker prompts were generated because no interface source files were queued."
-    )
+    visual_lines = []
+    if audit.get("mockup_asset_prompt"):
+        visual_lines.append(f"- Mockup/assets prompt: `{audit['mockup_asset_prompt']}` -> `{audit['mockup_asset_report']}`")
+    if audit.get("visual_tooling_prompt"):
+        visual_lines.append(f"- Visual tooling prompt: `{audit['visual_tooling_prompt']}` -> `{audit['visual_tooling_report']}`")
+    if audit.get("visual_comparison_prompt"):
+        visual_lines.append(f"- Visual comparison prompt: `{audit['visual_comparison_prompt']}` -> `{audit['visual_comparison_report']}`")
+    visual_prompts = "\n".join(visual_lines) or "- No visual worker prompt was generated."
     return f"""# UI Implementation Audit Index
 
 Repo root: `{repo}`
@@ -856,6 +869,7 @@ def write_outputs(
     requirements: list[RequirementSource],
     non_interface_source_count: int,
     implementation_gate: dict,
+    split_visual_discovery: bool,
 ) -> None:
     queue.ARTIFACT_OWNER = ARTIFACT_OWNER
     queue.ARTIFACT_MARKER = ARTIFACT_MARKER
@@ -930,7 +944,7 @@ def write_outputs(
     pruned_hints = [item for item in excluded if item.get("entry_type") == "directory" and item.get("contains_source_like_samples")]
     visual_required = True
 
-    if visual_required:
+    if split_visual_discovery:
         (out_dir / "mockup_asset_audit.md").write_text(
             render_mockup_asset_prompt(
                 repo,
@@ -951,6 +965,7 @@ def write_outputs(
             ),
             encoding="utf-8",
         )
+    if visual_required:
         (out_dir / "visual_comparison_audit.md").write_text(
             render_visual_comparison_prompt(
                 repo,
@@ -979,7 +994,8 @@ def write_outputs(
         "queue_complete.json",
         "final-report.md",
         "logs",
-        *(["mockup_asset_audit.md", "visual_tooling_audit.md", "visual_comparison_audit.md", "visual_evidence.json"] if visual_required else []),
+        *(["mockup_asset_audit.md", "visual_tooling_audit.md"] if split_visual_discovery else []),
+        *(["visual_comparison_audit.md", "visual_evidence.json"] if visual_required else []),
         *([archived_reports_name] if archived_reports_name else []),
         *[batch["prompt"] for batch in batch_records],
     ]
@@ -1011,6 +1027,7 @@ def write_outputs(
         "batches": batch_records,
         "ui_implementation_audit": {
             "visual_required": visual_required,
+            "visual_worker_mode": "split" if split_visual_discovery else "combined",
             "implementation_gate": implementation_gate,
             "source_selection": "Interface-defining non-asset source plus explicit lead-confirmed implementation evidence is queued.",
             "visual_asset_count": len(visual_assets),
@@ -1018,10 +1035,10 @@ def write_outputs(
             "requirement_source_count": len(requirements),
             "visual_assets": [asdict(item) for item in visual_assets],
             "requirement_sources": [asdict(item) for item in requirements],
-            "mockup_asset_prompt": "mockup_asset_audit.md" if visual_required else None,
-            "mockup_asset_report": "reports/mockup_asset_audit.md" if visual_required else None,
-            "visual_tooling_prompt": "visual_tooling_audit.md" if visual_required else None,
-            "visual_tooling_report": "reports/visual_tooling_audit.md" if visual_required else None,
+            "mockup_asset_prompt": "mockup_asset_audit.md" if split_visual_discovery else None,
+            "mockup_asset_report": "reports/mockup_asset_audit.md" if split_visual_discovery else None,
+            "visual_tooling_prompt": "visual_tooling_audit.md" if split_visual_discovery else None,
+            "visual_tooling_report": "reports/visual_tooling_audit.md" if split_visual_discovery else None,
             "visual_comparison_prompt": "visual_comparison_audit.md" if visual_required else None,
             "visual_comparison_report": "reports/visual_comparison_audit.md" if visual_required else None,
         },
@@ -1095,7 +1112,7 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    entries, excluded = queue.collect_files(
+    entries, excluded, _tracked_deletions = queue.collect_files(
         repo,
         args.include_config,
         args.include_env,
@@ -1172,6 +1189,7 @@ def main() -> int:
             requirements,
             non_interface_source_count,
             implementation_gate,
+            args.split_visual_discovery,
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)

@@ -10,21 +10,13 @@ from pathlib import Path
 
 REQUIRED_HEADINGS = [
     "Coverage",
-    "Interview Summary",
-    "Confirmed App Idea",
-    "Confirmed Users And Contexts",
-    "Confirmed Journey Inventory",
-    "Missing Or Weak Journeys",
-    "Journey Decision Model Gaps",
-    "Information Relevance Inventory Gaps",
-    "Documentation Completeness Findings",
-    "Information Hierarchy And Navigation Gaps",
+    "Confirmation Status",
+    "Journey Findings",
+    "Decision And Information Gaps",
+    "Documentation Findings",
     "Interaction Affordance And Metadata Gaps",
-    "UX Documentation Gaps",
-    "UI Handoff Constraints",
     "Recommended Documentation Plan",
-    "Readiness Score",
-    "Questions Still Unanswered",
+    "Readiness And Open Questions",
 ]
 PLACEHOLDER_RE = re.compile(r"\b(?:todo|tbd|placeholder|fill\s+this|lorem\s+ipsum)\b|<[^>]+>", re.IGNORECASE)
 INTERACTION_TERMS = (
@@ -69,29 +61,30 @@ def verify(text: str) -> list[str]:
             issues.append(f"section contains placeholder text: {heading}")
 
     coverage = bodies.get("Coverage", "")
-    interview = bodies.get("Interview Summary", "")
-    inventory = bodies.get("Confirmed Journey Inventory", "")
-    readiness = bodies.get("Readiness Score", "")
-    questions = bodies.get("Questions Still Unanswered", "")
+    confirmation = bodies.get("Confirmation Status", "")
+    inventory = bodies.get("Journey Findings", "")
+    readiness = bodies.get("Readiness And Open Questions", "")
     interaction = bodies.get("Interaction Affordance And Metadata Gaps", "").lower()
 
-    interview_status = re.search(r"\b(confirmed|answered|unconfirmed|not answered|unavailable|declined)\b", interview, re.IGNORECASE)
-    if not interview_status:
-        issues.append("Interview Summary must state whether the user confirmed/answered or remained unavailable/unconfirmed")
+    confirmation_status = re.search(r"\b(confirmed|unconfirmed|unavailable|declined)\b", confirmation, re.IGNORECASE)
+    confirmation_source = re.search(r"\b(user|docs?|documentation)\b", confirmation, re.IGNORECASE)
+    if not confirmation_status or not confirmation_source:
+        issues.append("Confirmation Status must state confirmed/unconfirmed status and identify user or documentation as the source")
     if inventory and not re.search(r"\b(confirmed|draft-needs-user-confirmation|draft|rejected|blocked)\b", inventory, re.IGNORECASE):
-        issues.append("Confirmed Journey Inventory must label each journey status")
+        issues.append("Journey Findings must label each journey confirmed, draft-needs-user-confirmation, rejected, or blocked")
 
     unconfirmed = "journey assumptions unconfirmed" in coverage.lower()
     if unconfirmed:
-        for heading, body in (("Readiness Score", readiness), ("Questions Still Unanswered", questions)):
-            if "journey assumptions unconfirmed" not in body.lower():
-                issues.append(f"{heading} must repeat 'journey assumptions unconfirmed' when coverage is unconfirmed")
+        if "journey assumptions unconfirmed" not in readiness.lower():
+            issues.append("Readiness And Open Questions must repeat 'journey assumptions unconfirmed' when coverage is unconfirmed")
     elif not re.search(r"\bconfirmed\b", coverage, re.IGNORECASE):
         issues.append("Coverage must label journey assumptions confirmed or use the exact unconfirmed phrase")
 
-    missing_interaction = [term for term in INTERACTION_TERMS if term not in interaction]
-    if missing_interaction:
-        issues.append(f"Interaction Affordance And Metadata Gaps omits required checks: {missing_interaction}")
+    no_surface = "no relevant interaction or message-metadata surfaces documented." in interaction
+    if not no_surface:
+        missing_interaction = [term for term in INTERACTION_TERMS if term not in interaction]
+        if missing_interaction:
+            issues.append(f"Interaction Affordance And Metadata Gaps omits required checks: {missing_interaction}")
     return issues
 
 

@@ -188,6 +188,29 @@ def main() -> int:
         clean_report = run_guard(tmp, expect=0)
         check(clean_report["ok"] is True and not clean_report["findings"], "intentional portable artifacts should pass cleanly")
 
+        # Governed immutable source snapshots intentionally contain no Git
+        # metadata. With no ignore/index authority, every remaining file is
+        # conservatively publishable rather than silently skipping the guard.
+        rmtree(tmp / ".git")
+        rmtree(tmp / "ignored")
+        snapshot_private = tmp / "docs" / "snapshot-private.md"
+        write(snapshot_private, f"Snapshot capture: {private_linux_home}\n")
+        snapshot_report = run_guard(tmp, expect=1)
+        check(
+            any(
+                item["path"] == "docs/snapshot-private.md"
+                and item["rule"] == "text-private-home"
+                for item in snapshot_report["findings"]
+            ),
+            "Git-free immutable snapshot mode must retain private-text recall",
+        )
+        snapshot_private.unlink()
+        clean_snapshot = run_guard(tmp, expect=0)
+        check(
+            clean_snapshot["ok"] is True and not clean_snapshot["findings"],
+            "clean Git-free immutable snapshots should pass",
+        )
+
         print("public artifact guard self-test ok")
         return 0
     finally:

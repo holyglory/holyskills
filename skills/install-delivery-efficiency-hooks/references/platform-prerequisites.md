@@ -54,10 +54,17 @@ choice to the user.
 
 The normal install and upgrade path is software-owned. After the agent creates
 and the user approves the immutable plan, the agent discovers every live
-same-user process for the reload-required targets and invokes `install defer`
-with the reviewed journal/digest and one repeatable `--target-pid` per exact
-process. The user never opens Terminal, copies a command, finds a PID, or runs
-apply, verify, status, cancel, or rollback.
+same-user process for the reload-required targets, classifies transient
+clients/proxies separately from persistent managed Codex app-server
+daemon/helpers, and invokes `install defer` with the reviewed journal/digest
+and one repeatable `--target-pid` per exact process. A managed group also uses
+one `--managed-codex-daemon`, one or more `--managed-codex-client`, and any
+`--managed-codex-member` bindings for the same reviewed target name. Before
+arming, both agent and recorder must prove the exact daemon executable,
+pathname identity, target home, running native-control status, reported CLI and
+app-server versions, same-user ownership, and at least one transient client.
+The user never opens Terminal, copies a command, finds a PID, or runs apply,
+verify, status, cancel, or rollback.
 
 `install defer` does not return an armed result until its detached worker has
 validated the private request, plan digest, exclusive job ownership, and every
@@ -71,17 +78,30 @@ detected premature same-image relaunch, PID reuse ambiguity, missing identity,
 drift, timeout, or worker loss fails closed and never becomes a verified
 receipt.
 
-The worker never signals or kills a process. It closes inherited standard
-streams, inherits no application credential intentionally, has a bounded
-1-through-604800-second wait (86400 seconds by default), and writes only
-canonical bounded private status. It is one-shot and nonpersistent, so an OS
-reboot ends it and requires agent-owned replan and rearm; the user only repeats
-the close/reopen boundary and never opens Terminal. When a strict receipt for
-the exact job and plan digest proves no mutation, `deferred-status` may report
-the saved categorical failure even if the reboot changed volatile filesystem
-device identity. This read-only fallback never authorizes apply, trust review,
-activation, or success. Native survival and identity behavior must be proven on
-each claimed platform; a simulated branch is not native evidence.
+The worker waits until every bound transient client/proxy and ordinary passive
+target exits. A nonempty daemon backend selects the exact captured executable's
+native stop with exact `CODEX_HOME`, no shell, and a fixed platform system path.
+A running version response without `backend` is not native-stop proof. On Linux
+only, the reviewed legacy bridge requires pidfd support, an exact same-user
+process incarnation, and explicit required feature enables. It sends graceful
+`SIGTERM` through the pidfd—never a bare PID or `SIGKILL`—waits for all bound
+daemon/helpers, runs Codex's own bootstrap with the reviewed features, requires
+a nonempty managed backend, and uses Codex's native stop before transactional
+apply. Native-stop, migration, or exit-timeout failure remains unapplied.
+
+The worker closes inherited standard streams, inherits no application
+credential intentionally, has a bounded 1-through-604800-second user wait
+(86400 seconds by default), and writes only canonical bounded private status.
+It is one-shot and nonpersistent, so an OS reboot ends it and requires
+agent-owned replan and rearm; the user only repeats the close/reopen boundary
+and never opens Terminal. Never redirect the user to SSH or a server Terminal
+when topology or native control cannot be proven; fail before the close request
+instead. When a strict receipt for the exact job and plan digest proves no
+mutation, `deferred-status` may report the saved categorical failure even if
+the reboot changed volatile filesystem device identity. This read-only fallback
+never authorizes apply, trust review, activation, or success. Native survival,
+identity, and managed-control behavior must be proven on each claimed platform;
+a simulated branch is not native evidence.
 
 ## macOS
 
@@ -100,6 +120,10 @@ each claimed platform; a simulated branch is not native evidence.
   executable path, and libproc process-start identity. The detached macOS
   worker must survive the arming process and its terminal/session ending.
   Recheck process identity and same-image relaunch immediately before apply.
+- When the app-server is managed, bind desktop/client connections as transient
+  clients and prove the exact bundled or installed Codex executable's native
+  daemon version/stop capability under that target's real `CODEX_HOME`; never
+  substitute `kill`, `launchctl`, or a Terminal command.
 
 ## Linux
 
@@ -116,6 +140,14 @@ each claimed platform; a simulated branch is not native evidence.
   The worker runs in a detached session with closed standard streams. Treat a
   changed PID identity as exit of the original instance, then reject a detected
   matching-image relaunch before apply.
+- A remote macOS client disconnect may leave a durable Linux app-server and
+  helpers. Bind the proxy, persistent app-server, and every owned helper
+  separately. Require a nonempty reported backend before native daemon stop.
+  If the macOS remote client created legacy `app-server --listen unix://`
+  without a backend, require Linux pidfd APIs, bind `code_mode_host`, gracefully
+  terminate only the exact reviewed process through its pidfd after the proxy
+  exits, then require Codex bootstrap to establish a managed backend. Never ask
+  the user to SSH into the VPS or run a server-side command.
 
 ## WSL
 
@@ -158,6 +190,10 @@ each claimed platform; a simulated branch is not native evidence.
   anything. Recheck the exact identities and detected same-image relaunches
   before apply. The private request and receipt remain under the selected local
   state directory and inherit its ACL; do not claim stronger ACL hardening.
+- For a managed app-server, require the exact Windows Codex executable's native
+  daemon control to pass under the target `CODEX_HOME`. The worker uses an argv
+  array without a console or shell; never substitute `taskkill`, a service stop,
+  or a PowerShell command supplied to the user.
 
 ## Missing-software decision
 

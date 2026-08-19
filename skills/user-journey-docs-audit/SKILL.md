@@ -57,17 +57,18 @@ behavior.
 
 Do not silently infer journeys and call the audit complete.
 
-- Inspect docs and source hints first, then actively interview the user before final scoring when app idea, user groups, journey priority, or UI intent is missing or ambiguous.
+- Inspect docs and source hints first. Ask the user only when a material app,
+  user, priority, or UI-intent ambiguity remains after that inspection.
 - Use the runtime's structured question tool when available (`request_user_input` in Codex, `AskUserQuestion` in Claude Code) for survey-style choices and concise direct questions for free-form details. If no such tool is available, ask in chat.
-- Ask at least one user-facing clarification round before a final verdict unless the user's prompt already includes the app idea, target users, and prioritized journeys.
 - If the user cannot answer or asks to proceed without clarifying, label the result `journey assumptions unconfirmed`; do not say the docs are complete or UI-ready.
 - When multiple journeys exist, audit every confirmed journey and every plausible drafted journey independently before synthesizing cross-journey priorities.
 
-Recommended first interview:
+When clarification is needed, ask only the smallest questions that resolve the
+material ambiguity. Possible topics are:
 
 1. Confirm the app idea in one sentence.
 2. Confirm target user groups and their expertise level.
-3. List the full journey set, including the top 3-7 journeys by frequency and importance.
+3. Confirm the journey set and its frequency/importance.
 4. Identify mobile/desktop priority, stress level, and consequences of mistakes.
 5. Confirm what the docs should enable: implementation, redesign, QA, onboarding, support, analytics, or all of these.
 
@@ -82,8 +83,9 @@ Recommended first interview:
    - Extract documented app purpose, user roles, tasks, routes/screens, workflows, states, feature families, UI elements, implementation expectations, test expectations, constraints, and success criteria.
    - Draft likely journeys only when docs are missing, and mark every such journey `draft-needs-user-confirmation`.
 
-3. **Interview the user**
-   - Ask about the app idea, users, journey list, feature set, UI element set, journey priority, device/context, decision needs, action frequency, and quality bar.
+3. **Resolve material ambiguities**
+   - Ask only about unresolved facts that could change the audit result, such
+     as app idea, users, journey priority, device/context, or quality bar.
    - Prefer concrete survey choices for priority/frequency and concise free-form questions for app-specific journeys.
    - Use the user's answers as the source of truth over source-code guesses.
 
@@ -143,28 +145,22 @@ Score each dimension as `0 missing`, `1 weak`, `2 usable`, or `3 excellent`.
 
 ## Final Output
 
-Return exactly these top-level headings:
+Return exactly these compact top-level headings:
 
 ```markdown
 ## Coverage
-## Interview Summary
-## Confirmed App Idea
-## Confirmed Users And Contexts
-## Confirmed Journey Inventory
-## Missing Or Weak Journeys
-## Journey Decision Model Gaps
-## Information Relevance Inventory Gaps
-## Documentation Completeness Findings
-## Information Hierarchy And Navigation Gaps
+## Confirmation Status
+## Journey Findings
+## Decision And Information Gaps
+## Documentation Findings
 ## Interaction Affordance And Metadata Gaps
-## UX Documentation Gaps
-## UI Handoff Constraints
 ## Recommended Documentation Plan
-## Readiness Score
-## Questions Still Unanswered
+## Readiness And Open Questions
 ```
 
-The `Interaction Affordance And Metadata Gaps` section is required even when it is short. It must explicitly say whether the docs define:
+The `Interaction Affordance And Metadata Gaps` section is required. When the
+docs contain a relevant interactive or metadata-bearing surface, it must
+explicitly say whether the docs define:
 
 - decision signal, flag, badge, row, card, and disclosure activation targets, including whether the whole row/card or only a small icon/control is interactive
 - hover, focus, pressed, and click feedback for interactive badges, flags, rows, and disclosure surfaces
@@ -201,7 +197,7 @@ Use this priority scale:
 ## Completion Rules
 
 - Do not claim `excellent` or `complete` unless the user has confirmed app idea, users, and prioritized journeys, or the repo docs already do so explicitly.
-- If journey assumptions are unconfirmed, include `journey assumptions unconfirmed` in `Coverage`, `Readiness Score`, and `Questions Still Unanswered`.
+- If journey assumptions are unconfirmed, include `journey assumptions unconfirmed` in `Coverage` and `Readiness And Open Questions`.
 - Do not omit the `Interaction Affordance And Metadata Gaps` heading. If the docs contain no relevant interactive or metadata-bearing surfaces, write `No relevant interaction or message-metadata surfaces documented.`
 - Before finalizing, check the generated report text for the literal string `## Interaction Affordance And Metadata Gaps`. If absent, rewrite the report instead of returning it.
 - Distinguish documented truth from source-code inference.

@@ -187,8 +187,8 @@ def main() -> int:
         (
             "softened under-engineering rule",
             policy.replace(
-                "Under-engineering the agreed\n  result is unacceptable",
-                "Under-engineering the agreed\n  result is merely unfortunate",
+                "Under-engineering the\n  agreed result is unacceptable",
+                "Under-engineering the\n  agreed result is merely unfortunate",
                 1,
             ),
             "under-engineering must be unacceptable",
@@ -205,11 +205,46 @@ def main() -> int:
             "silent scope expansion must remain prohibited",
         ),
         (
-            "blanket question for every potential expansion",
+            "blanket question for every optional idea",
             policy
-            + "\nEvery potential over-engineering expansion must trigger a comprehensive "
-            "question, even when no answer can change the work.\n",
-            "immaterial potential expansions must not trigger blanket questions",
+            + "\nEvery optional idea the agent merely notices must trigger a comprehensive "
+            "question even when the agent will not implement it.\n",
+            "optional ideas that will not be implemented must not trigger blanket questions",
+        ),
+        (
+            "small unrequested edge-case addition",
+            policy
+            + "\nAgents may implement an unrequested edge-case recovery flow without "
+            "user approval when the added work is small.\n",
+            "unrequested engineering must never proceed without informed approval",
+        ),
+        (
+            "hypothetical edge case establishes scope",
+            policy
+            + "\nAn imagined edge case counts as a credible project need whenever the "
+            "agent considers it prudent.\n",
+            "a hypothetical edge case must not establish project scope",
+        ),
+        (
+            "small agreed gap omitted from ledger",
+            policy
+            + "\nA small agreed behavior does not need to be recorded in the completion "
+            "ledger when implementation is deferred.\n",
+            "no agreed gap is too small for the completion ledger",
+        ),
+        (
+            "technical-only completion ledger",
+            policy
+            + "\nCompletionLedger.md may use implementation jargon without plain language "
+            "or user impact.\n",
+            "completion-ledger technical detail must not replace a plain-language outcome and impact",
+        ),
+        (
+            "invented production UI values",
+            policy
+            + "\nThe production UI may show plausible synthetic numbers and results until "
+            "the data integration is built.\n",
+            "production UI must not use invented stand-in values",
         ),
         (
             "restart at first gap",
@@ -234,11 +269,11 @@ def main() -> int:
         (
             "missing expansion approval",
             policy.replace(
-                "Do not begin a material expansion until the user approves\n  it",
+                "Do not begin the addition until the user approves it",
                 "The agent may begin the expansion while waiting for a response",
                 1,
             ),
-            "user approves it",
+            "do not begin the addition until the user approves it",
         ),
         (
             "missing complete-cycle behavior",
@@ -619,45 +654,73 @@ def main() -> int:
         result = messages(candidate)
         check(expected in result, f"{name} fixture did not trigger {expected!r}: {result}")
 
-    missing_proportional_question_terms = (
+    missing_choice_question_terms = (
         (
             "wrong-answer materiality threshold",
-            "only when an unresolved answer could plausibly change",
+            "only when an unresolved answer could\n  materially change",
             "whenever the agent notices an optional idea",
-            "only when an unresolved answer could plausibly change",
+            "only when an unresolved answer could materially change",
         ),
         (
             "meaningful rework threshold",
-            "meaningful rework or over-engineering",
+            "meaningful additional\n  work or over-engineering",
             "any amount of work",
-            "meaningful rework or over-engineering",
+            "meaningful additional work or over-engineering",
         ),
         (
             "concise default",
-            "concise by\n  default",
-            "comprehensive by\n  default",
-            "concise by default",
+            "question and option analysis concise and\n  proportional to that impact",
+            "question and option analysis comprehensive regardless of impact",
+            "question and option analysis concise",
+        ),
+    )
+    for name, old, new, expected in missing_choice_question_terms:
+        candidate = policy.replace(old, new, 1)
+        result = messages(candidate)
+        check(
+            "relevant-context contract" in result and expected in result,
+            f"missing {name} fixture did not identify {expected!r}: {result}",
+        )
+
+    missing_expansion_question_terms = (
+        (
+            "small-addition approval boundary",
+            "regardless of whether the addition\n  seems small",
+            "only when the addition\n  seems large",
+            "regardless of whether the addition seems small",
+        ),
+        (
+            "actual-proposal boundary",
+            "actually proposes to implement the addition",
+            "merely thinks of the addition",
+            "actually proposes to implement the addition",
+        ),
+        (
+            "declined-idea false-positive boundary",
+            "merely noticing and declining an\n  optional idea does not warrant an interruption",
+            "merely noticing and declining an\n  optional idea always warrants an interruption",
+            "does not warrant an interruption",
         ),
         (
             "impact-proportional detail",
-            "detail proportional to the impact",
+            "decision detail proportional to impact",
             "same exhaustive detail for every choice",
-            "detail proportional to the impact",
+            "decision detail proportional to impact",
         ),
         (
-            "decision-factor boundary",
-            "only to the extent they\n  affect the choice",
+            "consequential-factor boundary",
+            "only to the extent\n  they affect the choice",
             "whether or not they affect the choice",
             "only to the extent they affect the choice",
         ),
         (
-            "reviewed-tool false-positive boundary",
-            "does not trigger an expansion\n  interview",
-            "always triggers an expansion\n  interview",
-            "does not trigger an expansion interview",
+            "routine-choice false-positive boundary",
+            "routine low-level implementation choice",
+            "every low-level implementation choice",
+            "routine low-level implementation choice",
         ),
     )
-    for name, old, new, expected in missing_proportional_question_terms:
+    for name, old, new, expected in missing_expansion_question_terms:
         candidate = replace_last(policy, old, new)
         result = messages(candidate)
         check(
@@ -677,8 +740,8 @@ def main() -> int:
         "\nNever stop deployment at the first failure. Do not request unbounded tool output. "
         "Never collapse provider-native counters. Delegated agents may not skip issue ledgers. "
         "Never estimate unknown counters. A collection must not show a form first. "
-        "Never implement security, privacy, backup, migration, preservation, or data-safety "
-        "expansions without asking the user. Silent scope expansion is never permitted.\n"
+        "Never implement an agent-proposed addition outside the agreed scope without asking "
+        "the user. Silent scope expansion is never permitted.\n"
     )
     check(
         not MODULE.find_policy_violations(explicit_safeguards),
@@ -824,13 +887,41 @@ def main() -> int:
     )
 
     credible_in_scope_backup = policy + (
-        "\nA backup required by an agreed destructive persistent-data operation is a credible "
-        "project need, not an unrequested expansion. Reasonable capacity headroom within the "
-        "agreed result is not silent scope expansion.\n"
+        "\nA backup required by an agreed destructive persistent-data operation is part of the "
+        "evidence-backed agreed scope, not an unrequested addition. Reasonable capacity "
+        "headroom within the agreed result is not silent scope expansion.\n"
     )
     check(
         not MODULE.find_policy_violations(credible_in_scope_backup),
-        "credible in-scope safety work and reasonable headroom must remain valid",
+        "evidence-backed in-scope safety work and reasonable headroom must remain valid",
+    )
+
+    necessary_in_scope_detail = policy + (
+        "\nA low-level detail that is the minimum implementation necessary for agreed behavior "
+        "to work end to end may proceed without expansion approval when it introduces no new "
+        "product policy, lifecycle promise, or maintenance burden.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(necessary_in_scope_detail),
+        "a necessary in-scope implementation detail must not trigger expansion approval",
+    )
+
+    declined_optional_idea = policy + (
+        "\nThe agent may notice an optional enhancement, decline to implement it, and continue "
+        "without interrupting the user.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(declined_optional_idea),
+        "an optional idea that will not be implemented must not trigger an approval prompt",
+    )
+
+    readable_technical_ledger = policy + (
+        "\nA completion-ledger row starts with the incomplete user outcome and impact in plain "
+        "language, then names the affected path and focused test as supporting technical detail.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(readable_technical_ledger),
+        "plain-language ledger entries may retain useful supporting technical detail",
     )
 
     non_security_change = policy + (

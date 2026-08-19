@@ -130,10 +130,20 @@ def main() -> int:
         real = root / "real.md"
         real.write_text(OPEN_TABLE, encoding="utf-8")
         check(not MODULE.audit_ledger(real), "regular active ledger must pass")
+        check(
+            LEDGER.read_text_nofollow(real, anchor=root) == OPEN_TABLE,
+            "an anchored regular ledger must pass",
+        )
 
         final_link = root / "linked.md"
         final_link.symlink_to(real)
         check("symlink" in "\n".join(MODULE.audit_ledger(final_link)), "final symlink must fail closed")
+        try:
+            LEDGER.read_text_nofollow(final_link, anchor=root)
+        except LEDGER.LedgerError as exc:
+            check("symlink" in str(exc), "anchored final symlink must fail closed")
+        else:
+            raise AssertionError("anchored final symlink unexpectedly passed")
 
         real_dir = root / "real-dir"
         real_dir.mkdir()
@@ -144,6 +154,12 @@ def main() -> int:
             "symlink" in "\n".join(MODULE.audit_ledger(linked_dir / "ledger.md")),
             "symlinked intermediate path component must fail closed",
         )
+        try:
+            LEDGER.read_text_nofollow(linked_dir / "ledger.md", anchor=root)
+        except LEDGER.LedgerError as exc:
+            check("symlink" in str(exc), "anchored intermediate symlink must fail closed")
+        else:
+            raise AssertionError("anchored intermediate symlink unexpectedly passed")
         traversal_messages = "\n".join(
             MODULE.audit_ledger(linked_dir / ".." / "real-dir" / "ledger.md")
         )

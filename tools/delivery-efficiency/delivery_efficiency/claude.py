@@ -83,6 +83,8 @@ def _identity(
     *,
     lineage: Optional[str] = None,
     task: Optional[str] = None,
+    project: Optional[str] = None,
+    revision: Optional[str] = None,
     session: Optional[str] = None,
     turn: Optional[str] = None,
     agent: Optional[str] = None,
@@ -91,8 +93,8 @@ def _identity(
     return {
         "lineage": lineage,
         "task": task,
-        "project": None,
-        "revision": None,
+        "project": project,
+        "revision": revision,
         "session": session,
         "turn": turn,
         "agent": agent,
@@ -407,6 +409,7 @@ def translate_hook(
     event_name: Optional[str] = None,
     surface: str = "unknown",
     runtime_version: Optional[str] = None,
+    source_project: Optional[str] = None,
     max_bytes: int = MAX_SOURCE_BYTES,
 ) -> List[Emission]:
     """Translate one Claude Code hook JSON object into allowlisted observations.
@@ -422,6 +425,13 @@ def translate_hook(
     because it can include permission and other-hook time.
     """
 
+    if source_project is not None and (
+        not isinstance(source_project, str)
+        or not source_project
+        or "\x00" in source_project
+        or len(source_project.encode("utf-8")) > 4096
+    ):
+        raise MalformedSourceEvent("repository source identity is invalid")
     data = _load_source(source, max_bytes)
     payload_event = data.get("hook_event_name")
     if event_name is None:
@@ -462,7 +472,9 @@ def translate_hook(
         observation = _observation(
             surface=resolved_surface,
             runtime_version=version,
-            source_identity=_prompt_identity(session, prompt),
+            source_identity=_prompt_identity(
+                session, prompt, project=source_project
+            ),
             classification=_classification("planning", "inferred", "unattributed", "unknown"),
             measurement=_measurement(),
             coverage=_hook_coverage(request_receipt="partial"),

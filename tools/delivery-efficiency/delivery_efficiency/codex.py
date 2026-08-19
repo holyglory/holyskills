@@ -19,14 +19,20 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
+import stat
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from . import ADAPTER_VERSION
 
 
 MAX_SOURCE_BYTES = 1_048_576
+MAX_TRANSCRIPT_BYTES = 512 * 1024 * 1024
+MAX_TRANSCRIPT_LINE_BYTES = 4 * 1024 * 1024
+TRANSCRIPT_SEARCH_BLOCK_BYTES = 1024 * 1024
 _MAX_TREE_DEPTH = 16
 _MAX_TREE_NODES = 16_384
 
@@ -240,6 +246,257 @@ def _safe_version(value: Any) -> Optional[str]:
     if isinstance(value, str) and _SAFE_VERSION.fullmatch(value):
         return value
     return None
+
+
+def _safe_transcript_path(value: Any, codex_home: Path) -> Optional[Path]:
+    """Accept one real regular rollout inside the exact managed Codex home."""
+
+    if not isinstance(value, str) or not value or "\x00" in value:
+        return None
+    try:
+        if len(value.encode("utf-8")) > 4096:
+            return None
+        home = codex_home.resolve(strict=True)
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            return None
+        resolved = candidate.resolve(strict=True)
+        if home not in resolved.parents:
+            return None
+        relative = resolved.relative_to(home)
+        if not relative.parts or relative.parts[0] not in {
+            "sessions",
+            "archived_sessions",
+        }:
+            return None
+        if resolved.suffix != ".jsonl" or not resolved.name.startswith("rollout-"):
+            return None
+        descriptor = os.open(
+            str(resolved),
+            os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            metadata = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size < 0
+            or metadata.st_size > MAX_TRANSCRIPT_BYTES
+        ):
+            return None
+        return resolved
+    except (OSError, RuntimeError, UnicodeError, ValueError):
+        return None
+
+
+def _task_start_offset(stream: Any, *, turn: str, size: int) -> Optional[int]:
+    """Find one exact task boundary without parsing content-bearing records."""
+
+    position = size
+    carry = b""
+    while position:
+        take = min(position, TRANSCRIPT_SEARCH_BLOCK_BYTES)
+        position -= take
+        stream.seek(position)
+        chunk = stream.read(take)
+        if len(chunk) != take:
+            return None
+        data = chunk + carry
+        parts = data.splitlines(keepends=True)
+        first_partial = b""
+        if position:
+            if not parts:
+                return None
+            first_partial = parts.pop(0)
+            if len(first_partial) > MAX_TRANSCRIPT_LINE_BYTES:
+                return None
+        offsets: List[Tuple[int, bytes]] = []
+        cursor = position + len(first_partial)
+        for raw in parts:
+            offsets.append((cursor, raw))
+            cursor += len(raw)
+        for offset, raw in reversed(offsets):
+            if len(raw) > MAX_TRANSCRIPT_LINE_BYTES:
+                return None
+            if b"event_msg" not in raw or b"task_started" not in raw:
+                continue
+            try:
+                item = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+                continue
+            if type(item) is not dict or item.get("type") != "event_msg":
+                continue
+            payload = item.get("payload")
+            if (
+                type(payload) is dict
+                and payload.get("type") == "task_started"
+                and _safe_identifier(payload.get("turn_id")) == turn
+            ):
+                return offset
+        carry = first_partial
+    return None
+
+
+def _transcript_usage(
+    transcript: Path,
+    *,
+    session: str,
+    turn: str,
+    surface: str,
+    runtime_version: Optional[str],
+) -> List[Emission]:
+    """Read only task boundaries and token counters from one local rollout.
+
+    Prompt, response, reasoning, tool payload, and all other record kinds are
+    ignored without copying them into an observation, source key, diagnostic,
+    or report. The rollout's task boundaries make every accepted counter exact
+    to one turn even when several Codex sessions run concurrently.
+    """
+
+    active_turn: Optional[str] = None
+    emissions: List[Emission] = []
+    descriptor: Optional[int] = None
+    try:
+        descriptor = os.open(
+            str(transcript),
+            os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size < 0
+            or metadata.st_size > MAX_TRANSCRIPT_BYTES
+        ):
+            return []
+        size = metadata.st_size
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = None
+            start = _task_start_offset(stream, turn=turn, size=size)
+            if start is None:
+                return []
+            stream.seek(start)
+            while stream.tell() < size:
+                line_offset = stream.tell()
+                raw = stream.readline(MAX_TRANSCRIPT_LINE_BYTES + 1)
+                if not raw:
+                    break
+                if len(raw) > MAX_TRANSCRIPT_LINE_BYTES:
+                    return []
+                if not any(
+                    marker in raw
+                    for marker in (b"task_started", b"task_complete", b"token_count")
+                ):
+                    continue
+                try:
+                    item = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+                    continue
+                if type(item) is not dict or item.get("type") != "event_msg":
+                    continue
+                payload = item.get("payload")
+                if type(payload) is not dict:
+                    continue
+                kind = payload.get("type")
+                if kind == "task_started":
+                    active_turn = _safe_identifier(payload.get("turn_id"))
+                    continue
+                if kind == "task_complete":
+                    candidate = _safe_identifier(payload.get("turn_id"))
+                    if candidate == active_turn:
+                        active_turn = None
+                    continue
+                if kind != "token_count" or active_turn != turn:
+                    continue
+                info = payload.get("info")
+                usage = info.get("last_token_usage") if type(info) is dict else None
+                if type(usage) is not dict:
+                    continue
+                token_values = _tokens(
+                    input=_counter(usage, ("input_tokens",)),
+                    cached_input=_counter(usage, ("cached_input_tokens",)),
+                    output=_counter(usage, ("output_tokens",)),
+                    reasoning_output=_counter(usage, ("reasoning_output_tokens",)),
+                )
+                if all(value is None for value in token_values.values()):
+                    continue
+                complete_native_counts = all(
+                    token_values[name] is not None
+                    for name in ("input", "cached_input", "output", "reasoning_output")
+                )
+                observation = _observation(
+                    adapter="codex-hooks",
+                    surface=surface,
+                    runtime_version=runtime_version,
+                    source_identity=_identity(
+                        lineage=session,
+                        task=turn,
+                        session=session,
+                        turn=turn,
+                    ),
+                    classification=_classification(
+                        "unattributed", "unknown", "model-active", "runtime-observed"
+                    ),
+                    measurement=_measurement(
+                        provenance="runtime-observed",
+                        counter_source="provider-native",
+                        tokens=token_values,
+                    ),
+                    coverage=_coverage(
+                        request_receipt="partial",
+                        first_activity="partial",
+                        tokens="complete" if complete_native_counts else "partial",
+                        tools="partial",
+                        subagents="partial",
+                        terminal_delivery="partial",
+                        scope="unknown",
+                        verification="unknown",
+                    ),
+                    event="usage.observed",
+                    payload=_payload("unknown"),
+                )
+                emissions.append(
+                    (
+                        observation,
+                        _source_key(
+                            "codex-hook-task-usage",
+                            session,
+                            turn,
+                            line_offset,
+                            token_values["input"],
+                            token_values["cached_input"],
+                            token_values["output"],
+                            token_values["reasoning_output"],
+                        ),
+                    )
+                )
+    except OSError:
+        return []
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    return emissions
+
+
+def translate_transcript_usage(
+    transcript_path: Any,
+    *,
+    codex_home: Path,
+    session: str,
+    turn: str,
+    surface: str = "unknown",
+    runtime_version: Optional[str] = None,
+) -> List[Emission]:
+    transcript = _safe_transcript_path(transcript_path, codex_home)
+    if transcript is None:
+        return []
+    return _transcript_usage(
+        transcript,
+        session=session,
+        turn=turn,
+        surface=surface,
+        runtime_version=runtime_version,
+    )
 
 
 def _declared_reference(value: Any, label: str) -> str:
@@ -558,6 +815,7 @@ def translate_hook(
     surface: str = "unknown",
     runtime_version: Optional[str] = None,
     runtime_target: Optional[str] = None,
+    source_project: Optional[str] = None,
     max_bytes: int = MAX_SOURCE_BYTES,
 ) -> List[Emission]:
     """Translate one Codex hook JSON object into allowlisted observations.
@@ -573,6 +831,13 @@ def translate_hook(
         or _RUNTIME_TARGET.fullmatch(runtime_target) is None
     ):
         raise MalformedSourceEvent("runtime target is not an installer-assigned opaque reference")
+    if source_project is not None and (
+        not isinstance(source_project, str)
+        or not source_project
+        or "\x00" in source_project
+        or len(source_project.encode("utf-8")) > 4096
+    ):
+        raise MalformedSourceEvent("repository source identity is invalid")
     data = _load_source(source, max_bytes)
     payload_event = data.get("hook_event_name")
     if event_name is None:
@@ -620,6 +885,7 @@ def translate_hook(
     identity = _identity(
         lineage=session,
         task=turn,
+        project=source_project,
         session=session,
         turn=turn,
         target=runtime_target,

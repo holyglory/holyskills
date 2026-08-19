@@ -110,6 +110,7 @@ def _standing_tool_prompt_violations(text: str) -> list[str]:
         r"trust\s+(?:change|gate|decision)|security[- ](?:control|gate|posture)|"
         r"host[- ](?:owned\s+)?approval|host\s+approval|tool\s+approval\s+mechanism|"
         r"material\s+(?:unrequested\s+)?expansion|scope\s+expansion|"
+        r"agent[- ]proposed\s+addition|addition\s+outside\s+(?:the\s+)?agreed\s+scope|"
         r"install(?:ation|ing)?|upgrad(?:e|ing)|"
         r"backup|recovery|shared[- ]state|persistent\s+(?:data|datastore)|"
         r"external\s+(?:side\s+effect|account|service)|purchase|publish(?:ing)?|"
@@ -270,18 +271,23 @@ def find_policy_violations(text: str) -> list[str]:
                 "more punishable",
                 "reasonable over-engineering",
                 "silent scope expansion",
-                "potential material over-engineering expansion",
-                "requested result",
-                "credible project need",
-                "ask the user",
+                "materiality threshold governs choices about how to fulfill agreed work",
+                "evidence-backed boundary",
+                "possible or imagined edge case",
+                "not by itself a project need",
+                "agent-proposed addition outside the agreed scope",
+                "asking the user",
                 "explicit approval",
-                "only when an unresolved answer could plausibly change",
-                "meaningful rework or over-engineering",
-                "concise by default",
-                "detail proportional to the impact",
-                "routine invocation of one reviewed skill or tool",
-                "preserves its established scope and security posture",
-                "does not trigger an expansion interview",
+                "only when an unresolved answer could materially change",
+                "meaningful additional work or over-engineering",
+                "question and option analysis concise",
+                "proportional to that impact",
+                "regardless of whether the addition seems small",
+                "actually proposes to implement the addition",
+                "merely noticing and declining an optional idea",
+                "routine low-level implementation choice",
+                "preserves established scope and security posture",
+                "is not an expansion",
                 "disposable test data",
                 "single-user environment",
             ),
@@ -301,11 +307,11 @@ def find_policy_violations(text: str) -> list[str]:
             r"(?:never|must\s+not|do\s+not).{0,40}authorize.{0,40}silent\s+scope\s+expansion",
         )
         expansion_question = _bullet_starting_with(
-            context, r"Before\s+acting\s+on\s+a\s+potential\s+material"
+            context, r"Before\s+implementing\s+any\s+agent-proposed\s+addition"
         )
         if not expansion_question:
             violations.append(
-                "material engineering expansions must use a proportional impact-based approval gate"
+                "every planned addition outside agreed scope must use a proportional approval gate"
             )
         else:
             _require_terms(
@@ -313,43 +319,40 @@ def find_policy_violations(text: str) -> list[str]:
                 expansion_question,
                 "engineering-expansion question contract",
                 (
-                    "potential material over-engineering expansion",
-                    "requested result",
-                    "credible project need",
-                    "security",
-                    "privacy",
-                    "backup",
-                    "migration",
-                    "preservation",
-                    "data-safety",
-                    "ask the user",
+                    "agent-proposed addition outside the agreed scope",
+                    "tell the user",
                     "explicit approval",
-                    "only when an unresolved answer could plausibly change",
-                    "scope",
-                    "controls",
-                    "concrete proposal",
-                    "cost",
-                    "complexity",
-                    "ongoing maintenance",
+                    "regardless of whether the addition seems small",
+                    "actually proposes to implement the addition",
+                    "merely noticing and declining an optional idea",
+                    "does not warrant an interruption",
+                    "proposal and clear recommendation concise",
+                    "decision detail proportional to impact",
+                    "consequential addition",
+                    "supporting evidence and scenario",
+                    "assessed likelihood",
+                    "expected benefit",
+                    "costs",
+                    "risks of doing it and not doing it",
+                    "realistic alternatives",
+                    "maintenance",
                     "reversibility",
-                    "meaningful rework or over-engineering",
-                    "concise by default",
-                    "detail proportional to the impact",
                     "clear recommendation",
                     "only to the extent they affect the choice",
-                    "do not begin a material expansion until the user approves it",
-                    "routine invocation of one reviewed skill or tool",
-                    "preserves its established scope and security posture",
-                    "does not trigger an expansion interview",
+                    "do not begin the addition until the user approves it",
+                    "routine low-level implementation choice",
+                    "invocation of one reviewed skill or tool",
+                    "preserves established scope and security posture",
+                    "is not an expansion",
                 ),
             )
             _require_pattern(
                 violations,
                 expansion_question,
                 "expansion approval must precede action",
-                r"before\s+acting.{0,500}ask\s+the\s+user.{0,120}explicit\s+approval"
-                r".{0,1200}do\s+not\s+begin\s+a\s+material\s+expansion\s+until\s+the"
-                r"\s+user\s+approves",
+                r"before\s+implementing.{0,500}(?:tell|ask)\s+the\s+user.{0,120}"
+                r"explicit\s+approval.{0,1500}do\s+not\s+begin\s+the\s+addition"
+                r"\s+until\s+the\s+user\s+approves",
             )
 
     security = bodies["Ground security-posture decisions in confirmed assumptions"]
@@ -406,9 +409,10 @@ def find_policy_violations(text: str) -> list[str]:
                 "unknown immaterial to the concrete decision does not require a question",
                 "never default to blanket hardening",
                 "cumulative",
-                "material expansion",
-                "requested result",
-                "credible project need",
+                "any agent-proposed addition outside the agreed scope",
+                "expands scope",
+                "regardless of its size",
+                "establish relevance but not permission",
                 "explicit approval before action",
                 "never satisfies or waives the other",
             ),
@@ -496,9 +500,27 @@ def find_policy_violations(text: str) -> list[str]:
             (
                 "full agreed scope",
                 "only an explicit user decision",
+                "every explicit requirement",
+                "visible promise",
+                "exposed value",
+                "necessary supporting behavior",
+                "no agreed gap is too small to record",
                 "project-root `CompletionLedger.md`",
                 "only active unresolved",
                 "partial implementations",
+                "reader who does not know the implementation",
+                "`Remaining work`",
+                "incomplete outcome in plain language",
+                "`Why it matters`",
+                "current user or product impact",
+                "blocks readiness",
+                "`Status`",
+                "concrete unblock condition",
+                "`Verification`",
+                "observable proof",
+                "technical detail",
+                "never replace it",
+                "raw logs in cold artifacts",
                 "same change",
                 "implemented and verified",
                 "never retain",
@@ -509,6 +531,9 @@ def find_policy_violations(text: str) -> list[str]:
                 "before readiness",
                 "end-to-end",
                 "unblock condition",
+                "direction, current capabilities, user-visible gaps, and blockers",
+                "plain language before any technical detail",
+                "decode the table",
             ),
         )
 
@@ -554,10 +579,17 @@ def find_policy_violations(text: str) -> list[str]:
             "truthful-behavior contract",
             (
                 "never present invented",
+                "numbers",
+                "parameters",
+                "statuses",
+                "results",
                 "control must perform",
                 "end to end",
-                "unavailable data",
+                "loading, error, empty, or unavailable state",
+                "plausible stand-in values",
+                "record the missing integration",
                 "mockups",
+                "explicitly declared mock-data prototype",
                 "production behavior",
             ),
         )
@@ -583,6 +615,10 @@ def find_policy_violations(text: str) -> list[str]:
                 "mock-data prototype",
                 "synthetic data",
                 "works truthfully within its declared boundary",
+                "plausible synthetic numbers, parameters, statuses, or results",
+                "production stand-in",
+                "honest unavailable state",
+                "ledger the agreed missing behavior",
                 "each missing or partial agreed behavior",
                 "project-root `CompletionLedger.md`",
                 "generic future-production item is insufficient",
@@ -749,7 +785,7 @@ def find_policy_violations(text: str) -> list[str]:
                 "credential or trust changes",
                 "security-assumption",
                 "host or tool approval mechanisms",
-                "material unrequested expansion",
+                "any agent-proposed addition outside the agreed scope",
             ),
         )
 
@@ -891,7 +927,20 @@ def find_policy_violations(text: str) -> list[str]:
             violations,
             reporting,
             "honest-status contract",
-            ("outcomes and evidence", "facts", "inferences", "assumptions", "never ready"),
+            (
+                "outcomes and evidence",
+                "facts",
+                "inferences",
+                "assumptions",
+                "never ready",
+                "when a completion ledger exists",
+                "what works now",
+                "what remains incomplete for users",
+                "what blocks it",
+                "what result comes next",
+                "technical identifiers",
+                "must not be the account",
+            ),
         )
 
     for name in FORBIDDEN_NAMES:
@@ -910,13 +959,17 @@ def find_policy_violations(text: str) -> list[str]:
         (r"(?i)\balways\s+reread\b|\bload\s+every\s+(?:skill|tool)\b", "context must remain relevant and non-redundant"),
         (r"(?i)(?<!never )(?<!do not )(?<!must not )\bstop\s+(?:the\s+)?(?:test|suite|debug|audit|rehearsal|deployment|cycle|pass)\s+at\s+(?:the\s+)?first\b", "diagnostic cycles must not stop at the first ordinary failure"),
         (r"(?i)(?<!never )(?<!do not )(?<!must not )\bfix\s+each\s+(?:error|failure|gap).{0,100}\brestart\b", "diagnostic findings must be batch-fixed after the evidence pass"),
-        (r"(?i)(?<!never )(?<!do not )(?<!must not )\bimplement\s+(?:unrequested|hypothetical).{0,100}\bwithout\s+(?:asking|approval)\b", "unrequested engineering must never proceed without informed approval"),
+        (r"(?i)(?<!never )(?<!do not )(?<!must not )\b(?:implement|add|begin|proceed\s+with)\b.{0,100}\b(?:unrequested|hypothetical|agent-proposed|outside\s+(?:the\s+)?agreed\s+scope)\b.{0,140}\bwithout\s+(?:asking\b|asking\s+(?:the\s+)?user\b|(?:obtaining\s+)?(?:(?:the\s+)?user(?:['’]s)?\s+)?(?:approval|permission)\b)", "unrequested engineering must never proceed without informed approval"),
         (r"(?i)\b(?:under-engineering|implementation\s+gaps?)\s+(?:is|are)\s+(?:acceptable|less\s+serious|less\s+punishable)\b", "under-engineering and implementation gaps must remain the more serious failure"),
         (r"(?i)\breasonable\s+over-engineering\s+is\s+(?:more\s+serious|more\s+punishable)\s+than\s+(?:under-engineering|implementation\s+gaps?)\b", "under-engineering asymmetry must not be inverted"),
         (r"(?i)\bsilent\s+scope\s+expansion\s+is\s+(?:acceptable|allowed|authorized|permitted)\b", "silent scope expansion must remain prohibited"),
         (r"(?i)(?<!never )(?<!do not )(?<!must not )\b(?:implement|perform|begin|proceed\s+with|automatically\s+add).{0,100}(?:security|privacy|backup|migration|preservation|data[- ]safety|hardening|infrastructure).{0,120}\bwithout\s+(?:asking|approval)\b", "risk-control expansion must not proceed without user approval"),
         (r"(?i)\b(?:automatically|always)\s+(?:add|implement|perform|create|preserve|migrate|back\s*up|harden).{0,160}(?:even\s+(?:if|when).{0,80}(?:unrequested|not\s+(?:requested|required|needed))|without\s+(?:evidence|a\s+credible\s+(?:project\s+)?need))", "hypothetical engineering must not expand scope automatically"),
-        (r"(?i)\b(?:every|any)\s+(?:potential\s+)?(?:over-engineering\s+)?expansion\b.{0,180}\b(?:must|always|requires?|triggers?)\b.{0,100}\b(?:question|interview|approval)\b", "immaterial potential expansions must not trigger blanket questions"),
+        (r"(?i)\b(?:every|any)\s+(?:possible|potential|optional|merely\s+noticed)\s+(?:idea|expansion|improvement)\b.{0,180}\b(?:must|always|requires?|triggers?)\b.{0,100}\b(?:question|interview|approval)\b", "optional ideas that will not be implemented must not trigger blanket questions"),
+        (r"(?i)\b(?:possible|imagined|hypothetical)\s+(?:edge\s+case|failure\s+scenario)\b.{0,100}\b(?:is(?!\s+not\b)|counts?\s+as|establishes?)\b.{0,60}\b(?:credible\s+)?project\s+need\b", "a hypothetical edge case must not establish project scope"),
+        (r"(?i)\b(?:small|minor|tiny)\s+(?:agreed|requested|in[- ]scope)\s+(?:gap|detail|behavior)\b.{0,120}\b(?:need\s+not|does\s+not\s+need\s+to|may\s+skip|can\s+skip)\b.{0,100}\b(?:CompletionLedger|completion[- ]ledger|ledger|recorded|tracked)\b", "no agreed gap is too small for the completion ledger"),
+        (r"(?i)\bCompletionLedger(?:\.md)?\b.{0,180}\b(?:may|can|should)\b.{0,100}\b(?:technical|implementation)\s+(?:detail|jargon|identifier)s?\b.{0,120}\b(?:instead\s+of|without)\b.{0,80}\b(?:plain\s+language|user\s+(?:or\s+product\s+)?impact)\b", "completion-ledger technical detail must not replace a plain-language outcome and impact"),
+        (r"(?i)\bproduction\s+UI\b.{0,120}\b(?:may|can|should)\b.{0,80}\b(?:plausible|synthetic|made-up|placeholder)\b.{0,60}\b(?:numbers|parameters|statuses|results|values)\b", "production UI must not use invented stand-in values"),
         (r"(?i)\b(?:always|must)\s+(?:ask|include|present)\b.{0,140}\b(?:every|all)\b.{0,80}\b(?:question|factor|detail|baseline\s+area)s?\b.{0,140}\b(?:regardless\s+of|whether\s+or\s+not)\b.{0,100}\b(?:material|affect|change)\b", "decision questions must not require fixed exhaustive detail"),
         (r"(?i)\b(?:if|when)\s+`?security-assumptions\.md`?\s+is\s+(?:absent|missing)\b.{0,160}\b(?:always|must|requires?)\b.{0,100}\b(?:full|complete)\s+baseline\b", "an absent assumptions file must not trigger an unconditional full baseline"),
         (r"(?i)\b(?:only|sole)\s+(?:unresolved\s+)?(?:material\s+)?assumption\b.{0,180}\b(?:must|always|requires?)\b.{0,100}\b(?:full|complete)\s+baseline\b", "one material assumption must not trigger an unrelated full baseline"),

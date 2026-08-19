@@ -620,7 +620,7 @@ def main() -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    entries, excluded = queue.collect_files(
+    entries, excluded, _tracked_deletions = queue.collect_files(
         repo,
         args.include_config,
         args.include_env,

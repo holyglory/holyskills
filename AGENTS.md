@@ -52,8 +52,8 @@ without requiring a repository-owned workflow skill.
 - Treat `UIL-AGENT-WORKFLOW-004`, `UIL-AGENT-WORKFLOW-005`, and
   `UIL-AGENT-WORKFLOW-006` as mandatory for every repository change. Complete
   finite diagnostic cycles before batch fixing, obtain informed approval before
-  material unrequested engineering expansion, and keep agent-controlled context
-  and tool output relevant and bounded.
+  implementing any agent-proposed addition outside the evidence-backed agreed
+  scope, and keep agent-controlled context and tool output relevant and bounded.
 - Run complete raw-output processes to a cold log when practical and return a
   concise failure index. Do not paste a full log into model context or
   `CompletionLedger.md`, repeatedly read an unchanged policy or artifact, or

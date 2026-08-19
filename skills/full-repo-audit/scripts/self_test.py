@@ -7,7 +7,9 @@ import hashlib
 import json
 import importlib.util
 import os
+import platform
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -23,6 +25,112 @@ LEDGER_SELF_TEST = ROOT / "scripts" / "update_completion_ledger_self_test.py"
 UPDATE_LEDGER = ROOT / "scripts" / "update_completion_ledger.py"
 MERGE_FINDINGS = ROOT / "scripts" / "_vendor" / "full_repo_harness" / "merge_findings.py"
 MARKER_FREE_EVAL_SELF_TEST = ROOT / "evals" / "marker-free" / "self_test.py"
+SELF_TEST_CACHE_SCHEMA = 1
+SELF_TEST_CACHE_SKIP_PARTS = {".git", "__pycache__"}
+
+
+def self_test_tree_digest(skill_dir: Path) -> str:
+    digest = hashlib.sha256()
+    files = sorted(
+        path
+        for path in skill_dir.rglob("*")
+        if path.is_file()
+        and not path.is_symlink()
+        and not (set(path.relative_to(skill_dir).parts) & SELF_TEST_CACHE_SKIP_PARTS)
+    )
+    for path in files:
+        relative = path.relative_to(skill_dir).as_posix().encode("utf-8")
+        data = path.read_bytes()
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        digest.update(len(data).to_bytes(8, "big"))
+        digest.update(data)
+    return digest.hexdigest()
+
+
+def self_test_cache_payload(skill_dir: Path) -> dict:
+    return {
+        "schema_version": SELF_TEST_CACHE_SCHEMA,
+        "skill": skill_dir.name,
+        "skill_digest": self_test_tree_digest(skill_dir),
+        "runtime": {
+            "implementation": platform.python_implementation(),
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "executable": str(Path(sys.executable).resolve()),
+        },
+        "result": "passed",
+    }
+
+
+def ensure_private_cache_dir(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = path.lstat()
+    if path.is_symlink() or not stat.S_ISDIR(info.st_mode):
+        raise ValueError(f"cache path must be a real directory: {path}")
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise ValueError(f"cache directory must be owned by the current user: {path}")
+    if info.st_mode & 0o077:
+        path.chmod(0o700)
+
+
+def read_self_test_cache(path: Path, expected: dict) -> bool:
+    try:
+        info = path.lstat()
+        if path.is_symlink() or not stat.S_ISREG(info.st_mode):
+            return False
+        if hasattr(os, "getuid") and info.st_uid != os.getuid():
+            return False
+        return json.loads(path.read_text(encoding="utf-8")) == expected
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def write_self_test_cache(path: Path, payload: dict) -> None:
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def cached_self_test_main() -> int:
+    default_root = Path(tempfile.gettempdir()) / (
+        f"holyskills-self-test-cache-{getattr(os, 'getuid', lambda: 'user')()}"
+    )
+    cache_root = Path(
+        os.environ.get("FULL_REPO_AUDIT_SELF_TEST_CACHE_DIR", str(default_root))
+    ).expanduser().resolve()
+    try:
+        ensure_private_cache_dir(cache_root)
+        payload = self_test_cache_payload(ROOT)
+    except (OSError, ValueError) as exc:
+        print(f"self-test cache unavailable: {exc}", file=sys.stderr)
+        return 2
+    key = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+    cache_path = cache_root / f"{ROOT.name}-{key}.json"
+    if read_self_test_cache(cache_path, payload):
+        print(f"SELF_TEST_CACHED file={cache_path.name} digest={payload['skill_digest']}")
+        return 0
+    result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--uncached"], cwd=ROOT)
+    if result.returncode:
+        return result.returncode
+    try:
+        write_self_test_cache(cache_path, payload)
+    except OSError as exc:
+        print(f"self-test passed but cache write failed: {exc}", file=sys.stderr)
+        return 2
+    print(f"SELF_TEST_PASSED file={cache_path.name} digest={payload['skill_digest']}")
+    return 0
 
 
 def positive_int_env(name: str, default: int) -> int:
@@ -232,6 +340,10 @@ description: Fixture skill contract.
     write(root / "Directory.Packages.props", "<Project></Project>\n")
     write(root / "Fixture.sln", "Microsoft Visual Studio Solution File\n")
     write(root / "package-lock.json", '{"lockfileVersion":3}\n')
+    write(root / "apps" / "web" / "package.json", '{"name":"fixture-web"}\n')
+    write(root / "apps" / "web" / "package-lock.json", '{"lockfileVersion":3}\n')
+    write(root / "apps" / "web" / "postcss.config.mjs", "export default { plugins: {} };\n")
+    write(root / "apps" / "web" / "scripts" / "check-ui.mjs", "export const checkUi = true;\n")
     write(root / "pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
     write(root / "yarn.lock", "# yarn lockfile\n")
     write(root / "Cargo.lock", "# cargo lockfile\n")
@@ -259,9 +371,14 @@ description: Fixture skill contract.
 """,
     )
     write(root / "src" / "database.py", "def connect_database():\n    return 'connected'\n")
+    write(root / "src" / "removed_during_audit.ts", "export const removedDuringAudit = true;\n")
     write(
         root / "tests" / "test_fixture.py",
         "def test_fixture_contract():\n    assert 1 + 1 == 2\n",
+    )
+    write(
+        root / "tests" / "fixture-browser.test.mjs",
+        "import test from 'node:test';\ntest('fixture browser contract', () => {});\n",
     )
     write(root / "src" / "Fixture.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>\n")
     write(root / "packages" / "app" / "docs" / "behavior.md", "# Nested Behavior\n")
@@ -306,9 +423,10 @@ description: Fixture skill contract.
     write(root / ".claude" / "CLAUDE.md", "# Project Claude Instructions\n")
     write(root / ".claude" / "settings.local.json", '{"permissions": {}}\n')
     write(root / "src" / "foo---bar.ts", "export const dashed = true;\n")
+    write(root / "tsconfig.tsbuildinfo", '{"program":{"fileInfos":{}}}\n')
     write_bytes(root / "src" / "late_binary.ts", b"a" * 5000 + b"\0tail\n")
     write(root / "scratch.local.py", "LOCAL_ONLY = True\n")
-    write(root / ".gitignore", "dist/\n.next/\n.nuxt/\n.svelte-kit/\n.terraform/\n.build/\n.swiftpm/\n.claude/settings.local.json\n.env*\nvendor/\nnode_modules/\n.cache/\n*.local.py\n")
+    write(root / ".gitignore", "dist/\n.next/\n.nuxt/\n.svelte-kit/\n.terraform/\n.build/\n.swiftpm/\n.claude/settings.local.json\n.env*\nvendor/\nnode_modules/\n.cache/\n*.local.py\n*.tsbuildinfo\n")
     write(
         root / "src" / "components" / "SaveButton.tsx",
         """export function SaveButton() {
@@ -445,13 +563,14 @@ def write_reports(root: Path, manifest_path: Path) -> tuple[
     def contract_id_for(unit_id: str) -> str:
         return contract_ids[unit_id]
 
+    manifest_test_paths = [
+        item["rel_path"]
+        for item in source_files
+        if verify_module.is_manifest_test_path(item["rel_path"])
+    ]
     test_evidence_path = next(
-        (
-            item["rel_path"]
-            for item in source_files
-            if verify_module.is_manifest_test_path(item["rel_path"])
-        ),
-        None,
+        (path for path in manifest_test_paths if "browser" not in Path(path).name.casefold()),
+        manifest_test_paths[0] if manifest_test_paths else None,
     )
 
     def no_finding_notes() -> str:
@@ -821,7 +940,7 @@ def complete_effort_ledger(output_dir: Path, *, fallback: bool = False) -> None:
     journey_sources = "\n".join(f"- `{rel_path}`: Fixture interface source." for rel_path in interface_files)
     visual_sources = ", ".join(f"`{rel_path}`" for rel_path in interface_files)
     journey_rows = "\n".join(
-        f"| Fixture audit | Inspect `{rel_path}` | `{rel_path}` | Audit-visible element | critical-always | Fixture report information | Source-only fixture | self-test fixture mode |"
+        f"| Fixture audit | Inspect `{rel_path}` | `{rel_path}` | Audit-visible element | critical-always | Fixture report information | badge-detail: not applicable; row-hit-target: not applicable; navigation-cursor: not applicable; transient-disclosure: not applicable; disclosure-scrollbar: not applicable; icon-meaning: not applicable; stable-expansion-width: not applicable; hover-copy: not applicable; status-summary: not applicable; message-metadata: not applicable | Source-only fixture | self-test fixture mode |"
         for rel_path in interface_files
     )
     ledger["subagent_capability_check"] = {
@@ -852,6 +971,15 @@ def complete_effort_ledger(output_dir: Path, *, fallback: bool = False) -> None:
             if isinstance(decision, dict):
                 decision["decision"] = "excluded-with-rationale"
                 decision["rationale"] = "Fixture generated directory is intentionally excluded after lead review."
+    tracked_deletion_review = ledger.get("tracked_deletion_review")
+    if isinstance(tracked_deletion_review, dict) and tracked_deletion_review.get("status") != "not-applicable":
+        tracked_deletion_review["status"] = "completed"
+        tracked_deletion_review["notes"] = "self-test reviewed tracked removals against baseline evidence and current references"
+        for decision in tracked_deletion_review.get("decisions", []):
+            if isinstance(decision, dict):
+                decision["decision"] = "verified-removal"
+                decision["rationale"] = "Fixture removal is intentionally represented as a lead-reviewed worktree change."
+                decision["evidence"] = "Fixture baseline digest and current-worktree absence were checked directly."
     high_risk_review = ledger.get("lead_high_risk_review")
     if isinstance(high_risk_review, dict) and high_risk_review.get("status") != "not-applicable":
         high_risk_review["status"] = "completed"
@@ -896,9 +1024,9 @@ journey_source
 - Confirmed journey: Run the fixture audit safely.
 
 ## UI Source Journey Checks
-| Journey | Step | Files | Primary navigation/decision elements | Relevance estimate | Required information | Mobile/Desktop availability | Test mode evidence |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-{journey_rows or '| Fixture audit | No interface source | None | None | rare-under-5-percent | None | Not applicable | self-test fixture mode |'}
+| Journey | Step | Files | Primary navigation/decision elements | Relevance estimate | Required information | Interaction and metadata checklist | Mobile/Desktop availability | Test mode evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+{journey_rows or '| Fixture audit | No interface source | None | None | rare-under-5-percent | None | badge-detail: not applicable; row-hit-target: not applicable; navigation-cursor: not applicable; transient-disclosure: not applicable; disclosure-scrollbar: not applicable; icon-meaning: not applicable; stable-expansion-width: not applicable; hover-copy: not applicable; status-summary: not applicable; message-metadata: not applicable | Not applicable | self-test fixture mode |'}
 
 ## Findings
 No findings.
@@ -918,10 +1046,10 @@ visual_journey
 - Repo-owned interface files reviewed for visual applicability: {visual_sources or 'none'}.
 
 ## Visual Journey Checks
-| Journey | Viewport | Route/screen | Evidence | Navigation visibility | Decision information | Visual quality | Result |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Fixture audit | desktop | CLI fixture | self-test fixture mode | not applicable | source-only | not applicable | pass |
-| Fixture audit | narrow mobile | CLI fixture | self-test fixture mode | not applicable | source-only | not applicable | pass |
+| Journey | Viewport | Route/screen | Evidence | Navigation visibility | Decision information | Interaction and metadata checklist | Visual quality | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Fixture audit | desktop | CLI fixture | self-test fixture mode | not applicable | source-only | badge-detail: not applicable; row-hit-target: not applicable; navigation-cursor: not applicable; transient-disclosure: not applicable; disclosure-scrollbar: not applicable; icon-meaning: not applicable; stable-expansion-width: not applicable; hover-copy: not applicable; status-summary: not applicable; message-metadata: not applicable | not applicable | pass |
+| Fixture audit | narrow mobile | CLI fixture | self-test fixture mode | not applicable | source-only | badge-detail: not applicable; row-hit-target: not applicable; navigation-cursor: not applicable; transient-disclosure: not applicable; disclosure-scrollbar: not applicable; icon-meaning: not applicable; stable-expansion-width: not applicable; hover-copy: not applicable; status-summary: not applicable; message-metadata: not applicable | not applicable | pass |
 
 ## Findings
 No findings.
@@ -1012,6 +1140,13 @@ def write_visual_evidence(output_dir: Path, run_id: str) -> None:
 def assert_manifest(manifest_path: Path) -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     check(manifest["scope_warning_count"] == 0, "default fixture should not have scope warnings")
+    check(manifest["tracked_deletion_count"] == 1, "default fixture should record its tracked worktree deletion")
+    tracked_deletions = manifest.get("tracked_deletions")
+    check(isinstance(tracked_deletions, list) and len(tracked_deletions) == 1, "tracked worktree deletion should have one manifest record")
+    tracked_deletion = tracked_deletions[0]
+    check(tracked_deletion["path"] == "src/removed_during_audit.ts", "tracked worktree deletion should retain its exact path")
+    check(tracked_deletion["baseline_available"] is True, "tracked worktree deletion should retain baseline evidence")
+    check(isinstance(tracked_deletion["baseline_sha256"], str) and len(tracked_deletion["baseline_sha256"]) == 64, "tracked worktree deletion should retain its baseline digest")
     check(manifest["pruned_directory_review_hint_count"] >= 1, "default fixture should surface pruned source-like directory hints")
     check(manifest["pruned_directory_review_hints"], "manifest should list pruned source-like directory hints")
     check(manifest["coverage_invariants"]["all_source_files_queued_exactly_once"], "batch coverage invariant failed")
@@ -1021,6 +1156,7 @@ def assert_manifest(manifest_path: Path) -> None:
     check(all(item.get("sha256") for item in manifest["source_files"]), "every source file should include sha256")
     source_paths = {item["rel_path"] for item in manifest["source_files"]}
     check(".claude/CLAUDE.md" in source_paths, "tracked Claude project instructions should remain auditable")
+    check("src/removed_during_audit.ts" not in source_paths, "deleted worktree files should be reviewed as removals rather than current source")
     check(str(VERIFY) in manifest["verifier_command"], "manifest should include absolute verifier command")
     expected_reports_dir = str((manifest_path.parent / "reports").resolve())
     check(expected_reports_dir in manifest["verifier_command"], "manifest should point verification at reports/")
@@ -1038,6 +1174,7 @@ def assert_manifest(manifest_path: Path) -> None:
     check(owner_marker["owned_by"] == "full-repo-audit", "output directory should include ownership marker")
     check("batch_001.md" in owner_marker["generated_artifacts"], "ownership marker should record generated batch prompts")
     check("effort_ledger.json" in owner_marker["generated_artifacts"], "ownership marker should record effort ledger")
+    check("test_evidence_index.json" in owner_marker["generated_artifacts"], "ownership marker should record shared test evidence index")
     check("logs" in owner_marker["generated_artifacts"], "ownership marker should record cold logs")
     check("final-report.md" in owner_marker["generated_artifacts"], "ownership marker should reserve the final report")
     marker = json.loads((manifest_path.parent / "queue_complete.json").read_text(encoding="utf-8"))
@@ -1052,6 +1189,9 @@ def assert_manifest(manifest_path: Path) -> None:
         "completion marker should record queue marker semantics",
     )
     check(not (manifest_path.parent / "audit_complete.json").exists(), "legacy audit_complete marker should not be generated")
+    test_index = json.loads((manifest_path.parent / "test_evidence_index.json").read_text(encoding="utf-8"))
+    check(test_index["run_id"] == manifest["run_id"], "test evidence index should bind the audit run")
+    check(test_index["test_file_count"] >= 1, "fixture tests should appear in the shared test evidence index")
     batch_prompt_text = (manifest_path.parent / manifest["batches"][0]["prompt"]).read_text(encoding="utf-8")
     expected_batch_report = str((manifest_path.parent / manifest["batches"][0]["report"]).resolve())
     check(expected_batch_report in batch_prompt_text, "batch prompt should contain its exact absolute report path")
@@ -1088,18 +1228,35 @@ def assert_manifest(manifest_path: Path) -> None:
         "Discovery: manual",
         "evidence-type: source-only",
         "counterfactual: ...",
-        "Every high-confidence named definition requires its own row",
-        "two methods named `__init__` at different coordinates",
+        "Every high-confidence named definition must appear in a row",
+        "jointly implement the same contract outcome may share a row",
         "evidence-ref: ...",
         "valid audit artifacts in `visual_evidence.json`",
         "manifest-owned repository file",
         "`batch_1000:C1000` is valid",
         "must never use `source-only`",
+        "## Cross-Batch Verification Guardrail",
+        "test_evidence_index.json",
+        "make at most one behavior-specific manifest search",
+        "Run only a relevant, bounded test",
+        "one non-destructive isolated workaround",
+        "## Pre-return Report Gate",
+        "Do not call this batch complete from a prose review alone",
+        "Anchor provenance is strict",
+        "Never invent a\nline or column such as `C1`",
+        "exact raw backticked token that literally occurs",
+        "synthesized\n`lockfileVersion@L...:C...` token is invalid",
+        "--batch-id\nbatch_001 --reports <exact-report-path> --json",
+        "The lead runs the complete\ndirectory verifier",
     ):
         check(
             semantic_gap_prompt in batch_prompt_text,
             f"batch prompts should require manual semantic review for {semantic_gap_prompt}",
         )
+    files_start = batch_prompt_text.index("## Files You Own")
+    audit_questions_start = batch_prompt_text.index("## Audit Questions")
+    fixed_prompt_text = batch_prompt_text[:files_start] + batch_prompt_text[audit_questions_start:]
+    check(len(fixed_prompt_text.encode("utf-8")) < 16_000, "batch prompt fixed guidance should remain bounded")
     lead_prompt_text = (
         manifest_path.parent / manifest["lead_reconciliation"]["prompt"]
     ).read_text(encoding="utf-8")
@@ -1135,6 +1292,13 @@ def assert_manifest(manifest_path: Path) -> None:
             len(pruned_decisions) == manifest["pruned_directory_review_hint_count"],
             "pruned directory review should include one decision row per hint",
         )
+    if manifest["tracked_deletion_count"]:
+        tracked_deletion_review = ledger.get("tracked_deletion_review")
+        check(isinstance(tracked_deletion_review, dict), "tracked deletion review should be scaffolded")
+        check(tracked_deletion_review["status"] == "pending", "tracked deletion review should be pending when removals exist")
+        tracked_deletion_decisions = tracked_deletion_review.get("decisions")
+        check(isinstance(tracked_deletion_decisions, list), "tracked deletion review should scaffold per-removal decisions")
+        check(len(tracked_deletion_decisions) == manifest["tracked_deletion_count"], "tracked deletion review should include one decision row per removal")
     check("journey_audit" in manifest, "manifest should include journey audit metadata")
     if manifest["interface_file_count"]:
         check((manifest_path.parent / "journey_audit.md").is_file(), "journey source prompt should be generated for UI repos")
@@ -1235,6 +1399,10 @@ def assert_manifest(manifest_path: Path) -> None:
             "PRODUCT.md",
             "flake.lock",
             "package-lock.json",
+            "apps/web/package.json",
+            "apps/web/package-lock.json",
+            "apps/web/postcss.config.mjs",
+            "apps/web/scripts/check-ui.mjs",
             "pnpm-lock.yaml",
             "poetry.lock",
             "uv.lock",
@@ -1311,6 +1479,10 @@ def assert_manifest(manifest_path: Path) -> None:
     check(files["Fixture.sln"]["kind"] == "config", ".sln files should be audited as config")
     check(files["src/Fixture.csproj"]["kind"] == "config", ".csproj files should be audited as config")
     check(files["package-lock.json"]["kind"] == "source/config", "package-lock.json should be audited as source config")
+    check(files["apps/web/package.json"]["interface_relevant"] is False, "web package metadata should not be treated as a rendered interface")
+    check(files["apps/web/package-lock.json"]["interface_relevant"] is False, "web lockfile metadata should not be treated as a rendered interface")
+    check(files["apps/web/postcss.config.mjs"]["interface_relevant"] is False, "web build config should not be treated as a rendered interface")
+    check(files["apps/web/scripts/check-ui.mjs"]["interface_relevant"] is False, "web test scripts should not be treated as rendered interface code")
     check(files["pnpm-lock.yaml"]["kind"] == "source/config", "pnpm-lock.yaml should be audited as source config")
     check(files["yarn.lock"]["kind"] == "source/config", "yarn.lock should be audited as source config")
     check(files["Cargo.lock"]["kind"] == "source/config", "Cargo.lock should be audited as source config")
@@ -1376,12 +1548,17 @@ def assert_exclusions(excluded_path: Path) -> None:
 
 def assert_generated_included(manifest_path: Path) -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    files = {item["rel_path"] for item in manifest["source_files"]}
+    files = {item["rel_path"]: item for item in manifest["source_files"]}
     check("dist/generated.ts" in files, "--include-generated should include dist/generated.ts")
     check(".next/server/app/page.js" in files, "--include-generated should include .next output")
     check(".nuxt/app.js" in files, "--include-generated should include .nuxt output")
     check(".svelte-kit/output/server.js" in files, "--include-generated should include .svelte-kit output")
     check(".terraform/generated.tf" in files, "--include-generated should include .terraform output")
+    check("tsconfig.tsbuildinfo" in files, "--include-generated should include TypeScript build info")
+    check(
+        files["tsconfig.tsbuildinfo"]["kind"] == "generated/build metadata",
+        "TypeScript build info should retain its generated-metadata classification",
+    )
     check("scratch.local.py" not in files, "--include-generated should not include unrelated ignored local files")
 
 
@@ -1417,14 +1594,27 @@ def assert_message_catalogs_without_config(manifest_path: Path) -> None:
     check(files["i18n/en.yaml"]["kind"] == "source/message-catalog", "--no-include-config should still include i18n/en.yaml")
 
 
-def assert_generated_excluded(manifest_path: Path) -> None:
+def assert_generated_excluded(manifest_path: Path, excluded_path: Path) -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     files = {item["rel_path"] for item in manifest["source_files"]}
+    excluded = {
+        item["path"]: item
+        for item in json.loads(excluded_path.read_text(encoding="utf-8"))
+    }
     check("dist/generated.ts" not in files, "dist/generated.ts should be excluded by default")
     check(".next/server/app/page.js" not in files, ".next output should be excluded by default")
     check("vendor/vendored.py" not in files, "vendor/vendored.py should be excluded by default")
     check("node_modules/fixture/index.js" not in files, "node_modules files should be excluded by default")
     check("scratch.local.py" not in files, "ignored local scratch files should be excluded by default")
+    check("tsconfig.tsbuildinfo" not in files, "tracked TypeScript build info should be excluded by default")
+    check(
+        excluded["tsconfig.tsbuildinfo"]["reason"].startswith("excluded generated/build file"),
+        "tracked TypeScript build info should have a generated-file exclusion reason",
+    )
+    check(
+        excluded["tsconfig.tsbuildinfo"]["scope_warning"] is False,
+        "tracked TypeScript build info should not create a source-scope warning",
+    )
 
 
 def assert_scope_warning(manifest_path: Path, excluded_path: Path) -> None:
@@ -1436,6 +1626,25 @@ def assert_scope_warning(manifest_path: Path, excluded_path: Path) -> None:
 
 
 def main() -> int:
+    cache_fixture = Path(tempfile.mkdtemp(prefix="full-repo-audit-cache-self-test-"))
+    try:
+        (cache_fixture / "SKILL.md").write_text("first\n", encoding="utf-8")
+        first_payload = self_test_cache_payload(cache_fixture)
+        cache_dir = cache_fixture / "cache"
+        ensure_private_cache_dir(cache_dir)
+        cache_path = cache_dir / "result.json"
+        write_self_test_cache(cache_path, first_payload)
+        check(read_self_test_cache(cache_path, first_payload), "exact cache payload should be reusable")
+        (cache_fixture / "SKILL.md").write_text("second\n", encoding="utf-8")
+        second_payload = self_test_cache_payload(cache_fixture)
+        check(
+            first_payload["skill_digest"] != second_payload["skill_digest"],
+            "skill-tree drift must invalidate the self-test cache key",
+        )
+        check(not read_self_test_cache(cache_path, second_payload), "stale cache payload must not be reused")
+    finally:
+        rmtree(cache_fixture, ignore_errors=True)
+
     with scenario("self-test scenario labeling"):
         try:
             check(False, "intentional scenario-label probe")
@@ -1445,6 +1654,17 @@ def main() -> int:
             raise AssertionError("intentional scenario-label probe did not fail")
 
     set_scenario("startup and environment validation")
+    with scenario("package-manager workspace isolation guidance"):
+        skill_text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        check(
+            "Package-manager installs and reification commands" in skill_text
+            and "never alongside tests or linters" in skill_text
+            and "A browser-test `PASS` is valid only" in skill_text
+            and "require the worker to run a per-report verifier check" in skill_text
+            and "Dispatch only `pending` batches" in skill_text
+            and "Record the worker agent ID, actual effort, in-progress status" in skill_text,
+            "audit guidance must prevent concurrent dependency-tree mutation, unsupported browser PASS claims, unverified returned reports, duplicate dispatches, and incomplete dispatch records",
+        )
     if not which("git"):
         print("self-test requires git on PATH", file=sys.stderr)
         return 2
@@ -1554,6 +1774,40 @@ def main() -> int:
             )
         finally:
             rmtree(svg_asset.parent, ignore_errors=True)
+
+    with scenario("normalized visible-text source binding"):
+        tsx_source = """const holdTimerRef = useRef<number | null>(null);
+  const holdOpenedRef = useRef(false);
+  const switchRef = useRef<HTMLDivElement | null>(null);
+"""
+        extracted = verify_module.visible_text_hints("LanguageSwitch.tsx", tsx_source)
+        collapsed = "(null); const holdOpenedRef = useRef(false); const switchRef = useRef"
+        check(
+            collapsed in extracted,
+            "TSX generic syntax should preserve the extractor's normalized multiline hint",
+        )
+        check(
+            verify_module.source_contains_visible_text(tsx_source, collapsed),
+            "normalized visible-text evidence should bind back to raw multiline source",
+        )
+        check(
+            not verify_module.source_contains_visible_text(tsx_source, "Launch Banana Spaceship"),
+            "normalized matching must still reject fabricated interface evidence",
+        )
+        typed_props = """function Card({ title, label }: {\n  title: string;\n  label: string;\n}) {\n  return <section>{title}</section>;\n}\n"""
+        typed_prop_hints = verify_module.visible_text_hints("Card.tsx", typed_props)
+        check(
+            "string;" not in typed_prop_hints,
+            "TypeScript prop annotations must not be treated as visible interface copy",
+        )
+        template_source = """const italic = `<em>${value}</em>`;
+const underline = `<u>${value}</u>`;
+"""
+        template_hints = verify_module.visible_text_hints("Composer.tsx", template_source)
+        check(
+            not any("underline" in hint or "const" in hint for hint in template_hints),
+            "HTML-like template literals must not create synthetic visible interface hints",
+        )
 
     with scenario("named implementation responsibility hints"):
         check(
@@ -1671,11 +1925,13 @@ CREATE MATERIALIZED VIEW reporting.total_summary AS SELECT 42;
         run(["git", "-C", str(fixture), "init"], expect=0)
         run(["git", "-C", str(fixture), "add", ".editorconfig", ".gitattributes", ".gitignore", ".npmrc", ".tool-versions", "SKILL.md", "sample.env", "example.env", "local.env.example", "ARCHITECTURE.md", "PRODUCT.md", "Cargo.lock", "Directory.Build.props", "Directory.Packages.props", "Fixture.sln", "Justfile", "Pipfile", "Procfile", "Rakefile", "flake.lock", "package-lock.json", "pnpm-lock.yaml", "poetry.lock", "uv.lock", "yarn.lock", ".gitlab", ".husky", "agents/openai.yaml", "android", "app", "assets", "i18n", "ios", "locales", "messages", "scripts", "src", "templates", "packages", ".storybook"])
         run(["git", "-C", str(fixture), "add", "-f", ".env.example", ".env.example.local", ".env.schema.json"])
+        run(["git", "-C", str(fixture), "add", "-f", "tsconfig.tsbuildinfo"])
+        (fixture / "src" / "removed_during_audit.ts").unlink()
 
         run([sys.executable, str(BUILD), "--repo", str(fixture), "--out", str(output), "--batch-size", "200"])
         assert_manifest(output / "manifest.json")
         assert_exclusions(output / "excluded_files.json")
-        assert_generated_excluded(output / "manifest.json")
+        assert_generated_excluded(output / "manifest.json", output / "excluded_files.json")
         check(str(VERIFY) in (output / "audit_index.md").read_text(encoding="utf-8"), "audit_index should include verifier path")
 
         set_scenario("run-id and harness-owned output reuse")
@@ -2535,6 +2791,8 @@ CREATE MATERIALIZED VIEW reporting.total_summary AS SELECT 42;
         implementation_test_outcome_gap = reports_dir / "reports" / "implementation-test-outcome-gap" / "batch_001.md"
         implementation_runtime_reference_gap = reports_dir / "reports" / "implementation-runtime-reference-gap" / "batch_001.md"
         implementation_test_evidence_valid = reports_dir / "reports" / "implementation-test-evidence-valid" / "batch_001.md"
+        implementation_browser_test_execution_gap = reports_dir / "reports" / "implementation-browser-test-execution-gap" / "batch_001.md"
+        implementation_browser_test_execution_valid = reports_dir / "reports" / "implementation-browser-test-execution-valid" / "batch_001.md"
         implementation_expectation_gap = reports_dir / "reports" / "implementation-expectation-gap" / "batch_001.md"
         implementation_source_only_effect_gap = reports_dir / "reports" / "implementation-source-only-effect-gap" / "batch_001.md"
         implementation_unbound_gap = reports_dir / "reports" / "implementation-unbound-gap" / "batch_001.md"
@@ -2549,6 +2807,7 @@ CREATE MATERIALIZED VIEW reporting.total_summary AS SELECT 42;
         markdown_missing_hint_gap = reports_dir / "reports" / "markdown-missing-hint-gap" / "batch_001.md"
         catalog_missing_hint_gap = reports_dir / "reports" / "catalog-missing-hint-gap" / "batch_001.md"
         finding_schema_gap = reports_dir / "reports" / "finding-schema-gap" / "batch_001.md"
+        audit_execution_heading_gap = reports_dir / "reports" / "audit-execution-heading-gap" / "batch_001.md"
         ghost_finding_gap = reports_dir / "reports" / "ghost-finding-gap" / "batch_001.md"
         boilerplate_finding_gap = reports_dir / "reports" / "boilerplate-finding-gap" / "batch_001.md"
         interface_evidence_punct_gap = reports_dir / "reports" / "interface-evidence-punct-gap" / "batch_001.md"
@@ -2787,6 +3046,37 @@ CREATE MATERIALIZED VIEW reporting.total_summary AS SELECT 42;
                 "|".join(valid_test_evidence_columns),
             ),
         )
+        browser_test_execution_columns = list(skill_columns)
+        browser_test_execution_columns[7] = re.sub(
+            r"evidence-ref:\s*`[^`]+`",
+            "evidence-ref: `tests/fixture-browser.test.mjs`",
+            browser_test_execution_columns[7],
+            count=1,
+        )
+        write(
+            implementation_browser_test_execution_gap,
+            replace_implementation_row(
+                complete_text,
+                "|".join(browser_test_execution_columns),
+            ),
+        )
+        browser_test_execution_valid_columns = list(browser_test_execution_columns)
+        browser_test_execution_valid_columns[7] = browser_test_execution_valid_columns[7].replace(
+            "outcome:",
+            "command: node --test tests/fixture-browser.test.mjs; outcome:",
+            1,
+        ).replace(
+            "; invariance:",
+            "; final TAP summary tests 1 pass 1 fail 0; invariance:",
+            1,
+        )
+        write(
+            implementation_browser_test_execution_valid,
+            replace_implementation_row(
+                complete_text,
+                "|".join(browser_test_execution_valid_columns),
+            ),
+        )
         missing_expectation_columns = list(skill_columns)
         missing_expectation_columns[7] = re.sub(
             r"(?:counterfactual|invariance):[^;]+;\s*",
@@ -2943,6 +3233,18 @@ CREATE MATERIALIZED VIEW reporting.total_summary AS SELECT 42;
             + complete_text[no_notes_start:],
         )
         write(
+            audit_execution_heading_gap,
+            complete_text.replace(
+                "### P2 - Save button uses placeholder console-only behavior",
+                "### P3 - Save verification is incomplete",
+                1,
+            ).replace(
+                "- Gap: The fixture button exposes a save action but has only TODO console behavior.",
+                "- Gap: Audit evidence cannot establish the database-backed save result because no disposable PostgreSQL test database is configured; this is an external test-environment blocker, not a source defect.",
+                1,
+            ),
+        )
+        write(
             ghost_finding_gap,
             complete_text[:no_notes_start]
             + """
@@ -3044,6 +3346,38 @@ CREATE MATERIALIZED VIEW reporting.total_summary AS SELECT 42;
             + complete_text[no_notes_start:],
         )
         canonical_complete = install_report(output, complete)
+        scoped_result = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--batch-id",
+                "batch_001",
+                "--reports",
+                str(canonical_complete),
+                "--json",
+            ]
+        )
+        check(
+            json.loads(scoped_result.stdout)["verification_scope"] == "batch:batch_001",
+            "scoped verifier should pass one exact batch before global artifacts are complete",
+        )
+        unknown_scope = run(
+            [
+                sys.executable,
+                str(VERIFY),
+                "--manifest",
+                str(output / "manifest.json"),
+                "--batch-id",
+                "batch_999",
+                "--reports",
+                str(canonical_complete),
+                "--json",
+            ],
+            expect=2,
+        )
+        check_output(unknown_scope, "not present in the manifest", "batch_999")
         verifier_case(
             scenario_runner,
             "pending effort ledger is rejected",
@@ -3552,6 +3886,26 @@ CREATE MATERIALIZED VIEW reporting.total_summary AS SELECT 42;
             check_output(pruned_path_result, "pruned_directory_review.decisions", "string path from manifest pruned_directory_review_hints")
             check("Traceback" not in f"{pruned_path_result.stdout}\n{pruned_path_result.stderr}", "malformed pruned-review path should not crash verifier")
             write(output_ledger_path, output_ledger_text)
+        tracked_deletion_ledger = json.loads(output_ledger_text)
+        tracked_deletion_decisions = tracked_deletion_ledger.get("tracked_deletion_review", {}).get("decisions", [])
+        if tracked_deletion_decisions:
+            tracked_deletion_decisions[0]["decision"] = "reviewed"
+            tracked_deletion_decisions[0]["rationale"] = "ok"
+            tracked_deletion_decisions[0]["evidence"] = "ok"
+            write(output_ledger_path, json.dumps(tracked_deletion_ledger, indent=2))
+            tracked_deletion_result = run(
+                [
+                    sys.executable,
+                    str(VERIFY),
+                    "--manifest",
+                    str(output / "manifest.json"),
+                    "--reports",
+                    str(canonical_complete),
+                ],
+                expect=1,
+            )
+            check_output(tracked_deletion_result, "tracked_deletion_review.decisions", "verified-removal")
+            write(output_ledger_path, output_ledger_text)
         journey_report_path = output / "reports" / "journey_audit.md"
         original_journey_report = journey_report_path.read_text(encoding="utf-8")
         write(
@@ -3820,10 +4174,10 @@ visual_journey
 - Ran command `npx playwright test --project=chromium` for {interface_mentions}; screenshots are bound as evidence:shot-desktop and evidence:shot-mobile; formal verifier JSON is evidence:formal-web.
 
 ## Visual Journey Checks
-| Journey | Viewport | Route/screen | Evidence | Navigation visibility | Decision information | Visual quality | Result |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Fixture audit | desktop | Fixture UI | Playwright screenshot evidence:shot-desktop for {interface_mentions} | primary actions visible | decision labels visible | readable contrast and no crop | pass |
-| Fixture audit | narrow mobile | Fixture UI | Playwright screenshot evidence:shot-mobile for {interface_mentions} | primary actions visible | decision labels visible | readable contrast and no horizontal scroll | pass |
+| Journey | Viewport | Route/screen | Evidence | Navigation visibility | Decision information | Interaction and metadata checklist | Visual quality | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Fixture audit | desktop | Fixture UI | Playwright screenshot evidence:shot-desktop for {interface_mentions} | primary actions visible | decision labels visible | badge-detail=pass; row-hit-target=pass; navigation-cursor=pass; transient-disclosure=pass; disclosure-scrollbar=pass; icon-meaning=pass; stable-expansion-width=pass; hover-copy=pass; status-summary=pass; message-metadata=pass | readable contrast and no crop | pass |
+| Fixture audit | narrow mobile | Fixture UI | Playwright screenshot evidence:shot-mobile for {interface_mentions} | primary actions visible | decision labels visible | badge-detail=pass; row-hit-target=pass; navigation-cursor=pass; transient-disclosure=pass; disclosure-scrollbar=pass; icon-meaning=pass; stable-expansion-width=pass; hover-copy=pass; status-summary=pass; message-metadata=pass | readable contrast and no horizontal scroll | pass |
 
 Interaction checklist: badge-detail=pass; row-hit-target=pass; navigation-cursor=pass; transient-disclosure=pass; disclosure-scrollbar=pass; icon-meaning=pass; stable-expansion-width=pass; hover-copy=pass; status-summary=pass; message-metadata=pass.
 
@@ -3858,8 +4212,8 @@ None.
             ]
         )
         checklist_missing_report = visual_report_path.read_text(encoding="utf-8").replace(
-            "Interaction checklist: badge-detail=pass; row-hit-target=pass; navigation-cursor=pass; transient-disclosure=pass; disclosure-scrollbar=pass; icon-meaning=pass; stable-expansion-width=pass; hover-copy=pass; status-summary=pass; message-metadata=pass.",
-            "Interaction checklist: omitted.",
+            "badge-detail=pass",
+            "badge detail omitted",
         )
         write(visual_report_path, checklist_missing_report)
         visual_checklist_result = run(
@@ -4130,6 +4484,24 @@ None.
         )
         verifier_case(
             scenario_runner,
+            "browser-test PASS evidence requires a completed command and clean summary",
+            output / "manifest.json",
+            install_report(output, implementation_browser_test_execution_gap),
+            expect=1,
+            needles=(
+                "implementation_inventory_issues",
+                "browser-test PASS evidence must record",
+                "SKILL.md",
+            ),
+        )
+        verifier_case(
+            scenario_runner,
+            "browser-test PASS evidence accepts a bounded completed command with a clean summary",
+            output / "manifest.json",
+            install_report(output, implementation_browser_test_execution_valid),
+        )
+        verifier_case(
+            scenario_runner,
             "implementation verification requires a counterfactual or invariance",
             output / "manifest.json",
             install_report(output, implementation_expectation_gap),
@@ -4270,6 +4642,14 @@ None.
             install_report(output, finding_schema_gap),
             expect=1,
             needles=("semantic_report_issues", "findings must use severity subsections"),
+        )
+        verifier_case(
+            scenario_runner,
+            "audit execution blockers cannot use product-defect headings",
+            output / "manifest.json",
+            install_report(output, audit_execution_heading_gap),
+            expect=1,
+            needles=("semantic_report_issues", "audit-execution-only gap must use an 'Audit execution blocked' heading"),
         )
         verifier_case(
             scenario_runner,
@@ -4545,39 +4925,7 @@ None.
             "implementation inventory omitted occurrence-aware named source responsibilities",
             "calculate_total",
         )
-        stuffed_tax_columns = list(tax_columns)
-        stuffed_tax_columns[4] = stuffed_tax_columns[4].replace(
-            f"`{semantic_tax_anchor}`",
-            f"`{semantic_tax_anchor}` and `{semantic_total_anchor}`",
-            1,
-        )
-        stuffed_tax_columns[5] += f" The unrelated `{semantic_total_anchor}` token is also listed. "
-        stuffed_tax_columns[7] += f" The unrelated `{semantic_total_anchor}` token is also listed. "
-        anchor_stuffed_semantic_text = false_clean_semantic_text.replace(
-            "|".join(tax_columns),
-            "|".join(stuffed_tax_columns),
-            1,
-        )
-        write(semantic_canonical_report, anchor_stuffed_semantic_text)
-        complete_effort_ledger(semantic_output)
-        anchor_stuffed_result = run(
-            [
-                sys.executable,
-                str(VERIFY),
-                "--manifest",
-                str(semantic_output / "manifest.json"),
-                "--reports",
-                str(semantic_canonical_report),
-            ],
-            expect=1,
-        )
-        check_output(
-            anchor_stuffed_result,
-            "each named source definition occurrence requires its own implementation inventory row",
-            "calculate_total",
-        )
-
-        set_scenario("same-name definition occurrences require distinct inventory rows")
+        set_scenario("same-name definition occurrences require complete anchor coverage")
         repeated_repo = base / "repeated-definition-repo"
         write(
             repeated_repo / "src" / "models.py",
@@ -5206,6 +5554,91 @@ export function AriaDisabledButton() {
                 "--reports",
                 str(install_report(aria_disabled_output, aria_disabled_complete)),
             ]
+        )
+        dynamic_control_source = """export function DynamicControls({ busy, value, setValue, commit }) {
+  return (
+    <label>
+      Server name
+      <input value={value} onChange={(event) => setValue(event.target.value)} />
+      <button disabled={busy} onClick={() => commit(value)}>
+        <SaveIcon /> Save server
+      </button>
+    </label>
+  );
+}
+"""
+        dynamic_control_markers = load_verify_module().interface_control_markers_for(
+            "src/components/DynamicControls.tsx",
+            dynamic_control_source,
+        )
+        check(
+            not dynamic_control_markers,
+            f"dynamic disabled state and parent label should not be control defects: {dynamic_control_markers}",
+        )
+        composed_control_source = """function Field({ children }) {
+  return <label>{children}</label>;
+}
+
+function TextButton({ label }) {
+  return <button type=\"button\">{label}</button>;
+}
+
+export function ComposedControls({ name, volume, raw, setValue }) {
+  return (
+    <div>
+      <Field><input value={name} onChange={(event) => setValue(event.target.value)} /></Field>
+      <TextButton label=\"Save server\" />
+      <label htmlFor=\"volume\">Volume</label>
+      <input id=\"volume\" type=\"range\" value={volume} onChange={(event) => setValue(event.target.value)} />
+      <input type=\"range\" value={raw} onChange={(event) => setValue(event.target.value)} />
+    </div>
+  );
+}
+"""
+        composed_control_markers = load_verify_module().interface_control_markers_for(
+            "src/components/ComposedControls.tsx",
+            composed_control_source,
+        )
+        check(
+            not any("TextButton" in marker for marker in composed_control_markers),
+            f"same-file named button component should not be a control defect: {composed_control_markers}",
+        )
+        check(
+            not any("value={name}" in marker or "value={volume}" in marker for marker in composed_control_markers),
+            f"native label wrappers and htmlFor labels should be recognized: {composed_control_markers}",
+        )
+        check(
+            any("unlabeled form field" in marker and "value={raw}" in marker for marker in composed_control_markers),
+            f"genuinely unnamed native controls must remain detected: {composed_control_markers}",
+        )
+        fixture_control_markers = load_verify_module().interface_control_markers_for(
+            "src/components/ComposedControls.test.tsx",
+            '<button onClick={() => {}} /><input type="range" />',
+        )
+        check(
+            not fixture_control_markers,
+            f"test-only fixture markup must not be classified as shipped UI: {fixture_control_markers}",
+        )
+        static_guard_fixture_markers = load_verify_module().interface_control_markers_for(
+            "apps/web/scripts/check-ui-surfaces.mjs",
+            "const fixture = '<button onClick={() => {}} />';",
+        )
+        check(
+            not static_guard_fixture_markers,
+            "non-rendered static validation scripts must not classify embedded markup fixtures as shipped UI",
+        )
+        verify_module = load_verify_module()
+        check(
+            not verify_module.source_only_claim_requires_stronger_evidence(
+                "pass — source review confirms `PublishingPage` renders its local label wrapper."
+            ),
+            "backticked source identifiers must not be treated as side-effect claims",
+        )
+        check(
+            verify_module.source_only_claim_requires_stronger_evidence(
+                "pass — source review claims the handler saves the record in the database."
+            ),
+            "actual persistence prose must still require test or runtime evidence",
         )
         native_ui_fixture = base / "native-ui-fixture"
         write(
@@ -6056,4 +6489,9 @@ export function AriaDisabledButton() {
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    if sys.argv[1:] == ["--cached"]:
+        raise SystemExit(cached_self_test_main())
+    if sys.argv[1:] in ([], ["--uncached"]):
+        raise SystemExit(main())
+    print("usage: self_test.py [--cached|--uncached]", file=sys.stderr)
+    raise SystemExit(2)

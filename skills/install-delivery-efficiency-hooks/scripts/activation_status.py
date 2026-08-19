@@ -339,8 +339,16 @@ def summarize_events(
             and (
                 (
                     family == "codex"
-                    and adapter_name == "codex-otel"
-                    and source_event == "otel_response_completed"
+                    and (
+                        (
+                            adapter_name == "codex-otel"
+                            and source_event == "otel_response_completed"
+                        )
+                        or (
+                            adapter_name == "codex-hooks"
+                            and source_event == "unknown"
+                        )
+                    )
                     and counter_source == "provider-native"
                 )
                 or (
@@ -703,12 +711,20 @@ def _verify_relaxed_codex_config(
     wanted = installer._managed_otel_block(
         settings["listen_port"], settings["auth_token"], reviewed_newline
     )
+    displaced = ""
     if current != wanted:
-        raise installer.InstallerVerificationError(
-            "Codex config activation managed OTel block was edited"
+        displaced = installer._displaced_managed_otel_suffix(
+            current,
+            [wanted],
+            reviewed_newline,
         )
-    _assert_supported_outer_toml(installer, prefix, suffix)
-    if not _suffix_closes_managed_otel(installer, suffix):
+        if displaced is None:
+            raise installer.InstallerVerificationError(
+                "Codex config activation managed OTel block was edited"
+            )
+    outer_suffix = displaced + suffix
+    _assert_supported_outer_toml(installer, prefix, outer_suffix)
+    if not _suffix_closes_managed_otel(installer, outer_suffix):
         raise installer.InstallerVerificationError(
             "Codex config activation target extends the managed OTel table"
         )
@@ -970,8 +986,9 @@ def _watch_with_api(
     *,
     selected_targets: Optional[list[str]],
     wait_seconds: int,
-) -> Tuple[Dict[str, object], Path, str, int]:
-    """Own the baseline and watch every reviewed Codex target concurrently."""
+    fresh_only: bool = True,
+) -> Tuple[Dict[str, object], Optional[Path], Optional[str], int]:
+    """Inspect persistent proof or own a fresh concurrent diagnostic watch."""
 
     (
         load_plan,
@@ -1023,7 +1040,9 @@ def _watch_with_api(
                 after_sequence=0,
                 selected_runtime="codex",
             )
-            baseline = int(str(baseline_summary["max_sequence"]))
+            baseline = (
+                int(str(baseline_summary["max_sequence"])) if fresh_only else 0
+            )
             expected_targets: Dict[str, str] = {}
             if callable(runtime_target_ref):
                 for name in requested:
@@ -1106,6 +1125,8 @@ def _watch_with_api(
         else "family-only"
         if attribution == "family-only"
         else "timeout"
+        if fresh_only
+        else "unproven"
     )
     used_config_conformance = any(
         isinstance(value, Mapping) and value.get("activation_config_conformance") is True
@@ -1113,10 +1134,15 @@ def _watch_with_api(
     )
     report: Dict[str, object] = {
         "schema_version": _REPORT_SCHEMA_VERSION,
-        "report_kind": "codex-target-activation",
+        "report_kind": (
+            "codex-target-activation-watch"
+            if fresh_only
+            else "codex-target-persistent-activation"
+        ),
         "status": status,
         "attribution": attribution,
         "proof_scope": "configured-runtime-home-not-process-or-session",
+        "proof_freshness": "post-baseline" if fresh_only else "persistent-history",
         "plan_sha256": plan_digest,
         "recorder_version": store.get("recorder_version"),
         "event_schema_version": store.get("schema_version"),
@@ -1146,16 +1172,20 @@ def _watch_with_api(
             else ["a-fresh-task-proves-the-configured-home-not-a-particular-process-or-session"]
         ),
     }
-    filename, report_digest, report_size = _write_private_report(state, report)
     result = {
         "ok": complete,
         "status": status,
         "active": active_count,
         "total": len(requested),
         "pending": len(requested) - active_count,
-        "report_sha256": report_digest,
-        "report_bytes": report_size,
+        "targets": target_reports,
+        "proof_freshness": "post-baseline" if fresh_only else "persistent-history",
     }
+    if not fresh_only:
+        return result, None, None, 0
+    filename, report_digest, report_size = _write_private_report(state, report)
+    result["report_sha256"] = report_digest
+    result["report_bytes"] = report_size
     return result, filename, report_digest, report_size
 
 
@@ -1174,11 +1204,41 @@ def watch(
                 plan_digest,
                 selected_targets=selected_targets,
                 wait_seconds=wait_seconds,
+                fresh_only=True,
             )
     except ActivationStatusError:
         raise
     except Exception as error:
         raise ActivationStatusError("reviewed activation watch failed") from error
+
+
+def persistent_activation(
+    journal: Path,
+    plan_digest: str,
+    *,
+    selected_targets: Optional[list[str]],
+) -> Dict[str, object]:
+    """Return current target-bound activation from verified durable history."""
+
+    try:
+        with _recorder_api(journal, plan_digest) as api:
+            result, filename, digest, size = _watch_with_api(
+                api,
+                journal,
+                plan_digest,
+                selected_targets=selected_targets,
+                wait_seconds=0,
+                fresh_only=False,
+            )
+        if filename is not None or digest is not None or size != 0:
+            raise ActivationStatusError("persistent activation wrote a diagnostic report")
+        return result
+    except ActivationStatusError:
+        raise
+    except Exception as error:
+        raise ActivationStatusError(
+            "reviewed persistent activation inspection failed"
+        ) from error
 
 
 def inspect(
@@ -1272,8 +1332,23 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 1
 
     if args.target:
-        print("ACTIVATION_STATUS error=target-requires-watch")
-        return 1
+        if args.runtime != "codex" or args.after_sequence != 0 or wait_seconds != 0:
+            print("ACTIVATION_STATUS error=invalid-persistent-options")
+            return 1
+        try:
+            result = persistent_activation(
+                args.journal,
+                args.plan_digest,
+                selected_targets=args.target,
+            )
+            print(
+                "ACTIVATION_STATUS "
+                + json.dumps(result, sort_keys=True, separators=(",", ":"))
+            )
+            return 0 if result["ok"] or not args.require_active else 2
+        except ActivationStatusError:
+            print("ACTIVATION_STATUS error=inspection-failed")
+            return 1
     deadline = time.monotonic() + wait_seconds
     try:
         while True:
