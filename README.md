@@ -1,6 +1,6 @@
 # Holy Skills
 
-Holy Skills is the canonical public source for six portable Codex and Claude
+Holy Skills is the canonical public source for seven portable Codex and Claude
 Code skills and one shared delivery-efficiency recorder. It contains audit,
 verification, documentation, and observational agent-runtime tooling; it does
 not own or deploy local-service coordination products.
@@ -11,6 +11,12 @@ does not import, clone, pin, build, or test their source repository.
 
 ## Canonical skills
 
+- `coordinate-product-delivery`: an explicit-invocation product and project
+  delivery coordinator with approved release baselines, one primary execution
+  task, a software-owned SQLite work graph and permanent Completion Ledger,
+  weighted progress, bounded monitoring events, and renderer-neutral Gantt
+  data. A separately installed DevCoordinator is used for Gantt rendering only
+  when capability discovery advertises that action.
 - `formal-web-ui-verification`: a deterministic Playwright/Chromium heuristic
   for rendered geometry, visibility, clipping, overlap, media health, target
   coverage, declared areas, and visible scrollbars. It can optionally consume
@@ -41,10 +47,10 @@ vendored copy so its directory remains independently installable and testable.
 
 ## Layout
 
-- `skills/`: the six canonical skill packages.
+- `skills/`: the seven canonical skill packages.
 - `full_repo_harness/`: shared audit discovery, evidence, batching, queue, and
   verification code.
-- `scripts/validate.py`: the complete six-skill and standalone-copy gate.
+- `scripts/validate.py`: the complete seven-skill and standalone-copy gate.
 - `scripts/manage_skill_links.py`: transactional direct-link installation and
   rollback for explicit runtime roots.
 - `scripts/manage_global_policy.py`: digest-approved plan/apply/verify/rollback
@@ -72,7 +78,7 @@ vendored copy so its directory remains independently installable and testable.
   installer for Codex homes and Claude `settings.json` targets, and
   platform/privacy/crash tests.
 - `SKILL_AUDIT.md`: honest capabilities, improvements, and residual limits for
-  all six skills.
+  all seven skills.
 - `DecisionHistory.md`: compact major-decision and project-direction index.
 - `DecisionDetails/`: one cold supporting record per indexed decision.
 - `UserIssueLedgers/`: compact persistent prevention rules separated by
@@ -667,7 +673,7 @@ that acceptance decision.
 
 ## Install as direct links
 
-This repository is the only writable source for its six skills. Never edit an
+This repository is the only writable source for its seven skills. Never edit an
 installed copy. Discover every runtime's actual skills root and pass each one
 explicitly; do not infer desktop or sandbox homes from the shell's `$HOME`.
 
@@ -843,13 +849,13 @@ The complete repository gate is:
 python3 scripts/validate.py
 ```
 
-It proves the exact six-skill layout, the recorder schema/privacy/storage and
+It proves the exact seven-skill layout, the recorder schema/privacy/storage and
 adapter contracts, universal-policy semantics, compact
 decision-history integrity, open-only completion-ledger state, freshness and
 dependency-boundary and self-hosted-CI detector recall, vendored-harness synchronization,
 skill-link and global-policy transaction/rollback behavior, public-artifact policy, interaction-label
-parity, all six in-repository self-tests, recorder concurrency/crash/install
-tests, Python compilation, all six standalone copied skill tests, and a copied
+parity, all seven in-repository self-tests, recorder concurrency/crash/install
+tests, Python compilation, all seven standalone copied skill tests, and a copied
 recorder test. CI installs a locked
 Playwright runtime solely because the remaining formal web verifier requires a
 real Chromium run. The workflow defines a separate Python 3.9/3.13 recorder

@@ -294,6 +294,15 @@ def main() -> int:
             "complete-delivery contract",
         ),
         (
+            "missing permanent database-ledger history",
+            policy.replace(
+                "never delete implemented issues or prior events",
+                "delete implemented issues and prior events after release",
+                1,
+            ),
+            "complete-delivery contract",
+        ),
+        (
             "missing scoped issue-ledger schema",
             replace_section(
                 policy,
@@ -922,6 +931,15 @@ def main() -> int:
     check(
         not MODULE.find_policy_violations(readable_technical_ledger),
         "plain-language ledger entries may retain useful supporting technical detail",
+    )
+
+    permanent_database_ledger = policy + (
+        "\nA software-owned database ledger retains implemented issues in permanent event "
+        "history while routine queries expose only its active work view.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(permanent_database_ledger),
+        "an explicitly configured permanent database ledger must not be rejected as retained active history",
     )
 
     non_security_change = policy + (

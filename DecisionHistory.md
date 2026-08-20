@@ -13,7 +13,8 @@ after their target implementation exists, explicit user activation for exhaustiv
 implemented-UI audits, complete diagnostic passes before batch repair,
 unacceptable under-engineering, every planned addition outside the evidence-backed agreed scope
 requiring prior approval even when small, proportional questions for materially distinct in-scope
-choices, reader-first active completion ledgers, and security controls grounded in
+choices, reader-first authoritative completion ledgers with permanent software-owned database
+history for explicitly governed product delivery, and security controls grounded in
 user-confirmed project assumptions without reopening a settled baseline for routine reviewed tool use,
 relevant bounded agent context, proportionate runtime effort, software-owned concurrent activation
 proof with opaque per-target attribution, and a proxy-aware one-shot installer handoff with exact
@@ -22,7 +23,7 @@ and interfaces whose visible hierarchy matches the task and promised content and
 enabled controls and requested journeys are proven through rendered interactions, with concise
 self-explanatory headings and labels instead of redundant default descriptions, and autonomous
 in-scope browser QA and local runtime coordination without repeat authorization prompts
-(D-20260819-01, D-20260815-01, D-20260812-01, D-20260809-01, D-20260805-02, D-20260805-01, D-20260804-01, D-20260802-02, D-20260802-01, D-20260801-03, D-20260801-02, D-20260801-01,
+(D-20260819-02, D-20260819-01, D-20260815-01, D-20260812-01, D-20260809-01, D-20260805-02, D-20260805-01, D-20260804-01, D-20260802-02, D-20260802-01, D-20260801-03, D-20260801-02, D-20260801-01,
 D-20260714-03, D-20260713-03,
 D-20260713-04, D-20260714-04, D-20260720-01, D-20260731-01, D-20260731-02,
 D-20260729-01,
@@ -31,6 +32,25 @@ D-20260710-05). Inferred: repeated choices indicate a taste for compact low-nois
 stable ordering and grouping, visible exceptions, contextual actions, and durable state rather than
 volatile cleverness (D-20260707-01, D-20260707-02, D-20260707-07, D-20260707-08); apply these
 patterns by default while treating them as inference when a new context materially differs.
+
+## [D-20260819-02 — Product delivery uses a permanent software-owned ledger](DecisionDetails/D-20260819-02.md)
+
+Decision: Add `coordinate-product-delivery` as the seventh canonical skill. It owns one
+software-managed database work graph and permanent Completion Ledger, weighted task and release
+progress, one primary execution task by default, hourly compact reconciliation, and plain-language
+scope mediation. The coordinator never approves true product expansion; the user decides it.
+
+Why: Options: selected one capable coordinator, one primary executor with its own subagents, and a
+permanent database event history over many peer executor chats, a read-only coordinator, a separate
+direct-execution mode, an open-only file ledger, or duplicate database and Markdown plans. This
+keeps requirements and delivery state durable without filling coordinator context with execution
+output, while preserving user authority over product scope. Prior attempts: the read-only proposal
+caused useful coordination actions to remain unavailable, many top-level chats added unnecessary
+orchestration, and the open-only ledger discarded the requested issue story. This supersedes D-20260714-02 only when a
+recorded project decision configures the software-owned database ledger; its open-only Markdown
+default remains valid elsewhere. Intent: coordinate complete releases from one durable, low-noise
+control surface without losing unfinished-work history or user scope authority. Revisit only if: shared multi-host delivery state, another database
+backend, or a compatible renderer requires a separately approved integration contract.
 
 ## [D-20260819-01 — Complete agreed scope does not authorize invented scope](DecisionDetails/D-20260819-01.md)
 

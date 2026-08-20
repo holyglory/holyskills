@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Complete validation for six HolySkills packages and the portable recorder."""
+"""Complete validation for seven HolySkills packages and the portable recorder."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ RECORDER = ROOT / "tools" / "delivery-efficiency"
 PYCACHE_ROOT = Path(tempfile.mkdtemp(prefix="holyskills-validation-pycache-"))
 atexit.register(shutil.rmtree, PYCACHE_ROOT, True)
 SKILL_NAMES = (
+    "coordinate-product-delivery",
     "formal-web-ui-verification",
     "full-repo-audit",
     "full-repo-test-coverage-audit",
@@ -276,7 +277,7 @@ def main() -> int:
         print_failure_summary()
         return 1
 
-    print("validation ok (6 canonical skills + portable recorder; standalone matrix passed)")
+    print("validation ok (7 canonical skills + portable recorder; standalone matrix passed)")
     return 0
 
 

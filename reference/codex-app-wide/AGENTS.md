@@ -13,7 +13,7 @@
 - Bound model-facing tool output to the smallest useful result. Preserve a
   complete test, debug, audit, or deployment log in a cold artifact when it is
   needed, while returning a concise failure index and artifact reference. Do
-  not place raw logs in `CompletionLedger.md`, request output above a known host
+  not place raw logs in the authoritative completion ledger, request output above a known host
   limit, or reopen an unchanged image without a concrete need.
 - Before asking the user to make a choice, investigate with available confirmed
   context and read-only discovery. Ask only when an unresolved answer could
@@ -62,7 +62,8 @@
   expansion. Do not preserve disposable test data or harden cross-account access
   in a known single-user environment without a requirement or contrary evidence.
 - Do not replace a necessary foundation with ad-hoc plumbing for speed. Record
-  a temporary bridge in `CompletionLedger.md` and replace it before readiness.
+  a temporary bridge in the authoritative completion ledger and replace it
+  before readiness.
 
 ## Ground security-posture decisions in confirmed assumptions
 
@@ -136,9 +137,12 @@
   scope; only an explicit user decision does.
 - Every explicit requirement, accepted detail, visible promise, exposed value,
   and necessary supporting behavior in that scope must work end to end from the
-  first delivery or remain an active, specific `CompletionLedger.md` item. No
-  agreed gap is too small to record, and work is not ready while one remains.
-- During incomplete work, maintain project-root `CompletionLedger.md` with only
+  first delivery or remain an active, specific item in the project's
+  authoritative completion ledger. No agreed gap is too small to record, and
+  work is not ready while one remains.
+- Use exactly one authoritative completion ledger. Unless a recorded project
+  decision establishes a reviewed software-owned database ledger, maintain
+  project-root `CompletionLedger.md` with only
   active unresolved partial implementations, temporary bridges, missing
   integrations, limitations, affected-path TODOs, improvements, and
   generalizations. Write each row for a reader who does not know the
@@ -151,10 +155,19 @@
   logs in cold artifacts. Remove an item in the same change once implemented
   and verified; never retain resolved, completed, or closed entries or evidence.
   Delete the file when no active items remain.
-- Version control is the default completion history. Use `DecisionHistory.md`
-  for consequential choices. Create project-root `CompletionHistory.md` only
-  for explicit audit retention; keep it outside routine agent context and read
-  it only for explicit historical or audit work.
+- A recorded project decision may instead designate a software-owned database
+  ledger with a permanent event history. In that mode, use its reviewed
+  interface for every read and mutation, never maintain a parallel Markdown
+  ledger, never delete implemented issues or prior events, and keep routine
+  context to the current active view. Mark implementation and verification as
+  state transitions; load one issue's bounded history only for a concrete
+  recurrence, decision, or audit need. A database outage blocks affected
+  completion claims and never authorizes a file or chat-memory fallback.
+- Version control is the default completion history for the Markdown mode. Use
+  `DecisionHistory.md` for consequential choices. Create project-root
+  `CompletionHistory.md` only for explicit audit retention when no permanent
+  database history is configured; keep it outside routine agent context and
+  read it only for explicit historical or audit work.
 - Keep externally blocked work unresolved and name its unblock condition.
   Before readiness, reconcile requirements, implementation, acceptance
   criteria, tests, and the ledger. Readiness requires end-to-end behavior and
@@ -168,7 +181,8 @@
 
 - For a finite full test, debug, reproduction, audit, migration-rehearsal, or
   deployment cycle, continue to the end after non-critical failures. Record
-  each actionable gap concisely in `CompletionLedger.md` as it appears, keep
+  each actionable gap concisely in the authoritative completion ledger as it
+  appears, keep
   complete raw output in a cold artifact when useful, and use later failures
   and edge paths as evidence. Do not fix one small gap and restart the full
   cycle while the remaining pass can still produce valid information.
@@ -215,8 +229,8 @@
 - Never use plausible synthetic numbers, parameters, statuses, or results as a
   production stand-in for missing data, processing, or persistence. Show the
   honest unavailable state and ledger the agreed missing behavior instead.
-- Immediately put each missing or partial agreed behavior in a specific
-  project-root `CompletionLedger.md` entry naming affected journeys, screens and
+- Immediately put each missing or partial agreed behavior in the authoritative
+  completion ledger as a specific entry naming affected journeys, screens and
   responsive variants, controls, files, missing behavior, user impact, unblock
   condition, and required rendered end-to-end verification. A generic
   future-production item is insufficient.
@@ -269,8 +283,9 @@ checks may support evidence but do not constitute interaction verification.
   user-indicated agent mistakes and durable user corrections that future work
   could repeat. Create the directory and first scoped ledger on the first
   qualifying correction; absence is valid before then. These persistent
-  prevention ledgers are separate from open-only `CompletionLedger.md`, major
-  decisions in `DecisionHistory.md`, and incident history.
+  prevention ledgers are separate from the authoritative completion ledger's
+  active work view, major decisions in `DecisionHistory.md`, and incident
+  history.
 - Use multiple narrowly scoped ledgers, never one mixed catch-all. Separate UI,
   automation, coding-style, math, data, security, operations, testing, and
   documentation patterns. Split business logic by its actual perspective or

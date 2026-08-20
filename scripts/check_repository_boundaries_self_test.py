@@ -60,6 +60,11 @@ def make_clean_repository(root: Path) -> None:
         root / "skills" / "formal-web-ui-verification" / "scripts" / "verify.mjs",
         "const args = ['--from-coordinator', '--coordinator-script', process.env.COORDINATOR_SCRIPT];\n",
     )
+    write(
+        root / "skills" / "coordinate-product-delivery" / "SKILL.md",
+        "Use a separately installed DevCoordinator only after `devcoordinator capabilities` "
+        "advertises Gantt rendering.\n",
+    )
 
 
 def rules(report: dict[str, object]) -> set[str]:
@@ -163,7 +168,7 @@ def main() -> int:
 
         write(temporary / "skills" / "unexpected-skill" / "SKILL.md", "---\nname: unexpected-skill\n---\n")
         report = checker.audit_repository(temporary)
-        check("canonical-skill-set" in rules(report), "an unexpected seventh canonical skill must be caught")
+        check("canonical-skill-set" in rules(report), "an unexpected eighth canonical skill must be caught")
 
         print("repository boundary self-test ok")
         return 0

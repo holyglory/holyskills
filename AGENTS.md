@@ -104,8 +104,8 @@ without requiring a repository-owned workflow skill.
 
 ## Skill Installation Source Of Truth
 
-- This repository is the only writable canonical source for its six skills:
-  `formal-web-ui-verification`, `full-repo-audit`,
+- This repository is the only writable canonical source for its seven skills:
+  `coordinate-product-delivery`, `formal-web-ui-verification`, `full-repo-audit`,
   `full-repo-test-coverage-audit`, `install-delivery-efficiency-hooks`,
   `ui-implementation-audit`, and `user-journey-docs-audit`.
   Do not hand-edit copies under Codex, Claude, Parall, or another runtime home.
@@ -210,7 +210,7 @@ without requiring a repository-owned workflow skill.
 
 ## Repository Ownership Boundary
 
-- Holy Skills owns only the six skill directories listed above, the shared
+- Holy Skills owns only the seven skill directories listed above, the shared
   audit harness, and the portable delivery-efficiency runtime tool. The
   coordinator, PostgreSQL protection skill, DevOps Board, and DevOps Console
   are owned by the independent DevCoordinator repository.
@@ -221,6 +221,12 @@ without requiring a repository-owned workflow skill.
   installed coordinator script to discover already-running URLs. That optional
   runtime adapter must remain path-agnostic and must not become a source,
   checkout, build, CI, or version dependency.
+- `coordinate-product-delivery` owns its portable database state engine and may
+  use a separately installed DevCoordinator only when capability discovery
+  advertises a compatible Gantt-rendering action. It must not import, pin,
+  package, or assume a DevCoordinator checkout, and absence of that capability
+  leaves only the derived rendered view unavailable, not the authoritative
+  work graph or completion ledger.
 - Run `python3 scripts/check_repository_boundaries.py --repo "$PWD"` as part of
   every validation and ownership-affecting change. Keep historical migration
   prose in `DecisionHistory.md`, its exactly linked `DecisionDetails/<ID>.md`
