@@ -1976,7 +1976,7 @@ CREATE MATERIALIZED VIEW reporting.total_summary AS SELECT 42;
             "consolidated-findings.json",
             "consolidated-findings.md",
             "completion_ledger_projection.json",
-            "completion-ledger-plan.json",
+            "completion-ledger-database-import.json",
             "verification_receipt.json",
         )
         for stale_name in stale_derived_names:
@@ -5054,16 +5054,7 @@ None.
         )
         lead_candidate["ledger_row"]["id"] = candidate["ledger_row"]["id"]
         write(projection_path, json.dumps(projection, indent=2, sort_keys=True))
-        write(
-            semantic_repo / "CompletionLedger.md",
-            """# Completion Ledger
-
-| ID | Remaining work | Why it matters | Status | Verification |
-| --- | --- | --- | --- | --- |
-| Q-EXISTING | Preserve unrelated active work. | A scoped audit must not prune unrelated obligations. | Open | Run the existing end-to-end check after implementation. |
-""",
-        )
-        plan_path = semantic_output / "completion-ledger-plan.json"
+        import_path = semantic_output / "completion-ledger-database-import.json"
         updater_common = [
             "--repo",
             str(semantic_repo),
@@ -5074,30 +5065,62 @@ None.
             "--projection",
             str(projection_path),
         ]
-        run([sys.executable, str(UPDATE_LEDGER), "plan", *updater_common, "--out", str(plan_path)])
-        run([sys.executable, str(UPDATE_LEDGER), "apply", *updater_common, "--plan", str(plan_path)])
-        applied_ledger = (semantic_repo / "CompletionLedger.md").read_text(encoding="utf-8")
-        check("Q-EXISTING" in applied_ledger, "ledger importer must preserve unrelated active work")
-        check(candidate["ledger_row"]["id"] in applied_ledger, "confirmed semantic gap must be added to the ledger")
-        second_plan = semantic_output / "completion-ledger-plan-second.json"
-        run([sys.executable, str(UPDATE_LEDGER), "plan", *updater_common, "--out", str(second_plan)])
-        second_plan_data = json.loads(second_plan.read_text(encoding="utf-8"))
-        check(second_plan_data["changed"] is False, "replanning an applied projection should be idempotent")
-        original_semantic_source = semantic_source.read_text(encoding="utf-8")
-        write(semantic_source, original_semantic_source + "# concurrent change\n")
-        stale_plan_result = run(
+        run(
             [
                 sys.executable,
                 str(UPDATE_LEDGER),
-                "plan",
+                "database-import",
                 *updater_common,
+                "--import-id",
+                "semantic-audit-import",
                 "--out",
-                str(semantic_output / "stale-plan.json"),
+                str(import_path),
+            ]
+        )
+        database_import = json.loads(import_path.read_text(encoding="utf-8"))
+        check(
+            database_import["schema"] == "holyskills.completion-ledger-import.v1",
+            "audit exporter must emit the database import schema",
+        )
+        check(len(database_import["issues"]) == 1, "one confirmed semantic gap must emit one issue")
+        check(
+            database_import["issues"][0]["id"] == candidate["ledger_row"]["id"],
+            "confirmed semantic gap must preserve its reviewed database issue ID",
+        )
+        second_import = semantic_output / "completion-ledger-database-import-second.json"
+        run(
+            [
+                sys.executable,
+                str(UPDATE_LEDGER),
+                "database-import",
+                *updater_common,
+                "--import-id",
+                "semantic-audit-import",
+                "--out",
+                str(second_import),
+            ]
+        )
+        check(
+            import_path.read_bytes() == second_import.read_bytes(),
+            "re-exporting unchanged reviewed evidence must be deterministic",
+        )
+        original_semantic_source = semantic_source.read_text(encoding="utf-8")
+        write(semantic_source, original_semantic_source + "# concurrent change\n")
+        stale_import_result = run(
+            [
+                sys.executable,
+                str(UPDATE_LEDGER),
+                "database-import",
+                *updater_common,
+                "--import-id",
+                "stale-semantic-audit-import",
+                "--out",
+                str(semantic_output / "stale-database-import.json"),
             ],
             expect=1,
         )
         check_output(
-            stale_plan_result,
+            stale_import_result,
             "manifest source changed after pass-only audit verification",
             "src/calculate.py",
         )

@@ -81,12 +81,13 @@ unrecognized UI toolkit.
   artifact does not authorize repository mutation. An explicit user request to
   record, write, update, or reconcile audit findings—or an applicable project
   instruction that already requires active findings to be recorded—permits
-  only project-root `CompletionLedger.md`; it does not authorize implementing
-  findings, changing any other source, committing, or pushing. Place other
-  audit artifacts outside the audited repo and disclose their path.
+  only a transactional import through the authoritative software-owned
+  database ledger; it does not authorize implementing findings, changing any
+  source, committing, or pushing. Place audit artifacts outside the audited
+  repo and disclose their path. Never create or update `CompletionLedger.md`.
 - If the user explicitly forbids all file writes or artifact creation, do not run the harness or save reports unless they authorize audit artifacts. Perform a chat-only manual audit, label coverage as `chat-only unverified coverage`, and state that manifest/report verification was not run.
 - Do not claim every file was checked until the manifest coverage and subagent coverage reports match.
-- Never write raw worker or lead findings directly to `CompletionLedger.md`. Verify the batch, journey, visual, and `reports/lead_reconciliation.md` artifacts; reconcile cross-file traces; directly review every candidate; deduplicate by completion outcome; and dispose every candidate before any authorized ledger update.
+- Never write raw worker or lead findings directly to any ledger store. Verify the batch, journey, visual, and `reports/lead_reconciliation.md` artifacts; reconcile cross-file traces; directly review every candidate; deduplicate by completion outcome; and dispose every candidate before generating an authorized database import.
 
 ## Workflow
 
@@ -202,7 +203,7 @@ unrecognized UI toolkit.
    - Prioritize by user impact, correctness, security/reliability, blast radius, and implementation dependency order.
    - Produce an implementation plan with concrete verification steps that reproduce or demonstrate each gap across the intended product contract.
 
-7. **Project confirmed findings into the completion ledger**
+7. **Import confirmed findings into the database completion ledger**
    - After `verify_audit_results.py` passes, create the consolidated findings and a lead-review projection outside the audited repo:
      ```bash
      python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/_vendor/full_repo_harness/merge_findings.py" \
@@ -212,24 +213,24 @@ unrecognized UI toolkit.
        --json-out <audit-output>/consolidated-findings.json \
        --ledger-projection-out <audit-output>/completion_ledger_projection.json
      ```
-   - Complete every projection disposition. After every candidate is disposed, set top-level `review_status` to `complete`, including when the candidate list is empty. Only `confirmed` unresolved implementation, verification, integration, limitation, improvement, or generalization obligations become ledger rows. Keep hypotheses, open questions, audit-environment limitations, exclusions, invalid findings, and resolved work outside the ledger. A concrete external blocker remains a row with `Blocked — <unblock condition>`.
-   - Map each confirmed atomic obligation to exactly one active row with `ID | Remaining work | Why it matters | Status | Verification`. Include priority and affected repo-relative paths concisely in `Remaining work`; state real impact in `Why it matters`; and give an end-to-end closure check in `Verification`. Raw evidence and audit chronology stay in the external artifacts.
-   - Preserve every unrelated existing active row. Reuse an existing ID only by marking the candidate `duplicate` of that row. Never remove a row merely because a later audit did not rediscover it, never prune during import, and never create or delete a ledger for a clean audit. Later implementation removes a row only in the same change that implements and verifies it.
-   - When ledger mutation is not authorized, keep the completed exact projection in the audit output and report `not applied`. When authorized, run the updater's read-only plan, review its candidate mapping and before/after hashes, then apply that exact plan:
+   - Complete every projection disposition. After every candidate is disposed, set top-level `review_status` to `complete`, including when the candidate list is empty. Only `confirmed` unresolved implementation, verification, integration, limitation, improvement, or generalization obligations become database issues. Keep hypotheses, open questions, audit-environment limitations, exclusions, invalid findings, and resolved work outside the active projection. A concrete external blocker uses state `blocked` and names its unblock condition.
+   - Map each confirmed atomic obligation to exactly one issue with stable ID, plain-language remaining outcome, user or product impact, active state, verification requirement, priority, and affected repo-relative paths. Raw evidence and audit chronology stay in the external artifacts.
+   - Preserve every unrelated database issue and permanent event. Reuse an existing ID only by marking the candidate `duplicate` of that issue. Never remove an issue because a later audit did not rediscover it, never prune during import, and emit an empty import for a clean audit. Later implementation and verification append transitions; they never delete the issue.
+   - When ledger mutation is not authorized, keep the completed exact projection in the audit output and report `not applied`. When authorized, resolve `PRODUCT_DELIVERY_SKILL_DIR` from the loaded `coordinate-product-delivery` skill, verify its `scripts/delivery_state.py`, generate the exact database import, review its stable import ID and issue mapping, then apply it transactionally:
      ```bash
-     python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/update_completion_ledger.py" plan \
+     python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/update_completion_ledger.py" database-import \
        --repo <repo> --manifest <audit-output>/manifest.json \
        --reports <audit-output>/reports \
        --projection <audit-output>/completion_ledger_projection.json \
-       --out <audit-output>/completion-ledger-plan.json
+       --import-id full-repo-audit:<run-id> \
+       --out <audit-output>/completion-ledger-database-import.json
 
-     python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/update_completion_ledger.py" apply \
-       --repo <repo> --manifest <audit-output>/manifest.json \
-       --reports <audit-output>/reports \
-       --projection <audit-output>/completion_ledger_projection.json \
-       --plan <audit-output>/completion-ledger-plan.json
+     python3 "$PRODUCT_DELIVERY_SKILL_DIR/scripts/delivery_state.py" \
+       --project <repo> issue-import \
+       --input <audit-output>/completion-ledger-database-import.json \
+       --actor full-repo-audit:<run-id>
      ```
-   - The updater must not trust the receipt as proof by itself. During both plan and apply it must reopen the exact manifest-authorized report set, hold the manifest, reports, current source files, queue/exclusion/effort records, prompts, visual-evidence manifest, and referenced artifacts under no-follow guards, rerun `verify_audit_results.py`, validate every guard after the run, normalize only a proven `CompletionLedger.md`-only freshness mismatch, and require the canonical rerun result digest to equal the receipt's verifier-result digest. It must reject pending, omitted, or tampered candidates; malformed or symlinked ledgers; stale or forged receipts and plans; concurrent ledger drift; and source, report, companion, or evidence drift; preserve unrelated rows; write only project-root `CompletionLedger.md`; and verify the applied hash. Recording a finding is not fixing it and does not make the audited product ready.
+   - The exporter must not trust the receipt as proof by itself. It reopens the exact manifest-authorized report set, holds the manifest, reports, current source files, queue/exclusion/effort records, prompts, visual-evidence manifest, and referenced artifacts under no-follow guards, reruns `verify_audit_results.py`, validates every guard, and requires the canonical rerun result digest to equal the receipt's verifier-result digest. It rejects pending, omitted, tampered, or non-atomic candidates plus source, report, companion, or evidence drift. The database validates the entire import before one transaction, stores its digest, rejects changed content under a reused import ID, and treats an exact replay as idempotent. If the database interface is unavailable, retain the reviewed import as not applied and report the blocker; never fall back to a file. Recording a finding is not fixing it and does not make the audited product ready.
 
 ## Subagent Artifact Requirements
 
@@ -317,10 +318,10 @@ Missing or unclear journeys, explicit UI assumption status (`confirmed`, `source
 Confirmed issues from batch results, deduplicated and grouped by feature area, or `No confirmed findings.`
 
 ## Completion Ledger
-State whether ledger mutation was authorized or required by applicable project instructions. Always give the reviewed projection path/hash and confirmed/excluded/deduplicated counts. Give a plan path/hash, candidate-to-row mapping, preserved/added/deduplicated row IDs, rejected-collision status, and before/after ledger hashes only when a plan was generated; otherwise mark each as `not generated` or `not applicable`. If mutation was not authorized, say `Not applied—exact reviewed projection retained outside the repository.` If there are no confirmed findings, say that no ledger row was created or pruned.
+State whether database mutation was authorized or required by applicable project instructions. Always give the reviewed projection path/hash and confirmed/excluded/deduplicated counts. Give the database-import path/hash, stable import ID, candidate-to-issue mapping, imported/deduplicated issue IDs, and import result only when generated or applied; otherwise mark each as `not generated` or `not applicable`. If mutation was not authorized or the database interface was unavailable, say `Not applied—exact reviewed database import retained outside the repository.` If there are no confirmed findings, say that the empty import created or removed no issue.
 
 ## Implementation Plan
-Ordered work items with expected behavior, affected files or modules, implementation steps, tests, risk, and completion-ledger row IDs when applied. Use `No implementation work recommended from this audit.` when clean.
+Ordered work items with expected behavior, affected files or modules, implementation steps, tests, risk, and completion-issue IDs when applied. Use `No implementation work recommended from this audit.` when clean.
 
 ## Verification Plan
 Commands, browser/API checks, fixtures, or user workflows needed to prove each improvement. Include the exact verifier command and any commands already run.
@@ -393,12 +394,12 @@ During the visual journey pass, use available visual tooling such as Playwright,
 - `reports/`: required destination for returned reports, including one exact `batch_###.md` file per batch and manifest-declared, verifier-checked `lead_reconciliation.md`.
 - `consolidated-findings.json` / `.md`: candidates from the manifest's exact verified report allowlist and hashes; immutable finding fields are preserved and only exact matches deduplicate, but the merge does not confirm correctness.
 - `completion_ledger_projection.json`: lead-reviewed disposition and exact active-row projection for every consolidated candidate; created after report verification, not during queue generation.
-- `completion-ledger-plan.json`: immutable before/after ledger plan and candidate mapping produced only after audit/projection validation.
+- `completion-ledger-database-import.json`: digest-bound transactional issue import produced only after audit/projection validation.
 
 Companion scripts included with this skill:
 
 - `scripts/verify_audit_results.py`: result verifier for returned subagent `Run ID`, exact report section shape, `File Coverage` SHA-256 tables, per-unit and responsibility-level source-backed `Implementation Inventory` coverage with unique `Contract ID` and atomic result/finding linkage, required manifest-declared `lead_reconciliation.md` cross-file trace and atomic findings, `Interface Inventory` coverage and concrete visible-text checks, source-backed UI asset evidence, generic trace rejection, obvious placeholder/stub/dead-control source omission checks, finding severity/field shape/content and batch-file binding, current file fingerprints, queue marker consistency, effort and journey-worker ledger completion/provenance fields, `excluded_files.json` count/digest consistency, policy-blocking unresolved scope warnings, and a pass-only stable-input verification receipt.
-- `scripts/update_completion_ledger.py`: verifier-rerunning plan/apply importer for a fully reviewed projection. It binds the exact verifier input closure and canonical pass result to the receipt, preserves unrelated active work, never prunes, rejects raw/pending/omitted candidates and concurrent drift, and mutates only project-root `CompletionLedger.md` when that mutation is authorized.
+- `scripts/update_completion_ledger.py`: verifier-rerunning database-import exporter for a fully reviewed projection. It binds the exact verifier input closure and canonical pass result to the receipt, rejects raw/pending/omitted candidates and drift, and produces the bounded payload consumed transactionally by `coordinate-product-delivery`.
 - `scripts/self_test.py`: deterministic fixture tests for classification, interface detection, env/generated/vendor exclusion and opt-in behavior, batch invariants, evidence-contract enforcement, and result verification. These tests prove verifier behavior, not manual-agent semantic recall.
 - `evals/marker-free/`: six isolated manual-agent evaluations for ignored input/config, partial plumbing, false persistence/success, missing registration/lifecycle, production fixture data, and shallow outcome tests. When supplied with responses from fresh agent runs, its deterministic scorer can measure finding recall and intentional-lookalike precision. Its self-test uses synthesized oracle-derived responses and proves only the schemas and scorer, so it is not empirical evidence of agent performance; keep actual run results separate from verifier self-tests and do not generalize one run into a mechanical guarantee.
 

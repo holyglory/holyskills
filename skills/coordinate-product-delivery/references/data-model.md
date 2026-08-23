@@ -6,15 +6,16 @@
 2. Database lifecycle
 3. Release and task model
 4. Completion Ledger model
-5. Progress calculation
-6. Command map
-7. Gantt rendering
+5. Durable monitoring model
+6. Progress calculation
+7. Command map
+8. Gantt rendering
 
 ## Backend Selection
 
 Use the bundled `scripts/delivery_state.py` database as the authoritative state engine unless the project has already recorded another compatible software-owned backend. Never keep two writable graphs or ledgers.
 
-The bundled engine derives one database identity from the repository's Git common directory, so linked worktrees share delivery state. By default it stores the SQLite file in the platform's per-user state directory. Use `--db /absolute/path` only when the project has deliberately established that exact location.
+The bundled engine derives one database identity from the repository's Git common directory, so linked worktrees share delivery state. By default it stores the SQLite file at `.product-delivery/delivery.sqlite3` in the primary checkout, where trusted accounts with repository access use the same database. Exclude `.product-delivery/` from Git. Use `--db /absolute/path` only when the project has deliberately established that exact shared location.
 
 Do not commit the SQLite database to the repository. Do not open it in an editor or mutate it with raw SQL. Use the command interface so validation, permanent history, and release gates remain effective.
 
@@ -87,6 +88,22 @@ python3 "$SKILL_ROOT/scripts/delivery_state.py" --project "$REPO" \
 
 Moving an issue requires a decision reference and does not change implementation state. A moved blocking issue continues to exist; update affected release scope and task links consistently.
 
+## Durable Monitoring Model
+
+Monitoring states:
+
+```text
+unarmed -> arming -> armed -> stopped
+    |         |         |
+    +------> blocked <---+
+```
+
+`armed` is valid only when the schedule is enabled, the automation ID and same-chat coordinator identity are stored, executor thread and host IDs are present, the first run is verified, a retained cursor and next run exist, and local runtime availability was confirmed when files are local.
+
+Every scheduled invocation uses a stable `run_key`. Exact replay returns the existing result. A different key arriving while a run is active is recorded as `skipped_overlap`. Run history is permanent; successful completion stores the cursor and next run, while failure makes monitoring blocked.
+
+The coordinator must disable the external scheduled task and record `monitor-stop` before a release can become released, paused, or cancelled. The database rejects that release transition while its automation remains enabled.
+
 ## Progress Calculation
 
 Each task stores:
@@ -136,6 +153,7 @@ issue-link-task
 issue-transition
 issue-move
 issue-note
+issue-import
 issue-list
 issue-history
 ```
@@ -144,11 +162,21 @@ Monitor and render:
 
 ```text
 events
+monitor-configure
+monitor-arm
+monitor-run-start
+monitor-run-finish
+monitor-verify-first-run
+monitor-block
+monitor-stop
+monitor-status
 monitor-snapshot
 gantt-data
 ```
 
 Run `delivery_state.py <command> --help` for the exact options. Do not reconstruct SQL or invent a missing command.
+
+`issue-import` accepts one absolute, regular, non-symlinked JSON file with schema `holyskills.completion-ledger-import.v1`, a stable `import_id`, and at most 200 fully reviewed issues. It validates every issue and reference before one transaction, stores the source digest, rejects changed content under a reused ID, and treats an exact replay as already applied. Use it for audit projections and one-time migration from retired ledger formats.
 
 ## Gantt Rendering
 

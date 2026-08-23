@@ -191,6 +191,22 @@ def actual_verifier_gate_self_test() -> None:
             plan["verifier_result_sha256"] == receipt["verifier_result_sha256"],
             "real plan must bind the rerun verifier result digest",
         )
+        clean_import = MODULE.build_database_import(
+            repo,
+            manifest_path,
+            reports_dir,
+            projection_path,
+            "clean-audit-import",
+        )
+        check(
+            clean_import
+            == {
+                "schema": "holyskills.completion-ledger-import.v1",
+                "import_id": "clean-audit-import",
+                "issues": [],
+            },
+            "a verified clean audit must emit an empty database import",
+        )
         plan_path = audit_root / "completion_ledger_plan.json"
         plan_path.write_text(json.dumps(plan, sort_keys=True), encoding="utf-8")
         MODULE.apply_plan(repo, manifest_path, reports_dir, projection_path, plan_path)
@@ -1004,6 +1020,19 @@ def main() -> int:
             original_xattrs = file_xattrs(ledger_path)
             successful_plan, successful_plan_path = reviewed_plan("successful-plan")
             check(successful_plan["changed"], "a confirmed finding must produce a ledger append plan")
+            database_import = MODULE.build_database_import(
+                repo,
+                manifest_path,
+                reports_dir,
+                projection_path,
+                "confirmed-audit-import",
+            )
+            check(database_import["schema"] == "holyskills.completion-ledger-import.v1", "database import schema must be stable")
+            check(len(database_import["issues"]) == 1, "one confirmed finding must emit one database issue")
+            imported_issue = database_import["issues"][0]
+            check(imported_issue["id"] == race_candidate["ledger_row"]["id"], "database issue must preserve the reviewed ID")
+            check(imported_issue["state"] == "planned", "Open audit work must map to planned database state")
+            check(imported_issue["blocks_release"] is True, "P1 findings must retain release-blocking importance")
             MODULE.apply_plan(repo, manifest_path, reports_dir, projection_path, successful_plan_path)
             successful_rows = LEDGER.parse_ledger(ledger_path.read_text(encoding="utf-8"))
             check(

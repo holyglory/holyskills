@@ -1,0 +1,5 @@
+# User Issue Ledger: Operations / skill installation
+
+| ID | Applies to | Mistake pattern | Required behavior | Prevention and verification |
+| --- | --- | --- | --- | --- |
+| UIL-OPERATIONS-SKILL-INSTALLATION-001 | Installing or verifying canonical skills for the four user-owned Codex accounts | The agent installed a new canonical skill only for the initiating Codex home, then reported the other trusted accounts as merely missing it instead of treating cross-account parity as part of installation. | Treat `holyglory`, `holygloryTT`, `axel`, and `slawa` as one required Codex skill-installation matrix. Inventory every explicit account root, preserve unrelated and system skills, and use each canonical owner's reviewed link workflow to make the direct symlink set identical across all four homes. | Before reporting installation complete, compare the four top-level skill inventories, require zero missing or extra managed links, and verify every managed entry through the owning account with exact `readlink` and canonical `realpath`. |

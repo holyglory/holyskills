@@ -20,6 +20,8 @@ SCHEMA_VERSION = 1
 ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 MAX_TEXT = 4000
 MAX_RESULTS = 200
+MAX_IMPORT_BYTES = 2 * 1024 * 1024
+IMPORT_SCHEMA = "holyskills.completion-ledger-import.v1"
 
 RELEASE_STATES = {
     "draft",
@@ -50,6 +52,8 @@ ISSUE_STATES = {
     "reopened",
     "superseded",
 }
+MONITOR_STATES = {"unarmed", "arming", "armed", "blocked", "stopped"}
+MONITOR_RUN_STATES = {"running", "completed", "failed", "skipped_overlap"}
 NOT_IMPLEMENTED_STATES = {
     "detected",
     "planned",
@@ -92,17 +96,19 @@ def json_output(payload: object) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True))
 
 
-def require_id(value: str, label: str) -> str:
-    if ID_PATTERN.fullmatch(value) is None:
+def require_id(value: object, label: str) -> str:
+    if not isinstance(value, str) or ID_PATTERN.fullmatch(value) is None:
         raise DeliveryStateError(f"{label} must be a stable ID of at most 128 characters")
     return value
 
 
-def require_text(value: str | None, label: str, *, optional: bool = False) -> str | None:
+def require_text(value: object | None, label: str, *, optional: bool = False) -> str | None:
     if value is None:
         if optional:
             return None
         raise DeliveryStateError(f"{label} is required")
+    if not isinstance(value, str):
+        raise DeliveryStateError(f"{label} must be text")
     normalized = value.strip()
     if not normalized and not optional:
         raise DeliveryStateError(f"{label} must not be empty")
@@ -179,43 +185,17 @@ def git_identity(project: Path) -> tuple[Path, Path]:
     return root, common.resolve(strict=True)
 
 
-def platform_state_root() -> Path:
-    override = os.environ.get("XDG_STATE_HOME")
-    if override:
-        path = Path(override).expanduser()
-        if not path.is_absolute():
-            raise DeliveryStateError("XDG_STATE_HOME must be absolute")
-        return path
-    if os.name == "nt":
-        local = os.environ.get("LOCALAPPDATA")
-        if not local or not Path(local).is_absolute():
-            raise DeliveryStateError("LOCALAPPDATA is required on Windows")
-        return Path(local)
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support"
-    return Path.home() / ".local" / "state"
-
-
 def resolve_database(project: Path, explicit: Path | None) -> tuple[Path, Path, str]:
     root, common = git_identity(project)
     project_key = hashlib.sha256(str(common).encode("utf-8")).hexdigest()
     if explicit is None:
-        database = (
-            platform_state_root()
-            / "holyskills"
-            / "product-delivery"
-            / project_key[:32]
-            / "delivery.sqlite3"
-        )
+        shared_root = common.parent if common.name == ".git" else root
+        database = shared_root / ".product-delivery" / "delivery.sqlite3"
     else:
         database = explicit.expanduser()
         if not database.is_absolute():
             raise DeliveryStateError("--db must be an absolute path")
-    database.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    try:
-        database.parent.chmod(0o700)
-    except OSError:
-        pass
+    database.parent.mkdir(mode=0o770, parents=True, exist_ok=True)
     if database.is_symlink():
         raise DeliveryStateError("database path must not be a symlink")
     return root, database, project_key
@@ -301,6 +281,49 @@ CREATE TABLE IF NOT EXISTS completion_issue_tasks (
     PRIMARY KEY(issue_id, task_id)
 );
 
+CREATE TABLE IF NOT EXISTS completion_imports (
+    id TEXT PRIMARY KEY,
+    digest TEXT NOT NULL,
+    issue_count INTEGER NOT NULL CHECK(issue_count >= 0),
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS monitoring_schedules (
+    release_id TEXT PRIMARY KEY REFERENCES releases(id),
+    coordinator_thread_id TEXT NOT NULL,
+    executor_thread_id TEXT NOT NULL,
+    executor_host_id TEXT NOT NULL,
+    automation_id TEXT,
+    cadence_minutes INTEGER NOT NULL CHECK(cadence_minutes > 0),
+    state TEXT NOT NULL,
+    cursor TEXT,
+    local_files INTEGER NOT NULL CHECK(local_files IN (0, 1)),
+    availability_confirmed_at TEXT,
+    automation_enabled INTEGER NOT NULL CHECK(automation_enabled IN (0, 1)),
+    first_run_verified_at TEXT,
+    next_run_at TEXT,
+    last_run_key TEXT,
+    last_started_at TEXT,
+    last_completed_at TEXT,
+    blocker_summary TEXT,
+    stop_reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS monitoring_runs (
+    run_key TEXT PRIMARY KEY,
+    release_id TEXT NOT NULL REFERENCES monitoring_schedules(release_id),
+    scheduled_for TEXT NOT NULL,
+    state TEXT NOT NULL,
+    cursor_before TEXT,
+    cursor_after TEXT,
+    summary TEXT,
+    evidence_ref TEXT,
+    started_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS events (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL,
@@ -320,6 +343,7 @@ CREATE INDEX IF NOT EXISTS tasks_expected_update_idx ON tasks(expected_update_at
 CREATE INDEX IF NOT EXISTS issues_release_idx ON completion_issues(release_id);
 CREATE INDEX IF NOT EXISTS issues_state_idx ON completion_issues(state);
 CREATE INDEX IF NOT EXISTS events_entity_idx ON events(entity_type, entity_id, sequence);
+CREATE INDEX IF NOT EXISTS monitoring_runs_release_idx ON monitoring_runs(release_id, started_at);
 
 CREATE TRIGGER IF NOT EXISTS completion_issues_no_delete
 BEFORE DELETE ON completion_issues
@@ -338,6 +362,12 @@ BEFORE DELETE ON events
 BEGIN
     SELECT RAISE(ABORT, 'delivery events are permanent');
 END;
+
+CREATE TRIGGER IF NOT EXISTS monitoring_runs_no_delete
+BEFORE DELETE ON monitoring_runs
+BEGIN
+    SELECT RAISE(ABORT, 'monitoring run history is permanent');
+END;
 """
 
 
@@ -348,10 +378,13 @@ class Store:
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON")
         self.connection.execute("PRAGMA busy_timeout = 30000")
-        try:
-            self.database.chmod(0o600)
-        except OSError:
-            pass
+        database_metadata = self.database.stat()
+        current_user_owns_database = not hasattr(os, "geteuid") or database_metadata.st_uid == os.geteuid()
+        if current_user_owns_database:
+            try:
+                self.database.chmod(0o660)
+            except OSError as error:
+                raise DeliveryStateError(f"could not make the shared database group-writable: {error}") from error
 
     def close(self) -> None:
         self.connection.close()
@@ -458,6 +491,28 @@ class Store:
 
 def as_dict(row: sqlite3.Row) -> dict[str, object]:
     return {key: row[key] for key in row.keys()}
+
+
+def monitoring_row(store: Store, release_id: str) -> sqlite3.Row | None:
+    return store.connection.execute(
+        "SELECT * FROM monitoring_schedules WHERE release_id = ?", (release_id,)
+    ).fetchone()
+
+
+def monitoring_ready(row: sqlite3.Row | None) -> bool:
+    return bool(
+        row is not None
+        and row["state"] == "armed"
+        and row["automation_enabled"] == 1
+        and row["automation_id"]
+        and row["executor_thread_id"]
+        and row["executor_host_id"]
+        and row["first_run_verified_at"]
+        and row["cursor"]
+        and row["next_run_at"]
+        and not row["blocker_summary"]
+        and (row["local_files"] == 0 or row["availability_confirmed_at"])
+    )
 
 
 def ensure_requirement_release(store: Store, requirement_id: str | None, release_id: str) -> None:
@@ -615,6 +670,12 @@ def command_release_transition(store: Store, args: argparse.Namespace) -> dict[s
     if target not in RELEASE_TRANSITIONS[current]:
         raise DeliveryStateError(f"release cannot transition from {current} to {target}")
     evidence = require_text(args.evidence_ref, "evidence reference", optional=True)
+    monitor = monitoring_row(store, identifier)
+    if target in {"paused", "cancelled", "released"} and monitor is not None:
+        if monitor["automation_enabled"] == 1 or monitor["state"] in {"arming", "armed"}:
+            raise DeliveryStateError(
+                "release monitoring must be disabled and stopped before transition to " + target
+            )
     if target == "released":
         if evidence is None:
             raise DeliveryStateError("releasing requires an evidence reference")
@@ -1066,6 +1127,568 @@ def command_issue_note(store: Store, args: argparse.Namespace) -> dict[str, obje
     return {"ok": True, "issue": identifier, "event_sequence": sequence}
 
 
+def command_issue_import(store: Store, args: argparse.Namespace) -> dict[str, object]:
+    source = args.input.expanduser()
+    if not source.is_absolute():
+        raise DeliveryStateError("issue import path must be absolute")
+    if source.is_symlink() or not source.is_file():
+        raise DeliveryStateError("issue import must be a regular non-symlinked file")
+    raw = source.read_bytes()
+    if len(raw) > MAX_IMPORT_BYTES:
+        raise DeliveryStateError(f"issue import exceeds {MAX_IMPORT_BYTES} bytes")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise DeliveryStateError("issue import must be valid UTF-8 JSON") from error
+    if not isinstance(payload, dict) or set(payload) != {"schema", "import_id", "issues"}:
+        raise DeliveryStateError("issue import must contain exactly schema, import_id, and issues")
+    if payload["schema"] != IMPORT_SCHEMA:
+        raise DeliveryStateError(f"issue import schema must be {IMPORT_SCHEMA}")
+    import_id = require_id(payload["import_id"], "issue import ID")
+    issues = payload["issues"]
+    if not isinstance(issues, list) or len(issues) > MAX_RESULTS:
+        raise DeliveryStateError(f"issue import issues must be a list of at most {MAX_RESULTS}")
+    digest = hashlib.sha256(raw).hexdigest()
+    prior = store.connection.execute(
+        "SELECT digest, issue_count FROM completion_imports WHERE id = ?", (import_id,)
+    ).fetchone()
+    if prior is not None:
+        if prior["digest"] != digest:
+            raise DeliveryStateError("issue import ID was already used with different content")
+        return {
+            "ok": True,
+            "status": "already_applied",
+            "import_id": import_id,
+            "digest": digest,
+            "issue_count": prior["issue_count"],
+        }
+
+    expected_keys = {
+        "id",
+        "title",
+        "remaining_outcome",
+        "impact",
+        "state",
+        "blocks_release",
+        "release_id",
+        "requirement_id",
+        "task_ids",
+        "detected_by",
+        "summary",
+        "evidence_ref",
+        "metadata",
+    }
+    normalized: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(issues):
+        if not isinstance(item, dict) or set(item) != expected_keys:
+            raise DeliveryStateError(f"issue import item {index} has invalid fields")
+        identifier = require_id(item["id"], f"issue import item {index} ID")
+        if identifier in seen:
+            raise DeliveryStateError(f"duplicate imported issue ID: {identifier}")
+        seen.add(identifier)
+        if store.connection.execute(
+            "SELECT 1 FROM completion_issues WHERE id = ?", (identifier,)
+        ).fetchone() is not None:
+            raise DeliveryStateError(f"completion issue already exists: {identifier}")
+        state = item["state"]
+        if state not in ISSUE_STATES:
+            raise DeliveryStateError(f"issue import item {identifier} has invalid state")
+        if not isinstance(item["blocks_release"], bool):
+            raise DeliveryStateError(f"issue import item {identifier} blocks_release must be boolean")
+        release_id = (
+            require_id(item["release_id"], "release ID") if item["release_id"] is not None else None
+        )
+        requirement_id = (
+            require_id(item["requirement_id"], "requirement ID")
+            if item["requirement_id"] is not None
+            else None
+        )
+        if release_id:
+            store.row("releases", release_id)
+        if requirement_id:
+            requirement = store.row("requirements", requirement_id)
+            if release_id and requirement["release_id"] != release_id:
+                raise DeliveryStateError(f"issue import item {identifier} requirement and release differ")
+            release_id = release_id or requirement["release_id"]
+        if not isinstance(item["task_ids"], list):
+            raise DeliveryStateError(f"issue import item {identifier} task_ids must be a list")
+        task_ids = [require_id(value, "task ID") for value in item["task_ids"]]
+        if len(task_ids) != len(set(task_ids)):
+            raise DeliveryStateError(f"issue import item {identifier} has duplicate task IDs")
+        for task_id in task_ids:
+            task = store.row("tasks", task_id)
+            if release_id and task["release_id"] != release_id:
+                raise DeliveryStateError(f"issue import item {identifier} task and release differ")
+            release_id = release_id or task["release_id"]
+        metadata = item["metadata"]
+        if not isinstance(metadata, dict):
+            raise DeliveryStateError(f"issue import item {identifier} metadata must be an object")
+        serialized_metadata = json.dumps(metadata, sort_keys=True, separators=(",", ":"))
+        if len(serialized_metadata) > MAX_TEXT:
+            raise DeliveryStateError(f"issue import item {identifier} metadata is too large")
+        normalized.append(
+            {
+                "id": identifier,
+                "title": require_text(item["title"], "issue title"),
+                "remaining_outcome": require_text(item["remaining_outcome"], "remaining outcome"),
+                "impact": require_text(item["impact"], "issue impact"),
+                "state": state,
+                "blocks_release": item["blocks_release"],
+                "release_id": release_id,
+                "requirement_id": requirement_id,
+                "task_ids": task_ids,
+                "detected_by": require_text(item["detected_by"], "detected by"),
+                "summary": require_text(item["summary"], "import summary"),
+                "evidence_ref": require_text(item["evidence_ref"], "evidence reference", optional=True),
+                "metadata": metadata,
+            }
+        )
+
+    now = utc_now()
+    sequences: list[int] = []
+    with store.connection:
+        for item in normalized:
+            state = str(item["state"])
+            store.connection.execute(
+                """
+                INSERT INTO completion_issues(
+                    id, title, remaining_outcome, impact, state, blocks_release,
+                    release_id, requirement_id, detected_by, implemented_at,
+                    verified_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item["id"],
+                    item["title"],
+                    item["remaining_outcome"],
+                    item["impact"],
+                    state,
+                    1 if item["blocks_release"] else 0,
+                    item["release_id"],
+                    item["requirement_id"],
+                    item["detected_by"],
+                    now if state in {"implemented", "verified"} else None,
+                    now if state == "verified" else None,
+                    now,
+                    now,
+                ),
+            )
+            for task_id in item["task_ids"]:
+                store.connection.execute(
+                    "INSERT INTO completion_issue_tasks(issue_id, task_id) VALUES (?, ?)",
+                    (item["id"], task_id),
+                )
+            event_metadata = dict(item["metadata"])
+            event_metadata["import_id"] = import_id
+            sequences.append(
+                store.event(
+                    entity_type="completion_issue",
+                    entity_id=str(item["id"]),
+                    event_type="imported",
+                    summary=str(item["summary"]),
+                    actor=args.actor,
+                    to_state=state,
+                    evidence_ref=item["evidence_ref"],
+                    metadata=event_metadata,
+                    created_at=now,
+                )
+            )
+        store.connection.execute(
+            "INSERT INTO completion_imports(id, digest, issue_count, created_at) VALUES (?, ?, ?, ?)",
+            (import_id, digest, len(normalized), now),
+        )
+    return {
+        "ok": True,
+        "status": "applied",
+        "import_id": import_id,
+        "digest": digest,
+        "issue_count": len(normalized),
+        "issue_ids": [item["id"] for item in normalized],
+        "event_sequences": sequences,
+    }
+
+
+def command_monitor_configure(store: Store, args: argparse.Namespace) -> dict[str, object]:
+    release_id = require_id(args.release, "release ID")
+    store.row("releases", release_id)
+    existing = monitoring_row(store, release_id)
+    if existing is not None and (
+        existing["automation_enabled"] == 1 or existing["state"] in {"arming", "armed"}
+    ):
+        raise DeliveryStateError("active monitoring must be stopped before it is reconfigured")
+    coordinator_thread = require_text(args.coordinator_thread, "coordinator thread ID")
+    executor_thread = require_text(args.executor_thread, "executor thread ID")
+    executor_host = require_text(args.executor_host, "executor host ID")
+    cadence = int(args.cadence_minutes)
+    if cadence < 1 or cadence > 1440:
+        raise DeliveryStateError("monitor cadence must be between 1 and 1440 minutes")
+    now = utc_now()
+    availability = now if args.availability_confirmed else None
+    with store.connection:
+        store.connection.execute(
+            """
+            INSERT INTO monitoring_schedules(
+                release_id, coordinator_thread_id, executor_thread_id,
+                executor_host_id, automation_id, cadence_minutes, state, cursor,
+                local_files, availability_confirmed_at, automation_enabled,
+                first_run_verified_at, next_run_at, last_run_key, last_started_at,
+                last_completed_at, blocker_summary, stop_reason, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, NULL, ?, 'unarmed', NULL, ?, ?, 0, NULL, NULL,
+                      NULL, NULL, NULL, NULL, NULL, ?, ?)
+            ON CONFLICT(release_id) DO UPDATE SET
+                coordinator_thread_id = excluded.coordinator_thread_id,
+                executor_thread_id = excluded.executor_thread_id,
+                executor_host_id = excluded.executor_host_id,
+                automation_id = NULL,
+                cadence_minutes = excluded.cadence_minutes,
+                state = 'unarmed',
+                cursor = NULL,
+                local_files = excluded.local_files,
+                availability_confirmed_at = excluded.availability_confirmed_at,
+                automation_enabled = 0,
+                first_run_verified_at = NULL,
+                next_run_at = NULL,
+                blocker_summary = NULL,
+                stop_reason = NULL,
+                updated_at = excluded.updated_at
+            """,
+            (
+                release_id,
+                coordinator_thread,
+                executor_thread,
+                executor_host,
+                cadence,
+                1 if args.local_files else 0,
+                availability,
+                now,
+                now,
+            ),
+        )
+        sequence = store.event(
+            entity_type="monitoring",
+            entity_id=release_id,
+            event_type="configured",
+            summary="Durable same-chat monitoring was configured but is not armed.",
+            actor=args.actor,
+            from_state=existing["state"] if existing is not None else None,
+            to_state="unarmed",
+            metadata={
+                "cadence_minutes": cadence,
+                "coordinator_thread_id": coordinator_thread,
+                "executor_thread_id": executor_thread,
+                "executor_host_id": executor_host,
+                "local_files": bool(args.local_files),
+                "availability_confirmed": bool(args.availability_confirmed),
+            },
+            created_at=now,
+        )
+    return {"ok": True, "release": release_id, "state": "unarmed", "event_sequence": sequence}
+
+
+def command_monitor_arm(store: Store, args: argparse.Namespace) -> dict[str, object]:
+    release_id = require_id(args.release, "release ID")
+    monitor = monitoring_row(store, release_id)
+    if monitor is None:
+        raise DeliveryStateError("monitoring must be configured before it is armed")
+    if monitor["state"] not in {"unarmed", "blocked", "stopped"}:
+        raise DeliveryStateError(f"monitoring cannot be armed from {monitor['state']}")
+    if monitor["local_files"] == 1 and not monitor["availability_confirmed_at"]:
+        raise DeliveryStateError("local-file monitoring requires desktop app and machine availability confirmation")
+    automation_id = require_text(args.automation_id, "scheduled task ID")
+    next_run = normalize_timestamp(args.next_run_at, "next scheduled run")
+    evidence = require_text(args.evidence_ref, "schedule creation evidence")
+    now = utc_now()
+    with store.connection:
+        store.connection.execute(
+            """
+            UPDATE monitoring_schedules SET automation_id = ?, state = 'arming',
+                automation_enabled = 1, first_run_verified_at = NULL,
+                next_run_at = ?, blocker_summary = NULL, stop_reason = NULL,
+                updated_at = ? WHERE release_id = ?
+            """,
+            (automation_id, next_run, now, release_id),
+        )
+        sequence = store.event(
+            entity_type="monitoring",
+            entity_id=release_id,
+            event_type="schedule_enabled",
+            summary="The same-chat scheduled task is enabled; first-run verification remains required.",
+            actor=args.actor,
+            from_state=monitor["state"],
+            to_state="arming",
+            evidence_ref=evidence,
+            metadata={"automation_id": automation_id, "next_run_at": next_run},
+            created_at=now,
+        )
+    return {"ok": True, "release": release_id, "state": "arming", "event_sequence": sequence}
+
+
+def command_monitor_run_start(store: Store, args: argparse.Namespace) -> dict[str, object]:
+    release_id = require_id(args.release, "release ID")
+    run_key = require_id(args.run_key, "monitor run key")
+    scheduled_for = normalize_timestamp(args.scheduled_for, "scheduled run time")
+    monitor = monitoring_row(store, release_id)
+    if monitor is None or monitor["state"] not in {"arming", "armed"}:
+        raise DeliveryStateError("monitoring must be arming or armed before a run starts")
+    if monitor["automation_enabled"] != 1:
+        raise DeliveryStateError("monitoring scheduled task is not enabled")
+    existing = store.connection.execute(
+        "SELECT * FROM monitoring_runs WHERE run_key = ?", (run_key,)
+    ).fetchone()
+    if existing is not None:
+        return {
+            "ok": True,
+            "status": "already_recorded" if existing["state"] != "running" else "already_running",
+            "release": release_id,
+            "run_key": run_key,
+            "state": existing["state"],
+        }
+    overlap = store.connection.execute(
+        "SELECT run_key FROM monitoring_runs WHERE release_id = ? AND state = 'running' LIMIT 1",
+        (release_id,),
+    ).fetchone()
+    now = utc_now()
+    with store.connection:
+        if overlap is not None:
+            store.connection.execute(
+                """
+                INSERT INTO monitoring_runs(
+                    run_key, release_id, scheduled_for, state, cursor_before,
+                    cursor_after, summary, evidence_ref, started_at, completed_at
+                ) VALUES (?, ?, ?, 'skipped_overlap', ?, ?, ?, NULL, ?, ?)
+                """,
+                (
+                    run_key,
+                    release_id,
+                    scheduled_for,
+                    monitor["cursor"],
+                    monitor["cursor"],
+                    f"Skipped because run {overlap['run_key']} is still active.",
+                    now,
+                    now,
+                ),
+            )
+            sequence = store.event(
+                entity_type="monitoring",
+                entity_id=release_id,
+                event_type="overlap_skipped",
+                summary=f"Monitor run {run_key} was skipped because another run is active.",
+                actor=args.actor,
+                metadata={"run_key": run_key, "active_run_key": overlap["run_key"]},
+                created_at=now,
+            )
+            return {
+                "ok": True,
+                "status": "skipped_overlap",
+                "release": release_id,
+                "run_key": run_key,
+                "active_run_key": overlap["run_key"],
+                "event_sequence": sequence,
+            }
+        store.connection.execute(
+            """
+            INSERT INTO monitoring_runs(
+                run_key, release_id, scheduled_for, state, cursor_before,
+                cursor_after, summary, evidence_ref, started_at, completed_at
+            ) VALUES (?, ?, ?, 'running', ?, NULL, NULL, NULL, ?, NULL)
+            """,
+            (run_key, release_id, scheduled_for, monitor["cursor"], now),
+        )
+        store.connection.execute(
+            """
+            UPDATE monitoring_schedules SET last_run_key = ?, last_started_at = ?,
+                updated_at = ? WHERE release_id = ?
+            """,
+            (run_key, now, now, release_id),
+        )
+        sequence = store.event(
+            entity_type="monitoring",
+            entity_id=release_id,
+            event_type="run_started",
+            summary=f"Monitor run {run_key} started with the retained cursor.",
+            actor=args.actor,
+            metadata={"run_key": run_key, "cursor_before": monitor["cursor"]},
+            created_at=now,
+        )
+    return {"ok": True, "status": "started", "release": release_id, "run_key": run_key, "event_sequence": sequence}
+
+
+def command_monitor_run_finish(store: Store, args: argparse.Namespace) -> dict[str, object]:
+    run_key = require_id(args.run_key, "monitor run key")
+    run = store.connection.execute(
+        "SELECT * FROM monitoring_runs WHERE run_key = ?", (run_key,)
+    ).fetchone()
+    if run is None:
+        raise DeliveryStateError(f"unknown monitor run: {run_key}")
+    if run["state"] != "running":
+        raise DeliveryStateError(f"monitor run {run_key} is already {run['state']}")
+    outcome = args.state
+    summary = require_text(args.summary, "monitor run summary")
+    evidence = require_text(args.evidence_ref, "monitor run evidence", optional=True)
+    cursor = require_text(args.cursor, "retained cursor", optional=outcome == "failed")
+    next_run = normalize_timestamp(args.next_run_at, "next scheduled run") if args.next_run_at else None
+    if outcome == "completed" and (cursor is None or next_run is None):
+        raise DeliveryStateError("a completed monitor run requires retained cursor and next scheduled run")
+    monitor = monitoring_row(store, run["release_id"])
+    if monitor is None:
+        raise DeliveryStateError("monitoring schedule disappeared during its run")
+    now = utc_now()
+    schedule_state = "blocked" if outcome == "failed" else monitor["state"]
+    blocker = summary if outcome == "failed" else None
+    with store.connection:
+        store.connection.execute(
+            """
+            UPDATE monitoring_runs SET state = ?, cursor_after = ?, summary = ?,
+                evidence_ref = ?, completed_at = ? WHERE run_key = ?
+            """,
+            (outcome, cursor, summary, evidence, now, run_key),
+        )
+        store.connection.execute(
+            """
+            UPDATE monitoring_schedules SET state = ?, cursor = COALESCE(?, cursor),
+                last_completed_at = ?, next_run_at = COALESCE(?, next_run_at),
+                blocker_summary = ?, updated_at = ? WHERE release_id = ?
+            """,
+            (schedule_state, cursor, now, next_run, blocker, now, run["release_id"]),
+        )
+        sequence = store.event(
+            entity_type="monitoring",
+            entity_id=run["release_id"],
+            event_type="run_finished",
+            summary=summary or "Monitor run finished.",
+            actor=args.actor,
+            from_state=monitor["state"],
+            to_state=schedule_state,
+            evidence_ref=evidence,
+            metadata={
+                "run_key": run_key,
+                "run_state": outcome,
+                "cursor_before": run["cursor_before"],
+                "cursor_after": cursor,
+                "next_run_at": next_run,
+            },
+            created_at=now,
+        )
+    return {"ok": True, "release": run["release_id"], "run_key": run_key, "state": outcome, "event_sequence": sequence}
+
+
+def command_monitor_verify_first_run(store: Store, args: argparse.Namespace) -> dict[str, object]:
+    release_id = require_id(args.release, "release ID")
+    run_key = require_id(args.run_key, "monitor run key")
+    monitor = monitoring_row(store, release_id)
+    if monitor is None or monitor["state"] != "arming":
+        raise DeliveryStateError("monitoring must be arming before first-run verification")
+    run = store.connection.execute(
+        "SELECT * FROM monitoring_runs WHERE run_key = ? AND release_id = ?",
+        (run_key, release_id),
+    ).fetchone()
+    if run is None or run["state"] != "completed" or not run["cursor_after"]:
+        raise DeliveryStateError("first-run verification requires one completed run with retained cursor")
+    evidence = require_text(args.evidence_ref, "first-run verification evidence")
+    now = utc_now()
+    with store.connection:
+        store.connection.execute(
+            """
+            UPDATE monitoring_schedules SET state = 'armed', cursor = ?,
+                first_run_verified_at = ?, blocker_summary = NULL, updated_at = ?
+            WHERE release_id = ?
+            """,
+            (run["cursor_after"], now, now, release_id),
+        )
+        sequence = store.event(
+            entity_type="monitoring",
+            entity_id=release_id,
+            event_type="first_run_verified",
+            summary="The first same-chat scheduled monitoring run completed successfully.",
+            actor=args.actor,
+            from_state="arming",
+            to_state="armed",
+            evidence_ref=evidence,
+            metadata={"run_key": run_key, "cursor": run["cursor_after"]},
+            created_at=now,
+        )
+    return {"ok": True, "release": release_id, "state": "armed", "ready": True, "event_sequence": sequence}
+
+
+def command_monitor_block(store: Store, args: argparse.Namespace) -> dict[str, object]:
+    release_id = require_id(args.release, "release ID")
+    monitor = monitoring_row(store, release_id)
+    if monitor is None:
+        raise DeliveryStateError("monitoring must be configured before it is blocked")
+    reason = require_text(args.reason, "monitoring blocker")
+    evidence = require_text(args.evidence_ref, "blocker evidence", optional=True)
+    now = utc_now()
+    with store.connection:
+        store.connection.execute(
+            "UPDATE monitoring_schedules SET state = 'blocked', blocker_summary = ?, updated_at = ? WHERE release_id = ?",
+            (reason, now, release_id),
+        )
+        sequence = store.event(
+            entity_type="monitoring",
+            entity_id=release_id,
+            event_type="blocked",
+            summary=reason or "Monitoring is blocked.",
+            actor=args.actor,
+            from_state=monitor["state"],
+            to_state="blocked",
+            evidence_ref=evidence,
+            created_at=now,
+        )
+    return {"ok": True, "release": release_id, "state": "blocked", "ready": False, "event_sequence": sequence}
+
+
+def command_monitor_stop(store: Store, args: argparse.Namespace) -> dict[str, object]:
+    release_id = require_id(args.release, "release ID")
+    monitor = monitoring_row(store, release_id)
+    if monitor is None:
+        raise DeliveryStateError("monitoring is not configured")
+    reason = require_text(args.reason, "monitoring stop reason")
+    evidence = require_text(args.evidence_ref, "scheduled-task disable evidence")
+    now = utc_now()
+    with store.connection:
+        store.connection.execute(
+            """
+            UPDATE monitoring_schedules SET state = 'stopped', automation_enabled = 0,
+                next_run_at = NULL, blocker_summary = NULL, stop_reason = ?,
+                updated_at = ? WHERE release_id = ?
+            """,
+            (reason, now, release_id),
+        )
+        sequence = store.event(
+            entity_type="monitoring",
+            entity_id=release_id,
+            event_type="stopped",
+            summary=reason or "Monitoring stopped.",
+            actor=args.actor,
+            from_state=monitor["state"],
+            to_state="stopped",
+            evidence_ref=evidence,
+            created_at=now,
+        )
+    return {"ok": True, "release": release_id, "state": "stopped", "ready": False, "event_sequence": sequence}
+
+
+def command_monitor_status(store: Store, args: argparse.Namespace) -> dict[str, object]:
+    release_id = require_id(args.release, "release ID")
+    store.row("releases", release_id)
+    monitor = monitoring_row(store, release_id)
+    if monitor is None:
+        return {
+            "ok": True,
+            "release": release_id,
+            "configured": False,
+            "state": "unarmed",
+            "ready": False,
+            "reason": "no monitoring schedule is configured",
+        }
+    item = as_dict(monitor)
+    item["local_files"] = bool(item["local_files"])
+    item["automation_enabled"] = bool(item["automation_enabled"])
+    item["ready"] = monitoring_ready(monitor)
+    return {"ok": True, "release": release_id, "configured": True, "monitoring": item}
+
+
 def issue_filter_states(selection: str) -> set[str] | None:
     if selection == "not-implemented":
         return NOT_IMPLEMENTED_STATES
@@ -1170,6 +1793,7 @@ def release_progress_rows(store: Store) -> list[dict[str, object]]:
             else 0.0
         )
         open_tasks, open_issues = release_blockers(store, release["id"])
+        monitor = monitoring_row(store, release["id"])
         result.append(
             {
                 "id": release["id"],
@@ -1190,6 +1814,9 @@ def release_progress_rows(store: Store) -> list[dict[str, object]]:
                 "implemented_unverified_issue_count": int(issue_stats["implemented_unverified"] or 0),
                 "verified_issue_count": int(issue_stats["verified"] or 0),
                 "blocking_issue_count": int(issue_stats["blocking"] or 0),
+                "monitoring_state": monitor["state"] if monitor is not None else "unarmed",
+                "monitoring_ready": monitoring_ready(monitor),
+                "monitoring_next_run_at": monitor["next_run_at"] if monitor is not None else None,
                 "ready": bool(task_stats["task_count"])
                 and not open_tasks
                 and not open_issues
@@ -1302,6 +1929,9 @@ def command_release_show(store: Store, args: argparse.Namespace) -> dict[str, ob
         "ok": True,
         "scope_baseline": f"{release_id}:r{release['scope_revision']}",
         "release": as_dict(release),
+        "monitoring": as_dict(monitoring_row(store, release_id))
+        if monitoring_row(store, release_id) is not None
+        else None,
         "requirements": [as_dict(row) for row in requirements],
         "tasks": [as_dict(row) for row in tasks],
         "dependencies": [as_dict(row) for row in dependencies],
@@ -1392,6 +2022,38 @@ def command_monitor_snapshot(store: Store, args: argparse.Namespace) -> dict[str
         ORDER BY release_id, id
         """
     ).fetchall()
+    monitored_releases = store.connection.execute(
+        """
+        SELECT id, name, status FROM releases
+        WHERE status IN ('approved', 'active', 'acceptance')
+        ORDER BY id
+        """
+    ).fetchall()
+    monitoring_gaps: list[dict[str, object]] = []
+    for release in monitored_releases:
+        monitor = monitoring_row(store, release["id"])
+        if not monitoring_ready(monitor):
+            monitoring_gaps.append(
+                {
+                    "release_id": release["id"],
+                    "release_name": release["name"],
+                    "release_state": release["status"],
+                    "monitoring_state": monitor["state"] if monitor is not None else "unarmed",
+                    "automation_enabled": bool(monitor["automation_enabled"])
+                    if monitor is not None
+                    else False,
+                    "blocker_summary": monitor["blocker_summary"]
+                    if monitor is not None
+                    else "no monitoring schedule is configured",
+                }
+            )
+    active_monitor_runs = store.connection.execute(
+        """
+        SELECT run_key, release_id, scheduled_for, started_at
+        FROM monitoring_runs WHERE state = 'running'
+        ORDER BY started_at, run_key
+        """
+    ).fetchall()
     max_sequence = store.connection.execute("SELECT COALESCE(MAX(sequence), 0) AS value FROM events").fetchone()[
         "value"
     ]
@@ -1403,6 +2065,8 @@ def command_monitor_snapshot(store: Store, args: argparse.Namespace) -> dict[str
         "failed_tasks": [as_dict(row) for row in failed],
         "blocked_tasks": [as_dict(row) for row in blocked],
         "blocking_issues": [as_dict(row) for row in blocking_issues],
+        "monitoring_gaps": monitoring_gaps,
+        "active_monitor_runs": [as_dict(row) for row in active_monitor_runs],
     }
 
 
@@ -1564,6 +2228,66 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--evidence-ref")
     add_common_mutation_arguments(command)
 
+    command = subparsers.add_parser("issue-import", help="transactionally import reviewed issues")
+    command.add_argument("--input", required=True, type=Path)
+    add_common_mutation_arguments(command)
+
+    command = subparsers.add_parser("monitor-configure", help="configure durable same-chat monitoring")
+    command.add_argument("--release", required=True)
+    command.add_argument("--coordinator-thread", required=True)
+    command.add_argument("--executor-thread", required=True)
+    command.add_argument("--executor-host", required=True)
+    command.add_argument("--cadence-minutes", type=int, default=60)
+    command.add_argument("--local-files", action="store_true")
+    command.add_argument("--availability-confirmed", action="store_true")
+    add_common_mutation_arguments(command)
+
+    command = subparsers.add_parser("monitor-arm", help="record an enabled same-chat scheduled task")
+    command.add_argument("--release", required=True)
+    command.add_argument("--automation-id", required=True)
+    command.add_argument("--next-run-at", required=True)
+    command.add_argument("--evidence-ref", required=True)
+    add_common_mutation_arguments(command)
+
+    command = subparsers.add_parser("monitor-run-start", help="start one idempotent monitoring run")
+    command.add_argument("--release", required=True)
+    command.add_argument("--run-key", required=True)
+    command.add_argument("--scheduled-for", required=True)
+    add_common_mutation_arguments(command)
+
+    command = subparsers.add_parser("monitor-run-finish", help="finish one monitoring run")
+    command.add_argument("--run-key", required=True)
+    command.add_argument("--state", required=True, choices=["completed", "failed"])
+    command.add_argument("--summary", required=True)
+    command.add_argument("--cursor")
+    command.add_argument("--next-run-at")
+    command.add_argument("--evidence-ref")
+    add_common_mutation_arguments(command)
+
+    command = subparsers.add_parser(
+        "monitor-verify-first-run",
+        help="promote monitoring to armed after a completed first scheduled run",
+    )
+    command.add_argument("--release", required=True)
+    command.add_argument("--run-key", required=True)
+    command.add_argument("--evidence-ref", required=True)
+    add_common_mutation_arguments(command)
+
+    command = subparsers.add_parser("monitor-block", help="record that ongoing monitoring is unarmed")
+    command.add_argument("--release", required=True)
+    command.add_argument("--reason", required=True)
+    command.add_argument("--evidence-ref")
+    add_common_mutation_arguments(command)
+
+    command = subparsers.add_parser("monitor-stop", help="record disabled terminal monitoring")
+    command.add_argument("--release", required=True)
+    command.add_argument("--reason", required=True)
+    command.add_argument("--evidence-ref", required=True)
+    add_common_mutation_arguments(command)
+
+    command = subparsers.add_parser("monitor-status", help="read durable monitoring readiness")
+    command.add_argument("--release", required=True)
+
     command = subparsers.add_parser("issue-list", help="query current completion issues")
     command.add_argument(
         "--state",
@@ -1615,6 +2339,15 @@ COMMANDS = {
     "issue-transition": command_issue_transition,
     "issue-move": command_issue_move,
     "issue-note": command_issue_note,
+    "issue-import": command_issue_import,
+    "monitor-configure": command_monitor_configure,
+    "monitor-arm": command_monitor_arm,
+    "monitor-run-start": command_monitor_run_start,
+    "monitor-run-finish": command_monitor_run_finish,
+    "monitor-verify-first-run": command_monitor_verify_first_run,
+    "monitor-block": command_monitor_block,
+    "monitor-stop": command_monitor_stop,
+    "monitor-status": command_monitor_status,
     "issue-list": command_issue_list,
     "issue-history": command_issue_history,
     "status": command_status,

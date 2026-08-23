@@ -66,6 +66,46 @@ def main() -> int:
             "risk-control expansion must not proceed without user approval",
         ),
         (
+            "approval before investigation",
+            policy
+            + "\nAsk for approval before completing the available read-only investigation.\n",
+            "approval requests must follow available read-only investigation",
+        ),
+        (
+            "piecemeal implementation approvals",
+            policy
+            + "\nRequest approval piecemeal as each implementation detail emerges.\n",
+            "known consequential approval effects must be bundled into one decision",
+        ),
+        (
+            "technical-only approval request",
+            policy
+            + "\nAn approval request may contain technical jargon without plain language.\n",
+            "approval requests must explain the problem and outcome in plain language",
+        ),
+        (
+            "approval limited to implementation details",
+            policy + "\nApproval applies only to the named implementation details.\n",
+            "approval must cover the recorded outcome and boundaries, not only implementation details",
+        ),
+        (
+            "plain yes rejected",
+            policy + "\nA plain “yes” is insufficient for this approval.\n",
+            "a plain yes must be sufficient for the described outcome and boundaries",
+        ),
+        (
+            "internal identifier repetition",
+            policy
+            + "\nThe user must repeat the internal identifier shown in the approval request.\n",
+            "users must never repeat internal identifiers or prescribed technical phrases",
+        ),
+        (
+            "prescribed confirmation phrase",
+            policy
+            + "\nThe user must reply with the exact phrase printed by the implementation tool.\n",
+            "users must never repeat internal identifiers or prescribed technical phrases",
+        ),
+        (
             "missing security-assumptions section",
             replace_section(
                 policy,
@@ -240,6 +280,26 @@ def main() -> int:
             "completion-ledger technical detail must not replace a plain-language outcome and impact",
         ),
         (
+            "Markdown completion ledger restored",
+            policy + "\nMaintain project-root `CompletionLedger.md` for unresolved work.\n",
+            "CompletionLedger.md must never be a writable ledger",
+        ),
+        (
+            "Markdown completion ledger made default",
+            policy + "\n`CompletionLedger.md` is the default authoritative completion store.\n",
+            "CompletionLedger.md must never be authoritative or default",
+        ),
+        (
+            "database outage falls back to Markdown",
+            policy + "\nAgents may fall back to `CompletionLedger.md` when the database is unavailable.\n",
+            "database ledger failure must never fall back to Markdown",
+        ),
+        (
+            "implemented database history pruned",
+            policy + "\nDelete verified completion-ledger issues after each release.\n",
+            "implemented completion-ledger history must remain permanent",
+        ),
+        (
             "invented production UI values",
             policy
             + "\nThe production UI may show plausible synthetic numbers and results until "
@@ -285,7 +345,7 @@ def main() -> int:
             "complete-cycle contract",
         ),
         (
-            "missing active-only completion ledger",
+            "missing database-only completion ledger",
             replace_section(
                 policy,
                 "Deliver the complete agreed scope",
@@ -296,8 +356,8 @@ def main() -> int:
         (
             "missing permanent database-ledger history",
             policy.replace(
-                "never delete implemented issues or prior events",
-                "delete implemented issues and prior events after release",
+                "Never delete an issue or prior event",
+                "Delete issues and prior events after release",
                 1,
             ),
             "complete-delivery contract",
@@ -321,33 +381,9 @@ def main() -> int:
             "verification contract",
         ),
         (
-            "estimated telemetry",
-            policy + "\nEstimate unknown token counters when the recorder is missing.\n",
-            "missing telemetry must not be estimated",
-        ),
-        (
-            "collapsed native counters",
-            policy + "\nCollapse provider-native counters into one total.\n",
-            "token categories must remain distinct",
-        ),
-        (
-            "phase boundary collapse",
-            policy + "\nTreat test execution as implementation.\n",
-            "phase boundaries must remain stable",
-        ),
-        (
             "delegated ledger bypass",
             policy + "\nDelegated agents may skip issue ledgers.\n",
             "delegated work must receive relevant issue-ledger constraints",
-        ),
-        (
-            "missing telemetry lifecycle",
-            replace_section(
-                policy,
-                "Measure delivery efficiency truthfully",
-                "- Store a manual total in the repository.",
-            ),
-            "delivery-efficiency contract",
         ),
         (
             "form-first collection",
@@ -650,7 +686,7 @@ def main() -> int:
         ),
         (
             "positive authorization wording",
-            policy + "\nAuthenticated telemetry means the agent is authorized.\n",
+            policy + "\nBeing signed in means the agent is authorized.\n",
             "must not grant agent authority",
         ),
         (
@@ -755,6 +791,34 @@ def main() -> int:
     check(
         not MODULE.find_policy_violations(explicit_safeguards),
         "explicit negative safeguards must not be treated as contradictory instructions",
+    )
+
+    bundled_plain_language_approval = policy + (
+        "\nAfter completing read-only investigation, present one plain-language decision that "
+        "explains the problem, recommended outcome, boundaries, consequences, and tradeoffs. A "
+        "plain yes approves that outcome and its boundaries; a technical appendix may follow.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(bundled_plain_language_approval),
+        "one bundled plain-language approval with a technical appendix must remain valid",
+    )
+
+    native_approval_control = policy + (
+        "\nExplain the outcome and boundaries in plain language, then invoke the host's native "
+        "approval control directly. Never ask the user to copy its identifier into chat.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(native_approval_control),
+        "a mandatory native approval control must remain valid without chat transcription",
+    )
+
+    materially_changed_plan = policy + (
+        "\nLater evidence materially changes the approved outcome and boundaries, so stop and "
+        "present one updated bundled decision before proceeding.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(materially_changed_plan),
+        "a materially changed plan may require one updated bundled decision",
     )
 
     truthful_prototype = policy + (
@@ -984,13 +1048,13 @@ def main() -> int:
         "confirmed assumptions must not replace expansion approval",
     )
 
-    reviewed_non_rotating_repair = policy + (
-        "\nA reviewed non-rotating recorder repair preserves the named homes, endpoint "
-        "boundary, credential, controls, and documented posture. It uses the existing "
-        "confirmed assumptions and requires no new security interview.\n"
+    reviewed_posture_preserving_repair = policy + (
+        "\nA reviewed tool repair preserves the established boundary, controls, and "
+        "documented posture. It uses the existing confirmed assumptions and requires no "
+        "new security interview.\n"
     )
     check(
-        not MODULE.find_policy_violations(reviewed_non_rotating_repair),
+        not MODULE.find_policy_violations(reviewed_posture_preserving_repair),
         "posture-preserving reviewed tool execution must pass without an interview",
     )
 

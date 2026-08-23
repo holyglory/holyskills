@@ -1,4 +1,4 @@
-"""Parse and render the active-only project CompletionLedger.md schema."""
+"""Parse retired CompletionLedger.md snapshots for migration and legacy fixtures."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ FUTURE_STATUS_PHRASES = (
 
 
 class LedgerError(ValueError):
-    """Raised when a completion ledger violates the active-only schema."""
+    """Raised when a retired Markdown snapshot violates its legacy schema."""
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan or apply a verified full-repo-audit finding projection to CompletionLedger.md."""
+"""Convert a verified full-repo-audit projection into a database issue import."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 try:
     import resource
 except ImportError:  # pragma: no cover - resource is unavailable on Windows.
@@ -1374,6 +1375,101 @@ def build_plan(repo: Path, manifest_path: Path, reports_dir: Path, projection_pa
         evidence.close()
 
 
+def database_state_from_legacy_status(status: str) -> str:
+    """Map the reviewed active finding status to the database issue vocabulary."""
+
+    normalized = status.strip().casefold()
+    if normalized.startswith(("blocked", "waiting")):
+        return "blocked"
+    if normalized.startswith(("in progress", "active", "partial")):
+        return "in_progress"
+    if normalized.startswith(("pending", "open", "to do", "todo", "unresolved")):
+        return "planned"
+    raise UpdateError(f"confirmed finding has unsupported active status {status!r}")
+
+
+def build_database_import(
+    repo: Path,
+    manifest_path: Path,
+    reports_dir: Path,
+    projection_path: Path,
+    import_id: str,
+) -> dict:
+    """Reverify evidence and emit one transactional database-import payload."""
+
+    if not isinstance(import_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", import_id):
+        raise UpdateError("database import ID is invalid")
+    evidence = open_evidence_bundle(repo, manifest_path, reports_dir, projection_path)
+    try:
+        with tempfile.TemporaryDirectory(prefix="full-repo-database-import-") as temporary:
+            staged_reports = Path(temporary) / "reports"
+            staged_reports.mkdir(mode=0o700)
+            for name, guard in evidence.report_guards.items():
+                target = staged_reports / name
+                target.write_bytes(guard.data)
+                target.chmod(0o400)
+            try:
+                consolidated = merge_findings.merge_findings(
+                    staged_reports,
+                    report_names=evidence.report_names,
+                )
+            except ValueError as exc:
+                raise UpdateError(f"could not consolidate receipt-bound audit reports: {exc}") from exc
+        expected_report_hashes = {
+            name: guard.sha256 for name, guard in evidence.report_guards.items()
+        }
+        if consolidated.get("report_sha256") != expected_report_hashes:
+            raise UpdateError("staged audit reports do not match the held receipt-bound evidence")
+        consolidated["ignored_unverified_reports"] = evidence.ignored_report_names
+        expected = merge_findings.render_completion_ledger_projection(
+            consolidated,
+            run_id=evidence.manifest["run_id"],
+            repo_root=evidence.manifest["repo_root"],
+            manifest_sha256=evidence.manifest_guard.sha256,
+        )
+        candidates = validate_projection(evidence.projection, expected, consolidated)
+        issues: list[dict] = []
+        for candidate in candidates:
+            if candidate["disposition"] != "confirmed":
+                continue
+            row = row_from_projection(candidate)
+            issues.append(
+                {
+                    "id": row.id,
+                    "title": candidate["summary"],
+                    "remaining_outcome": row.remaining_work,
+                    "impact": row.why_it_matters,
+                    "state": database_state_from_legacy_status(row.status),
+                    "blocks_release": candidate["priority"] in {"P0", "P1"},
+                    "release_id": None,
+                    "requirement_id": None,
+                    "task_ids": [],
+                    "detected_by": f"full-repo-audit:{evidence.manifest['run_id']}",
+                    "summary": f"Imported reviewed audit finding {candidate['candidate_id']}.",
+                    "evidence_ref": f"audit:{evidence.manifest['run_id']}:{candidate['candidate_id']}",
+                    "metadata": {
+                        "candidate_id": candidate["candidate_id"],
+                        "priority": candidate["priority"],
+                        "files": candidate["files"],
+                        "verification": row.verification,
+                        "reviewed_status": row.status,
+                        "source_reports": candidate["source_reports"],
+                        "manifest_sha256": evidence.manifest_guard.sha256,
+                        "projection_sha256": evidence.projection_guard.sha256,
+                        "verifier_result_sha256": evidence.verifier_result_sha256,
+                    },
+                }
+            )
+        validate_guards(evidence.guards)
+        return {
+            "schema": "holyskills.completion-ledger-import.v1",
+            "import_id": import_id,
+            "issues": issues,
+        }
+    finally:
+        evidence.close()
+
+
 def validate_guards(guards: list[FileGuard]) -> None:
     for guard in guards:
         guard.validate()
@@ -2022,36 +2118,42 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    plan_parser = subparsers.add_parser(
-        "plan",
-        help="Bind pass-only audit evidence and current sources into a no-mutation ledger plan.",
+    import_parser = subparsers.add_parser(
+        "database-import",
+        help="Reverify evidence and write one software-owned database import artifact.",
     )
-    add_common_arguments(plan_parser)
-    plan_parser.add_argument("--out", required=True, type=Path)
-    apply_parser = subparsers.add_parser(
-        "apply",
-        help="Revalidate bound evidence and atomically apply an exact reviewed plan.",
-    )
-    add_common_arguments(apply_parser)
-    apply_parser.add_argument("--plan", required=True, type=Path)
+    add_common_arguments(import_parser)
+    import_parser.add_argument("--import-id", required=True)
+    import_parser.add_argument("--out", required=True, type=Path)
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        if args.command == "plan":
-            plan = build_plan(args.repo, args.manifest, args.reports, args.projection)
-            write_json_atomic(args.out, plan)
-        else:
-            plan = apply_plan(args.repo, args.manifest, args.reports, args.projection, args.plan)
-        print(json.dumps({key: value for key, value in plan.items() if key != "after_content"}, indent=2, sort_keys=True))
+        payload = build_database_import(
+            args.repo,
+            args.manifest,
+            args.reports,
+            args.projection,
+            args.import_id,
+        )
+        write_json_atomic(args.out, payload)
+        print(
+            json.dumps(
+                {
+                    "import_id": payload["import_id"],
+                    "issue_count": len(payload["issues"]),
+                    "output": str(args.out),
+                    "schema": payload["schema"],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
-    except PublicationUncertainError as exc:
-        print(f"completion-ledger publication state requires inspection: {exc}", file=sys.stderr)
-        return 2
     except (OSError, UpdateError, completion_ledger.LedgerError, KeyError) as exc:
-        print(f"completion-ledger update refused: {exc}", file=sys.stderr)
+        print(f"completion-ledger database import refused: {exc}", file=sys.stderr)
         return 1
 
 

@@ -1,9 +1,8 @@
 # Holy Skills
 
-Holy Skills is the canonical public source for seven portable Codex and Claude
-Code skills and one shared delivery-efficiency recorder. It contains audit,
-verification, documentation, and observational agent-runtime tooling; it does
-not own or deploy local-service coordination products.
+Holy Skills is the canonical public source for six portable Codex and Claude
+Code skills. It contains audit, verification, and documentation tooling; it
+does not own or deploy local-service coordination products.
 
 The coordinator, PostgreSQL protection skill, native DevOps Board, and web
 DevOps Console are independently versioned outside this repository. Holy Skills
@@ -14,8 +13,8 @@ does not import, clone, pin, build, or test their source repository.
 - `coordinate-product-delivery`: an explicit-invocation product and project
   delivery coordinator with approved release baselines, one primary execution
   task, a software-owned SQLite work graph and permanent Completion Ledger,
-  weighted progress, bounded monitoring events, and renderer-neutral Gantt
-  data. A separately installed DevCoordinator is used for Gantt rendering only
+  weighted progress, mandatory verified same-chat scheduled monitoring, bounded
+  events, and renderer-neutral Gantt data. A separately installed DevCoordinator is used for Gantt rendering only
   when capability discovery advertises that action.
 - `formal-web-ui-verification`: a deterministic Playwright/Chromium heuristic
   for rendered geometry, visibility, clipping, overlap, media health, target
@@ -29,10 +28,6 @@ does not import, clone, pin, build, or test their source repository.
 - `full-repo-test-coverage-audit`: a structural test-assurance audit with exact
   target decisions, validated test references, and optional empirical coverage
   ingestion.
-- `install-delivery-efficiency-hooks`: a cross-platform installation workflow
-  for recorder prerequisites, transactional Codex and Claude hook deployment,
-  supported feature activation, exact host review, persistent per-home Codex
-  telemetry proof, and standalone task/repository readings.
 - `ui-implementation-audit`: an explicit-invocation-only, source- and
   evidence-bound audit used once a substantive product UI surface exists,
   covering rendered behavior, journeys, handlers, backend paths, permissions,
@@ -47,10 +42,10 @@ vendored copy so its directory remains independently installable and testable.
 
 ## Layout
 
-- `skills/`: the seven canonical skill packages.
+- `skills/`: the six canonical skill packages.
 - `full_repo_harness/`: shared audit discovery, evidence, batching, queue, and
   verification code.
-- `scripts/validate.py`: the complete seven-skill and standalone-copy gate.
+- `scripts/validate.py`: the complete six-skill and standalone-copy gate.
 - `scripts/manage_skill_links.py`: transactional direct-link installation and
   rollback for explicit runtime roots.
 - `scripts/manage_global_policy.py`: digest-approved plan/apply/verify/rollback
@@ -65,27 +60,20 @@ vendored copy so its directory remains independently installable and testable.
   policy.
 - `scripts/check_decision_history.py`: compact decision-index, selective detail,
   stable-ID, and anti-loop guard.
-- `scripts/check_completion_ledger.py`: open-only active-work ledger guard;
-  absence is the valid state when no work remains.
+- `scripts/check_completion_ledger.py`: database-only ledger guard; it rejects
+  `CompletionLedger.md` and can verify the live SQLite schema, permanence
+  triggers, and integrity.
 - `scripts/check_user_issue_ledgers.py`: recursive, no-follow validation for
   persistent scoped user-correction ledgers; absence is valid before the first
   qualifying correction.
 - `scripts/public_artifact_guard.py`: public-text, symlink, and PNG provenance
   guard.
-- `tools/delivery-efficiency/`: the shared cross-runtime recorder, versioned
-  adapter contract, Codex and Claude Code translators, exact Claude prompt
-  correlation with a legacy session-generation fallback, transactional
-  installer for Codex homes and Claude `settings.json` targets, and
-  platform/privacy/crash tests.
 - `SKILL_AUDIT.md`: honest capabilities, improvements, and residual limits for
-  all seven skills.
+  all six skills.
 - `DecisionHistory.md`: compact major-decision and project-direction index.
 - `DecisionDetails/`: one cold supporting record per indexed decision.
 - `UserIssueLedgers/`: compact persistent prevention rules separated by
   surface, domain, or business-logic perspective.
-- `EfficiencyLedger.jsonl` remains deliberately absent from this layout. The
-  installed recorder creates it in platform-native user state outside this
-  checkout and routine context.
 
 `DecisionHistory.md` is routine context; `DecisionDetails/` is not. The index
 contains one evidence-linked `Direction:` paragraph, then entries with this
@@ -108,34 +96,24 @@ matching ID/title and an index backlink, and holds all evidence, implementation,
 verification, chronology, and sources. Open only the detail relevant to a
 decision being applied, challenged, superseded, or explicitly audited.
 
-`CompletionLedger.md` exists only while requested work remains incomplete. Its
-resolved rows are removed in the completing change, and the file is deleted
-when no active items remain. Git is the default completion history; a separate
-`CompletionHistory.md` is created only for an explicit audit-retention need and
-is not routine working context.
+The Completion Ledger is software-owned database state. Its default shared
+location is `.product-delivery/delivery.sqlite3` in the primary checkout and is
+ignored by Git. Linked worktrees and the four trusted Codex accounts address
+that same database. The reviewed `delivery_state.py` interface owns every read,
+mutation, transactional import, and progress calculation.
 
-When present in this repository, the ledger contains only its title and one
-table with this exact schema:
+Issues and events are permanent. Implementation, verification, reopening,
+release moves, reassignment, and supersession append transitions; nothing
+deletes prior history. Normal queries return only the bounded active projection
+or one named issue's bounded history. Every issue starts with the incomplete
+outcome and current user or product impact in plain language, then records its
+state, unblock condition, evidence, and supporting technical references.
 
-```markdown
-# Completion Ledger
-
-| ID | Remaining work | Why it matters | Status | Verification |
-| --- | --- | --- | --- | --- |
-| Q-1 | Replace the temporary bridge. | The production path is incomplete. | Open | Exercise the real path end to end. |
-```
-
-Every field is required and IDs are unique. Status begins with `Active`,
-`Blocked`, `In progress`, `Incomplete`, `Open`, `Partial`, `Pending`, `To do`,
-`TODO`, `Unresolved`, or `Waiting`. Do not add prose, checklists, extra tables,
-or terminal rows outside the schema; history belongs in the sources named
-above. Write each field for a reader who does not know the implementation:
-start `Remaining work` with the missing outcome in plain language, use `Why it
-matters` for the current user or product impact and readiness consequence, make
-`Status` name the present state or concrete unblock condition, and make
-`Verification` describe the observable proof that closes the gap. Technical
-paths, identifiers, and test names may follow that explanation but never replace
-it; raw logs belong in cold artifacts.
+`CompletionLedger.md`, `CompletionHistory.md`, checklists, alternate databases,
+and chat-memory fallbacks are prohibited. A database outage keeps affected work
+incomplete. `full-repo-audit` emits a digest-bound
+`holyskills.completion-ledger-import.v1` artifact, and the database validates
+the entire payload before one idempotent transaction.
 
 `UserIssueLedgers/` is a different lifecycle: its rows remain after a fix so a
 later task cannot repeat the same user-indicated mistake. It contains multiple
@@ -167,509 +145,6 @@ repository-wide work reads them all. Rows contain reusable applicability,
 required behavior, and verification—not prompts, incident chronology, status,
 blame, or implementation history. A row is removed only after an explicit
 retraction or recorded superseding decision; an empty scoped file is deleted.
-
-Delivery-efficiency measurement is a runtime boundary, not a project ledger.
-`tools/delivery-efficiency/` implements that boundary with one shared recorder
-core and thin Codex and Claude adapters. It writes authoritative observations
-to a SQLite WAL spool and projects a concurrency-safe cold
-`EfficiencyLedger.jsonl` outside source worktrees. The schema separates phase
-from activity state, measurement from attribution provenance, request wall
-time from execution time, and runtime observation from agent-declared outcome,
-scope, and verification. Unsupported host boundaries and counters remain
-explicitly partial or unknown rather than being estimated or recorded as zero.
-
-The recorder uses a positive privacy allowlist. Prompt and assistant text,
-transcripts, source and working paths, filenames, commands, tool arguments and
-results, raw errors, secrets, credentials, account data, and personal data do
-not enter its durable schema. Source identifiers and the stable, versioned
-reference provided by recorder `0.2.3` and newer for each reviewed Codex home
-are converted in memory to installation-keyed opaque IDs. Home paths, friendly
-labels, credentials, and derivation inputs never enter durable telemetry. Per-home target attribution is
-Codex-only in this release; Claude activation remains independent.
-
-The runtime is deliberately not itself a skill. The
-`install-delivery-efficiency-hooks` skill orchestrates prerequisite discovery,
-the recorder's reviewed installer, host activation, and bounded verification;
-it does not duplicate the runtime or own request receipt. Installation copies
-a hash-bound version into native per-user state without relying on symlinks or
-administrator privileges. Native Windows and WSL use separate stores; WSL
-state must remain on its Linux filesystem rather than `/mnt/*` or `\\wsl$`.
-
-Every verified artifact-backed full-repo audit produces a reviewed ledger
-projection outside the audited repository, including an empty projection for a
-clean audit. Verified batch reports and the required manifest-bound
-`reports/lead_reconciliation.md` feed atomic candidates through a pass-only
-receipt that binds the exact report root and hashes; every candidate must be
-disposed and top-level `review_status` set to `complete`. Its plan/apply importer
-reruns the verifier over guarded current reports, sources, companion records,
-prompts, and evidence artifacts and requires that canonical pass result to
-match the receipt. It runs only when ledger mutation is authorized by an
-explicit user request or applicable project instruction, preserves unrelated
-active rows, never prunes, and writes only confirmed unresolved obligations
-into this five-column schema.
-Raw findings, hypotheses, audit limitations, and resolved evidence remain
-outside the ledger.
-
-## Install the delivery-efficiency recorder
-
-After installing the repository skills as direct links, invoke
-`$install-delivery-efficiency-hooks` in Codex or
-`/install-delivery-efficiency-hooks` in Claude Code. The skill inventories each
-explicit runtime home, installs missing requested prerequisites through current
-official channels, runs the immutable plan/apply/verify workflow, enables the
-Codex hooks feature when supported and authorized, and derives persistent
-target-bound activation from verified history for all selected Codex homes. It
-cannot silently grant host trust: when Codex requires `/hooks` review, the user
-must inspect and approve the exact installed command before the skill can
-report that target active. The normal install and upgrade path is zero-Terminal:
-the agent arms a detached `install defer` job, the user closes affected hosts
-once and waits the announced short settling interval, then reopens once; the
-reopened agent validates the saved receipt before trust review or fresh-task
-proof. For a remote desktop client backed by a persistent Codex app-server, the
-agent binds the transient proxy and durable same-user daemon separately; after
-the proxy exits, the worker uses only the exact reviewed Codex native daemon
-stop, so the user never needs SSH or a server Terminal.
-
-The recorder requires Python 3.9 or newer and otherwise uses only the standard
-library. Run installation from the canonical checkout and name every Codex and
-Claude home explicitly; one plan may cover both runtimes or either alone.
-Planning writes a private transaction plus a reviewable journal; the journal
-contains the authentication-token digest, never the token.
-
-Configuring a Claude home also probes `claude --version` and requires Claude
-Code 2.1.212 or newer. Anthropic's
-[v2.1.212 release notes](https://github.com/anthropics/claude-code/releases/tag/v2.1.212)
-identify that release as fixing OTLP/HTTP exports for endpoints that reject
-chunked transfer encoding. The recorder is intentionally such a bounded
-receiver, so the installer rejects 2.1.211 and earlier even though the
-[hook `prompt_id` correlation field](https://code.claude.com/docs/en/hooks#common-input-fields)
-exists from v2.1.196. Use `--claude-executable` with an absolute path when the
-intended binary is not on `PATH`.
-
-The following planning examples describe commands the skill runs; they are not
-instructions for the user to open Terminal. On macOS, Linux, or WSL, the agent
-uses the platform's exact absolute paths:
-
-```bash
-python3 tools/delivery-efficiency/recorder.py install plan \
-  --codex-home "cli=$HOME/.codex" \
-  --codex-home "desktop=/absolute/path/to/desktop-codex-home" \
-  --claude-home "user=$HOME/.claude"
-```
-
-On native Windows, the agent uses PowerShell-native path syntax:
-
-```powershell
-python .\tools\delivery-efficiency\recorder.py install plan `
-  --codex-home "cli=$env:USERPROFILE\.codex" `
-  --claude-home "user=$env:USERPROFILE\.claude"
-```
-
-The platform-native default state locations are:
-
-| Runtime environment | Default cold state |
-| --- | --- |
-| Windows | `%LOCALAPPDATA%\HolySkills\DeliveryEfficiency` |
-| macOS | `~/Library/Application Support/HolySkills/DeliveryEfficiency` |
-| Linux | `${XDG_STATE_HOME:-~/.local/state}/holyskills/delivery-efficiency` |
-| WSL | the Linux location above, on the WSL filesystem |
-
-Review the printed `journal_path`, `plan_sha256`, source digest, target digests,
-port provenance, and exact homes. The immutable `plan.json` is the review
-baseline; every disk-loaded apply, verify, or rollback requires its printed
-digest so changing both the mutable journal and its recorded digest cannot
-silently change the reviewed topology.
-
-### Normal zero-Terminal install and upgrade
-
-The reviewed plan classifies reload-required targets from actual changed
-actions. A host must close and reopen only when its handler bytes, Python
-binding, OTel endpoint or credential, managed environment, or another
-host-loaded setting changes. A recorder-only install, version, or settings-root
-change with byte-identical host configuration requires neither restart nor
-renewed Codex hook trust.
-
-The agent discovers every exact live same-user process for those changed
-targets and classifies ordinary passive processes separately from a persistent
-managed Codex app-server, its transient clients/proxies, and owned helpers. It
-arms the one-shot worker itself:
-
-```bash
-python3 tools/delivery-efficiency/recorder.py install defer \
-  --journal "/absolute/state/transactions/<plan-id>/journal.json" \
-  --plan-digest "<plan_sha256>" \
-  --target-pid "<exact-live-pid>" \
-  --target-pid "<another-exact-live-pid>" \
-  --managed-codex-daemon "<target>=<daemon-pid>" \
-  --managed-codex-client "<target>=<client-or-proxy-pid>" \
-  --managed-codex-member "<target>=<owned-helper-pid>"
-```
-
-On native Windows the agent supplies the same arguments with its absolute
-`python.exe`, journal, and state paths using PowerShell-native quoting. WSL uses
-the Linux executable, PIDs, paths, and state inside that exact distribution;
-native Windows and WSL jobs are never mixed.
-
-The agent never asks the user to find a PID or inspect a process list. The
-command waits for a worker-ready handshake and emits one bounded
-`DEFERRED_INSTALL_ARMED` receipt containing a nonsecret job ID, private status
-`filename`, `status="armed"`, target count, wait limit, and a managed-daemon
-count when applicable. It exposes no absolute paths, PIDs, credentials,
-commands, environments, or raw errors. `armed` is not installation success.
-
-Only after that receipt does the agent ask the user to close every affected
-client or host once. Ordinary targets remain wait-only. For a managed Codex
-group, the worker first waits for every exact transient client/proxy to exit,
-then freezes cancellation and the user-wait deadline, rechecks the bound
-daemon executable path, image, home, versions, and relaunch guard, and invokes
-only the captured executable with fixed `app-server daemon stop` argv, exact
-`CODEX_HOME`, no shell, and a minimal environment containing a fixed platform
-system search path required by native lifecycle helpers. It never inherits the
-caller's `PATH`. It sends no raw process
-signal and requires each bound daemon/helper to exit within a short control
-window before quiescence and transactional apply-and-verify.
-
-Native-stop failure, identity drift, PID reuse, matching relaunch, or helper
-timeout fails unapplied. If exact topology or native control cannot be proven,
-the agent fails before asking the user to close anything and never redirects
-them to SSH, a server Terminal, or a manual kill command. The user wait defaults
-to 86400 seconds and is bounded to 1 through 604800 seconds. The worker remains
-one-shot and nonpersistent: an OS reboot ends it and requires an agent-owned
-fresh plan and rearm. The user only repeats the close/reopen boundary after a
-new armed receipt and never opens Terminal.
-
-An unaffected agent or host-owned observer may check the private job using
-`install deferred-status` and the receipt's job ID, but that observer is
-optional. After closing the named hosts, the user waits the short settling
-interval announced by the agent and reopens once. The reopened agent's first
-action is to read deferred status before trust review, activation, or any other
-work. Status emits one bounded `DEFERRED_INSTALL_STATUS` receipt, names the
-same private filename, and never makes the user run a command. Only a
-saved `status="verified"` receipt with
-`verification_ok=true` and `receiver_healthy=true` permits the reopened agent
-to continue. A detectable premature matching relaunch fails closed as
-`target-race`. Cancellation, expiry, unapplied failure, exact rollback, blocked
-rollback, or worker loss remains explicitly incomplete.
-
-If a strict receipt for the exact job and plan digest proves no mutation,
-`deferred-status` may report that saved categorical failure even when an OS
-reboot changed volatile filesystem device identity. This read-only fallback is
-failure evidence only. It never authorizes apply, trust review, activation, or
-success.
-
-The user never opens Terminal or copies/runs installer commands in the normal
-path. Their complete install role is to approve the reviewed operation, close
-the named affected hosts once when the ready receipt exists, wait the announced
-short settling interval, reopen those hosts once, review any changed Codex
-hook after the reopened agent validates the receipt, and exercise fresh tasks
-for activation proof. They never need to observe the private receipt directly.
-
-Credential rotation is a separate reviewed change, not an automatic upgrade
-step. When the request or concrete compromise evidence selects it, the agent
-adds the rotation option without supplying or copying the existing secret:
-
-```bash
-python3 tools/delivery-efficiency/recorder.py install plan \
-  --codex-home "cli=$HOME/.codex" \
-  --codex-home "desktop=/absolute/path/to/desktop-codex-home" \
-  --claude-home "user=$HOME/.claude" \
-  --rotate-auth-token
-```
-
-The journal records only the new token's digest. A private plan sidecar carries
-the generated token through apply, and rollback restores the exact prior
-settings, hooks, and OTel configuration. Version or token ownership changes
-must name every retained target recorded in the private
-`<state>/managed-targets.json`; an omitted Codex or Claude home is refused
-rather than left with a stale credential. An ordinary idempotent subset update
-retains omitted targets in that inventory and never interprets omission as
-retirement. On POSIX the inventory and every secret-bearing settings file are
-forced to mode `0600`; Windows uses the containing directory's inherited ACL
-and the standard-library installer makes no stronger ACL-hardening claim.
-Credential changes select a distinct receiver port by default and reject an
-explicitly reused port. A compatible upgrade from recorder 0.1.2 or later,
-however, preserves the existing loopback host, bearer credential, and port
-when rotation was not requested, then uses bounded authenticated retirement
-and rebind; it never signals a PID or kills an unknown port owner. A pre-0.1.2
-receiver cannot perform that handoff, so its upgrade retains reviewed port
-rotation and may leave the old receiver harmlessly on its now-unused port until
-that process ends.
-
-Retire a target only by binding its previously recorded name and absolute path
-explicitly. Retirement removes only the exact installer-owned hooks and
-telemetry environment or OTel block, preserves unrelated configuration, and is
-covered by the same digest-bound rollback:
-
-```bash
-python3 tools/delivery-efficiency/recorder.py install plan \
-  --retire-claude-home "user=$HOME/.claude"
-```
-
-Use `--retire-codex-home` for Codex. These flags accept the same absolute paths
-on macOS, Linux, and WSL and PowerShell-native absolute paths on Windows.
-
-Apply installs a read-only versioned copy and a version-neutral
-`<state>/recorder.py` launcher, merges named handlers that point to that stable
-launcher into each `hooks.json`,
-and appends an authenticated OTLP/HTTP JSON block only when `config.toml` does
-not already own `[otel]`. A Claude home receives managed hook handlers and the
-managed telemetry environment inside its `settings.json` (`hooks` plus
-`CLAUDE_CODE_ENABLE_TELEMETRY` and the authenticated OTLP logs exporter
-variables), preserving every unrelated key. Prompt, tool-detail, tool-content,
-and raw-body export are pinned off in that user settings file. The managed
-block sets `OTEL_METRICS_EXPORTER=none`, `OTEL_TRACES_EXPORTER=none`, both trace
-beta switches to `0`, every prompt/assistant/tool/raw-body gate to `0`, and the
-account/session/resource metric-attribute switches to `false`. Anthropic's
-[environment-variable rules](https://code.claude.com/docs/en/env-vars#precedence)
-define `0` or `false` as the off values for ordinary boolean switches, and its
-[monitoring reference](https://code.claude.com/docs/en/monitoring-usage#common-configuration-variables)
-defines `none` as the disabled exporter.
-
-Claude gives project, local, CLI, and organization-managed settings higher
-precedence than user settings. The installer cannot control those external
-scopes: a higher-precedence override could route telemetry elsewhere or enable
-raw bodies before the recorder sees anything, so the recorder allowlist is not
-a defense for that path. Treat such an override as an external privacy and
-instrumentation conflict; use managed settings to lock the same selectors and
-content gates when organization-wide enforcement is required, and verify the
-active sources with Claude's `/status` after restart.
-Claude command hooks use its native `command` plus `args` exec form, so the
-absolute Python, recorder, and state paths never pass through POSIX shells,
-`cmd.exe`, or PowerShell tokenization on macOS, Linux, WSL, or Windows.
-Existing OTel routing — a Codex `[otel]` table or a user-owned `OTEL_*` or
-`CLAUDE_CODE_ENABLE_TELEMETRY` value — plus malformed configuration, source
-drift, target drift, symlinks/junctions, and edited prior managed blocks are
-checked at preflight and again immediately before each mutation. Recorder
-installer processes sharing the state root are serialized by persistent
-single-link lock files. Plans require every active Codex or Claude home to
-already exist; planning provisions only recorder-owned state, install, and
-transaction directories.
-
-Recorder `0.2.4` performs a one-time migration of `0.2.3` Codex and Claude
-handler commands to the stable launcher. Those changed hosts reload once, and
-Codex requires review of the changed command. For a later compatible
-recorder-only upgrade, the rendered host configuration remains byte-identical,
-its actions are `changed=false`, and neither host restart nor renewed trust is
-required.
-
-Each changed target uses immutable adjacent stage, prior, and recovery slots.
-An existing target first moves no-replace into its prior slot, and the reviewed
-stage then moves no-replace into the vacant target; the target can therefore be
-briefly absent, but no namespace occupant is overwritten. On Windows the exact
-top-level staged file or directory stays held without delete sharing and is
-published by handle with `SetFileInformationByHandle(FileRenameInfo)`,
-`ReplaceIfExists = FALSE`, then checked by volume/file ID before release.
-POSIX uses held parent descriptors with native no-replace rename flags. A
-racing target or slot occupant is restored when safe or retained as a recovery
-artifact and the transaction fails; it is never path-unlinked or silently
-replaced. Rollback uses the same move-only, no-replace state machine and keeps
-every transaction artifact until an operator deliberately retires it.
-
-The unconditional collision guarantee covers managed target names and the
-exact top-level staged object. Private transaction metadata and random stage
-internals are cooperative per-user state protected by the containing account's
-ACL plus installer locks; digests detect accidental drift before and after
-publication, but hostile mutation by another process running as that same OS
-account is not an integrity boundary. The receiver is activated only after the
-published content passes verification. Unsupported filesystem primitives fail
-closed without a check-then-replace fallback. Rollback restores exact prior
-bytes only while the installed digests observed by its checks still match.
-
-After the reopened agent validates the saved verified deferred receipt, the
-skill reads persistent activation from integrity-checked history. It binds the
-digest-approved plan and current target identities, and selects every reviewed
-Codex home by default:
-
-```bash
-python3 skills/install-delivery-efficiency-hooks/scripts/activation_status.py \
-  --journal "/absolute/state/transactions/<plan-id>/journal.json" \
-  --plan-digest "<plan_sha256>" \
-  --runtime codex \
-  --require-active
-```
-
-Repeat `--target "<reviewed-name>"` only for a selected subset. The helper
-emits one bounded `ACTIVATION_STATUS`; it does not run continuously or create a
-normal-path report. Once verified evidence exists for the current target
-identity, it survives tasks, sessions, receiver restarts, and reconnects. The
-explicit `--watch` mode remains a bounded post-baseline diagnostic for installer
-development; its timeout never means that the recorder or activation expired.
-Legacy family-only evidence never activates a named home.
-
-The user's complete Codex activation role is to open
-`/hooks` in each selected instance, inspect and trust the exact installed
-command, and start one ordinary fresh task in each instance. The user does not
-quit clients or isolate homes for serial verification, capture sequence
-baselines, or repeat Terminal commands. Any one-time runtime restart that the
-reviewed plan required already occurred through the deferred close/reopen
-boundary; activation does not ask for a second restart. A home becomes active
-only when that fresh task has target-attributed hook lifecycle evidence and
-correlated provider usage.
-
-Claude activation remains host-owned and independent of Codex target proof;
-per-home target attribution is Codex-only in recorder `0.2.3` and newer. Claude Code
-loads `settings.json` hooks at session start without a Codex-style trust grant.
-Its `/hooks` surface is useful for inspection, but viewing it is not an
-activation or approval step. Claude authentication and the recorder's loopback
-authentication token establish identity only; neither grants the agent
-authority beyond the user's request.
-
-### Recovery-only direct installer commands
-
-Direct apply, verify, and rollback are retained for an agent or operator
-recovering an explicitly diagnosed deferred-job failure. They are never the
-normal user journey and never a fallback that asks the user to open Terminal.
-Use only the exact reviewed journal and digest:
-
-```bash
-python3 tools/delivery-efficiency/recorder.py install apply \
-  --journal "/absolute/state/transactions/<plan-id>/journal.json" \
-  --plan-digest "<plan_sha256>"
-python3 tools/delivery-efficiency/recorder.py install verify \
-  --journal "/absolute/state/transactions/<plan-id>/journal.json" \
-  --plan-digest "<plan_sha256>"
-python3 tools/delivery-efficiency/recorder.py install rollback \
-  --journal "/absolute/state/transactions/<plan-id>/journal.json" \
-  --plan-digest "<plan_sha256>"
-```
-
-Recovery first reads the private deferred status and journal state. It never
-replays a stale plan, overwrites drift, treats process exit as success, or
-claims rollback reversed prerequisites, Codex feature state, authentication,
-or prior host trust.
-
-### Runtime behavior after a verified install
-
-The installer starts and health-checks the authenticated loopback receiver, and
-a configured lifecycle hook starts it on demand in later sessions, after any
-host-required hook trust step. Hook trust enables that telemetry hook only; it
-does not authorize unrelated agent actions.
-Managed Codex hooks retain the three-second host timeout but give receiver
-startup and event posting one shared 2.25-second deadline. The remaining 0.75
-seconds is reserved for interpreter, host, and bounded input/output overhead;
-an exhausted telemetry budget records a gap when possible and returns without
-extending the hook deadline. Claude `SessionStart` remains synchronous with a
-ten-second command timeout and an 8.5-second cold-start budget. The synchronous
-`UserPromptSubmit` hook is contractually capped at a one-second host timeout
-and 0.75-second telemetry budget so a failed recorder cannot materially hold
-every prompt. Asynchronous `SubagentStart`, `SubagentStop`, `Stop`, and
-`StopFailure` hooks retain a three-second host timeout and 2.25-second telemetry
-budget without blocking Claude's next action. Per-tool, `SessionEnd`, and
-`MessageDisplay` hooks are not installed because their blocking frequency or
-marginal boundary value does not justify their delivery overhead; the adapter
-retains defensive fallback support for host events received through another
-supported path. The subagent hooks record partial presence and an explicit
-coverage gap, not a measured subagent lifetime or activity interval.
-
-No durable native cold-start benchmark artifact is committed. The portable
-enforced bounds are the 0.75-second internal deadline and one-second Claude
-host timeout. Functional startup and ingestion require successful native job
-evidence for each claimed platform; simulated branches and workflow
-definitions are not substitutes for those results.
-
-Supported Claude hooks expose a UUID-v4 `prompt_id` that matches OTLP
-`prompt.id`. The recorder uses that transient exact identity for task starts,
-activity, and late token usage, including OTLP that arrives before the hook or
-after Stop and an agent declaration. Runtime family and session are included
-before keyed opaque persistence, so equal Codex and Claude source values cannot
-collide. Missing or changed OTLP correlation stays unbound; deterministic
-per-session generations exist only as a partial legacy fallback for hooks that
-omit the prompt ID.
-
-Claude OTLP `api_request`, `api_error`, `tool_result`, and rejected
-`tool_decision` events add allowlisted native activity, outcome, and duration
-evidence without retaining raw content. Token mapping remains
-`cache_read_tokens` to `cached_input` and `cache_creation_tokens` to `other`;
-unsupported reasoning and tool-token categories stay null. `report` keeps
-recorder-clock interval unions separate from runtime-native duration sums.
-Those native sums retain measurement and attribution provenance, count equal
-hook/OTLP evidence for one tool span once, and become unknown on conflicts;
-they are never called wall time.
-
-Inspect health and outcome-aware summaries through the stable launcher:
-
-```bash
-python3 "/absolute/state/recorder.py" status
-python3 "/absolute/state/recorder.py" report
-```
-
-`report` fails closed unless every authoritative spool HMAC and sequence agrees
-with the exact canonical cold-ledger bytes; a merely parseable or edited JSONL
-file is never treated as measured evidence. Recorder `0.2.9` writes schema
-`1.2`; immutable schema `1.0` and `1.1` rows remain validated and reportable
-beside it without rewriting any version. Reports identify compatible single-
-and mixed-version ledgers. This compatibility does not invent per-home target
-attribution or any other unavailable universal-policy measurement for legacy
-events.
-
-Hooks and provider-native events record observable boundaries. Agents use the
-same launcher only for facts the host cannot know, at meaningful phase changes
-and immediately before terminal delivery:
-
-```bash
-python3 "/absolute/state/recorder.py" declare phase start \
-  --phase testing --activity tool-active --span verification
-python3 "/absolute/state/recorder.py" declare phase end \
-  --phase testing --activity tool-active --span verification
-python3 "/absolute/state/recorder.py" declare terminal \
-  --outcome complete --verification verified \
-  --task-kind primary --cause not-applicable \
-  --acceptance-baseline request-v1 --no-scope-changes \
-  --task-type implementation --scope-size medium --method hybrid \
-  --requirement scope=satisfied:verified \
-  --evidence scope=validation:self-test
-```
-
-Codex and Claude Code sessions add their runtime-specific
-`--runtime <codex|claude> --binding <opaque-binding>` values; each managed
-`SessionStart` hook exchanges the raw session ID with the authenticated local
-receiver and reinjects only the exact launcher argv plus the signed
-installation-local binding. The context is silent by default and grants no
-authority beyond the user's request.
-
-The declaration command binds to the current runtime session and refuses
-cross-session tasks. The receiver resolves one task once and commits every
-event from one declaration command as one transaction, so a concurrent prompt
-cannot split requirement and terminal events across tasks. A conflict rolls
-back the whole batch. Declaration deduplication is scoped to that resolved task:
-an exact batch replay remains safe after its terminal, while any new declaration
-for an already-terminal task is rejected; identical declaration shapes may be
-used by a later task in the same session. A declared terminal does not upgrade
-the host's delivery-boundary coverage: that boundary remains partial unless the
-runtime itself exposes it. Phase declarations pass through the authenticated
-receiver so separate launcher invocations share one process-owned monotonic
-clock domain. If that receiver restarts between boundaries, the duration is
-reported as unknown rather than combined across clocks or filled with zero.
-Only one balanced explicit phase may be open for a task. Provider usage
-observed while it is open inherits that phase with `agent-declared`
-attribution; usage outside the span remains `unattributed` and is never
-estimated from elapsed time.
-
-`report --tasks` is the standalone human-readable view. It names each task from
-a private bounded repository basename and a chronological task number, then
-shows status, native token categories, coverage, and phase attribution without
-retaining paths or prompt text. `report --repositories` provides the matching
-repository aggregates and conservative repeated-work candidates. Both commands
-work directly from the per-account recorder and require no Coordinator or other
-repository.
-
-If a locally installed DevCoordinator advertises efficiency ingestion, a
-terminal declaration also publishes the current account's cumulative opaque
-repository snapshot for optional cross-account UI. Missing, failing, or absent
-Coordinator capability never affects recording, standalone reports, or task
-attribution; repository paths never enter telemetry or the exported projection.
-
-For controlled automation, wrap `codex exec` while preserving its JSONL stdout:
-
-```bash
-python3 "/absolute/state/recorder.py" codex-exec -- \
-  "summarize the repository"
-```
-
-Successful process exit alone is not recorded as completed scope. Supply
-`--outcome`, `--verification`, and one or more explicit
-`--requirement ID=STATUS:VERIFICATION` options only when the automation owns
-that acceptance decision.
 
 ## Install as direct links
 
@@ -849,20 +324,15 @@ The complete repository gate is:
 python3 scripts/validate.py
 ```
 
-It proves the exact seven-skill layout, the recorder schema/privacy/storage and
-adapter contracts, universal-policy semantics, compact
-decision-history integrity, open-only completion-ledger state, freshness and
+It proves the exact six-skill layout, universal-policy semantics, compact
+decision-history integrity, database-only completion-ledger policy and schema,
+freshness and
 dependency-boundary and self-hosted-CI detector recall, vendored-harness synchronization,
 skill-link and global-policy transaction/rollback behavior, public-artifact policy, interaction-label
-parity, all seven in-repository self-tests, recorder concurrency/crash/install
-tests, Python compilation, all seven standalone copied skill tests, and a copied
-recorder test. CI installs a locked
+parity, all six in-repository self-tests, Python compilation, and all six
+standalone copied skill tests. CI installs a locked
 Playwright runtime solely because the remaining formal web verifier requires a
-real Chromium run. The workflow defines a separate Python 3.9/3.13 recorder
-matrix for native Windows, Linux, and macOS with required loopback ingestion;
-a job definition is not evidence that the job completed. Real WSL evidence
-requires the separately labeled WSL runner. Injected platform branches and
-simulated selection tests never replace a successful native result.
+real Chromium run.
 
 When changing a skill:
 

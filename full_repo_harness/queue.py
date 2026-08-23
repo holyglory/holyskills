@@ -620,6 +620,7 @@ KNOWN_GENERATED_ARTIFACTS = {
     "audit_complete.json",
     "audit_complete.json.tmp",
     "audit_index.md",
+    "completion-ledger-database-import.json",
     "completion-ledger-plan.json",
     "completion_ledger_projection.json",
     "consolidated-findings.json",

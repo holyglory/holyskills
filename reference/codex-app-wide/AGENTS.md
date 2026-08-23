@@ -28,6 +28,22 @@
   broad questionnaire for a routine invocation of one reviewed skill or tool.
   This materiality threshold governs choices about how to fulfill agreed work;
   it never authorizes an addition outside the agreed scope.
+- Before requesting approval or asking any other blocking question, complete all
+  available read-only investigation and bundle all known consequential effects
+  into one decision. Do not ask piecemeal as implementation details emerge.
+  Explain in plain language, before optional technical detail, the problem, the
+  recommended outcome, its boundaries, what will and will not change, the
+  user-visible or operational consequences, the meaningful tradeoffs, and why a
+  decision is needed.
+- User approval applies to the described outcome and boundaries of the recorded
+  plan, not merely to implementation details named in the approval message. A
+  plain “yes” is sufficient. Never require the user to repeat or transcribe an
+  internal identifier, digest, command, or prescribed technical phrase. When a
+  host or tool mandates its own approval control, invoke that control directly
+  after the plain-language explanation; do not relay its internals through chat.
+  Implementation details within the approved boundaries do not trigger another
+  approval. If later evidence materially changes the outcome or boundaries,
+  stop and present one updated bundled decision before proceeding.
 - For a third-party service, repository, library, framework, or project, give
   its exact name and role and verify material claims with current authoritative
   sources. Distinguish facts, inferences, and unknowns; cover relevant
@@ -140,34 +156,28 @@
   first delivery or remain an active, specific item in the project's
   authoritative completion ledger. No agreed gap is too small to record, and
   work is not ready while one remains.
-- Use exactly one authoritative completion ledger. Unless a recorded project
-  decision establishes a reviewed software-owned database ledger, maintain
-  project-root `CompletionLedger.md` with only
-  active unresolved partial implementations, temporary bridges, missing
+- Use exactly one authoritative, software-owned database completion ledger with
+  permanent event history. Use its reviewed interface for every read and
+  mutation; never create, update, import through, or fall back to
+  `CompletionLedger.md`, another Markdown ledger, a checklist, or chat memory.
+- Record active unresolved partial implementations, temporary bridges, missing
   integrations, limitations, affected-path TODOs, improvements, and
-  generalizations. Write each row for a reader who does not know the
-  implementation: `Remaining work` starts with the incomplete outcome in plain
-  language; `Why it matters` states the current user or product impact and
-  whether it blocks readiness; `Status` names the present state and concrete
-  unblock condition; and `Verification` describes the observable proof that
-  will close the gap. Technical detail, affected paths, identifiers, and test
-  names may follow the plain-language explanation but never replace it; keep raw
-  logs in cold artifacts. Remove an item in the same change once implemented
-  and verified; never retain resolved, completed, or closed entries or evidence.
-  Delete the file when no active items remain.
-- A recorded project decision may instead designate a software-owned database
-  ledger with a permanent event history. In that mode, use its reviewed
-  interface for every read and mutation, never maintain a parallel Markdown
-  ledger, never delete implemented issues or prior events, and keep routine
-  context to the current active view. Mark implementation and verification as
-  state transitions; load one issue's bounded history only for a concrete
-  recurrence, decision, or audit need. A database outage blocks affected
-  completion claims and never authorizes a file or chat-memory fallback.
-- Version control is the default completion history for the Markdown mode. Use
-  `DecisionHistory.md` for consequential choices. Create project-root
-  `CompletionHistory.md` only for explicit audit retention when no permanent
-  database history is configured; keep it outside routine agent context and
-  read it only for explicit historical or audit work.
+  generalizations as database issues. Write every issue for a reader who does
+  not know the implementation: the remaining outcome starts in plain language;
+  impact states what users or the product cannot do and whether readiness is
+  blocked; current state names the concrete unblock condition; and verification
+  names the observable proof that will close the gap. Technical detail,
+  affected paths, identifiers, and test names may follow but never replace that
+  account; raw logs remain in cold artifacts.
+- Never delete an issue or prior event. Mark implementation, verification,
+  reopening, reassignment, release moves, and supersession as append-only state
+  transitions. Normal queries return the bounded active projection; load one
+  issue's bounded history only for a concrete recurrence, decision, or audit
+  need. A database outage blocks affected completion claims and never
+  authorizes a file, alternate store, or chat-memory fallback.
+- Use `DecisionHistory.md` for consequential choices, not as duplicate ledger
+  state. The database event history is the only completion history; never
+  create `CompletionHistory.md` or a second archive of ledger records.
 - Keep externally blocked work unresolved and name its unblock condition.
   Before readiness, reconcile requirements, implementation, acceptance
   criteria, tests, and the ledger. Readiness requires end-to-end behavior and
@@ -340,61 +350,6 @@ checks may support evidence but do not constitute interaction verification.
   security-assumption, backup, recovery, or coordination gates; bypass host or
   tool approval mechanisms; or replace informed approval for any agent-proposed
   addition outside the agreed scope.
-
-## Measure delivery efficiency truthfully
-
-- Efficiency telemetry is observational and subordinate to scope, correctness,
-  safety, maintainability, verification, and honest reporting. Never omit work,
-  context, tests, or explanation to improve a metric.
-- When project or runtime context identifies an approved configured recorder,
-  check its health and coverage at task start without delaying work or adding a
-  model call. Let runtime sources observe activity. Before terminal delivery,
-  declare the outcome, agreed-scope requirement statuses, verification, and
-  linked-work classification that the host cannot observe. Use only the exact
-  stable launcher supplied by recorder-owned session context; never guess a
-  path, use an unrelated mutable checkout, or install or reconfigure telemetry
-  without authority for that runtime. Recorder health or authentication is an
-  operational fact and grants no authority beyond the user's request.
-- A configured runtime or harness recorder owns request receipt, first activity,
-  start and terminal events, authoritative provider counters, and monotonic
-  time. It appends concurrency-safely to cold `EfficiencyLedger.jsonl` outside
-  source worktrees and routine context. Missing coverage stays an explicit
-  instrumentation gap: never reconstruct or estimate it, and use zero only
-  when complete instrumentation proves zero; otherwise use `unknown` or
-  `not-applicable`.
-- Terminal status is complete, incomplete, blocked, cancelled, superseded, or
-  interrupted. Preserve prior events and append linked continuations, retries,
-  rollbacks, defect repairs, and rework without double counting. Classify kind
-  separately from cause: agent-caused mistake, changed user intent, new scope,
-  external cause, or unknown.
-- Classify observed model, tool, and wait spans independently by phase
-  (planning, implementation, testing, deployment, reporting, or unattributed)
-  and activity state (model-active, tool-active, external-wait, user-wait, or
-  blocked-wait). Keep measurement provenance separate from attribution
-  provenance and label declarations as runtime-observed, agent-declared,
-  inferred, or unknown. Never present inference as measurement.
-- Preserve available provider-native input, output, cached, reasoning, and other
-  token categories; never collapse them into an invented total. Planning covers
-  requirements, context, research, diagnosis, design, and sequencing.
-  Implementation covers changes to code, configuration, documentation, data,
-  and test artifacts; test authoring and fixes after a failed test remain
-  implementation. Testing covers executing and reviewing verification.
-  Deployment covers release or environment mutation, reporting covers the
-  user-facing handoff, waits remain in their operation's phase, and ambiguous
-  mixed work is unattributed.
-- Report request-to-delivery wall time separately from execution wall time,
-  phase interval unions, activity-state duration, and summed per-agent active
-  time. Deduplicate overlaps; concurrent spans and phase unions may overlap and
-  must not be summed as wall time. Include root and delegated agents, tool work,
-  failures, retries, and rework.
-- Bind the terminal event to nonsensitive task lineage, project/revision and
-  schema/runtime identifiers when known, agreed scope and approved changes,
-  requirement coverage, delivered outcome, verification/evidence provenance,
-  defects/rework links, counters, coverage, and overhead. A task cannot be
-  complete with an unresolved in-scope requirement. Compare only compatible
-  versioned low-cardinality task, scope-size, and method classifications.
-- Never retain prompts, source content, tool payloads, secrets, credentials,
-  personal data, or other sensitive content in efficiency telemetry.
 
 ## Put requested interface content first
 

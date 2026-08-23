@@ -83,11 +83,11 @@ def main() -> int:
         clean = checker.audit_repository(temporary)
         check(clean["ok"] is True, f"history and optional installed-skill support must pass: {clean['findings']}")
 
-        missing = temporary / "skills" / "install-delivery-efficiency-hooks" / "SKILL.md"
+        missing = temporary / "skills" / "user-journey-docs-audit" / "SKILL.md"
         missing.unlink()
         report = checker.audit_repository(temporary)
         check("canonical-skill-set" in rules(report), "a missing canonical skill must be caught")
-        write(missing, "---\nname: install-delivery-efficiency-hooks\n---\n")
+        write(missing, "---\nname: user-journey-docs-audit\n---\n")
 
         unlinked_history = temporary / "DecisionDetails" / "D-20260701-02.md"
         write(unlinked_history, "Historical source path apps/DevOpsBoard was never linked.\n")

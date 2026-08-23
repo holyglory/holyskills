@@ -31,7 +31,7 @@ def event_path() -> Path:
 
 
 def durable_temp_parent() -> Path:
-    """Return a platform-local durable parent for recorder-aware tests."""
+    """Return a platform-local durable parent for validation tests."""
 
     if os.name == "nt":
         local = os.environ.get("LOCALAPPDATA")

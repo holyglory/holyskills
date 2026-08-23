@@ -49,14 +49,17 @@ without requiring a repository-owned workflow skill.
 
 ## Repository Agent Efficiency
 
-- Treat `UIL-AGENT-WORKFLOW-004`, `UIL-AGENT-WORKFLOW-005`, and
-  `UIL-AGENT-WORKFLOW-006` as mandatory for every repository change. Complete
+- Treat `UIL-AGENT-WORKFLOW-004`, `UIL-AGENT-WORKFLOW-005`,
+  `UIL-AGENT-WORKFLOW-006`, and `UIL-AGENT-WORKFLOW-015` as mandatory for every
+  repository change. Complete
   finite diagnostic cycles before batch fixing, obtain informed approval before
   implementing any agent-proposed addition outside the evidence-backed agreed
-  scope, and keep agent-controlled context and tool output relevant and bounded.
+  scope through one bundled plain-language decision whose approval covers the
+  recorded outcome and boundaries, and keep agent-controlled context and tool
+  output relevant and bounded.
 - Run complete raw-output processes to a cold log when practical and return a
-  concise failure index. Do not paste a full log into model context or
-  `CompletionLedger.md`, repeatedly read an unchanged policy or artifact, or
+  concise failure index. Do not paste a full log into model context or the
+  software-owned completion ledger, repeatedly read an unchanged policy or artifact, or
   request a tool-output budget above a known host ceiling.
 - Do not preserve or migrate disposable test data, or add cross-account local
   hardening for a known single-user environment, unless the request or evidence
@@ -104,10 +107,10 @@ without requiring a repository-owned workflow skill.
 
 ## Skill Installation Source Of Truth
 
-- This repository is the only writable canonical source for its seven skills:
+- This repository is the only writable canonical source for its six skills:
   `coordinate-product-delivery`, `formal-web-ui-verification`, `full-repo-audit`,
-  `full-repo-test-coverage-audit`, `install-delivery-efficiency-hooks`,
-  `ui-implementation-audit`, and `user-journey-docs-audit`.
+  `full-repo-test-coverage-audit`, `ui-implementation-audit`, and
+  `user-journey-docs-audit`.
   Do not hand-edit copies under Codex, Claude, Parall, or another runtime home.
 - Install each repo-owned skill through `scripts/manage_skill_links.py` as a
   direct symlink to `skills/<skill>`. Preserve unrelated runtime/system skills.
@@ -127,35 +130,6 @@ without requiring a repository-owned workflow skill.
   compare exact link text so source drift cannot prevent restoring the saved
   installation.
 
-## Delivery Efficiency Recorder
-
-- `tools/delivery-efficiency/` is the canonical source for the portable
-  delivery-efficiency runtime used by Codex and Claude Code. The runtime is not
-  itself a skill: `install-delivery-efficiency-hooks` orchestrates its reviewed
-  workflow without duplicating its schema, privacy boundary, store, installer,
-  or thin runtime adapters. Never create a runtime-specific ledger writer or
-  edit a generated installed copy.
-- Install and update the runtime only through its reviewed
-  plan/apply/verify/rollback workflow. Installation uses a versioned copy in
-  platform-native per-user state rather than a source-worktree path or skill
-  symlink. Keep native Windows and WSL stores separate; a WSL store must remain
-  on the Linux filesystem, not `/mnt/*` or a `\\wsl$` share.
-- When the recorder is configured, check its status before relying on a metric.
-  Let hooks and native runtime events record observed activity. Before terminal
-  delivery, use its declaration interface for outcome, requirement coverage,
-  verification, and any linked continuation or rework that the runtime cannot
-  infer; recorder-owned session context supplies the exact stable launcher.
-  A missing, disabled, untrusted, conflicting, or unhealthy source is an
-  instrumentation gap; never reconstruct it or report unknown counters as zero.
-- Recorder changes must pass the shared schema/privacy fixtures, crash and
-  concurrency tests, copied-install test, adapter conformance tests, and every
-  available native platform job. Distinguish implemented platform behavior
-  from native evidence; simulated Windows or WSL selection is not native proof.
-- Never expose a self-hosted runner to pull-request-controlled code. Keep native
-  self-hosted jobs restricted at the job level to trusted `push` and explicit
-  `workflow_dispatch` events, and enforce that boundary with
-  `scripts/check_ci_security.py` and its recall/precision self-test.
-
 ## Global Policy Source Of Truth
 
 - `reference/codex-app-wide/AGENTS.md` is the repository-owned canonical source
@@ -165,8 +139,8 @@ without requiring a repository-owned workflow skill.
   digest-approved plan/apply/verify/rollback workflow. Name every Codex
   `AGENTS.md`, Claude `CLAUDE.md`, and private transaction directory as an
   explicit absolute path; never infer runtime homes or edit a live target
-  outside the reviewed plan. Keep this workflow separate from the recorder
-  installer and the skill-link manager.
+  outside the reviewed plan. Keep this workflow separate from the skill-link
+  manager.
 - Codex targets are direct absolute symlinks only. Claude targets on macOS,
   Linux, and WSL are direct absolute symlinks. On native Windows, use a direct
   Claude symlink when capability exists or explicitly select the one-line
@@ -188,9 +162,8 @@ without requiring a repository-owned workflow skill.
 - Filesystem verification proves topology, not runtime activation. Restart both
   runtimes after apply; inspect Codex's loaded global source and use Claude
   `/memory` or `InstructionsLoaded` evidence for the canonical import. An
-  external-import approval, sign-in, hook trust, policy load, or telemetry
-  status is an operational fact and grants no authority beyond the user's
-  request.
+  external-import approval, sign-in, hook trust, or policy load status is an
+  operational fact and grants no authority beyond the user's request.
 - Keep root `CLAUDE.md` as a thin import of root repository policy only. The
   user-level Claude target already supplies the canonical universal policy;
   importing it again at project scope wastes context, and copying either policy
@@ -210,8 +183,8 @@ without requiring a repository-owned workflow skill.
 
 ## Repository Ownership Boundary
 
-- Holy Skills owns only the seven skill directories listed above, the shared
-  audit harness, and the portable delivery-efficiency runtime tool. The
+- Holy Skills owns only the six skill directories listed above and the shared
+  audit harness. The
   coordinator, PostgreSQL protection skill, DevOps Board, and DevOps Console
   are owned by the independent DevCoordinator repository.
 - Do not add source imports, relative checkout paths, submodules, build inputs,
@@ -227,6 +200,10 @@ without requiring a repository-owned workflow skill.
   package, or assume a DevCoordinator checkout, and absence of that capability
   leaves only the derived rendered view unavailable, not the authoritative
   work graph or completion ledger.
+- Every repository completion ledger is software- and database-owned. No
+  repository instruction or skill may create, update, or treat
+  `CompletionLedger.md` as a fallback or source of truth. The reviewed database
+  interface owns active queries, permanent history, transitions, and imports.
 - Run `python3 scripts/check_repository_boundaries.py --repo "$PWD"` as part of
   every validation and ownership-affecting change. Keep historical migration
   prose in `DecisionHistory.md`, its exactly linked `DecisionDetails/<ID>.md`

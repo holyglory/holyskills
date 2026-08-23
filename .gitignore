@@ -4,6 +4,7 @@
 .idea/
 .vscode/
 .claude/settings.local.json
+.product-delivery/
 node_modules/
 *.log
 

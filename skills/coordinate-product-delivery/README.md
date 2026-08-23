@@ -8,10 +8,10 @@ Invoke it deliberately with `$coordinate-product-delivery`. It is intended for o
 
 - One coordinator task owns product intent, release baselines, decisions, monitoring, and user reports.
 - One primary execution task handles implementation and may spawn its own subagents.
-- The bundled SQLite engine owns releases, requirements, tasks, dependencies, completion percentages, permanent incomplete-work history, and progress calculation.
+- The bundled shared SQLite engine owns releases, requirements, tasks, dependencies, completion percentages, transactional imports, permanent incomplete-work history, and progress calculation.
 - The normal Completion Ledger query returns only not-implemented work; implemented and verified history remains permanently available by issue ID.
 - True product expansion always returns to the user for a plain-language decision.
-- Monitoring consumes milestone events and performs one compact hourly reconciliation while work is active.
+- Monitoring requires an enabled scheduled task inside the same coordinator chat, one compact hourly reconciliation, retained executor cursor, overlap-safe run keys, and a verified first run. Missing automation capability is reported as unarmed and blocked; active-turn polling is never a fallback.
 
 ## State Engine
 
@@ -28,6 +28,6 @@ python3 scripts/delivery_state.py --project /absolute/path/to/repository status
 python3 scripts/delivery_state.py --project /absolute/path/to/repository issue-list
 ```
 
-The command interface is the only supported writer. Do not edit the SQLite database directly or create a parallel `CompletionLedger.md` for a project governed by this skill.
+The command interface is the only supported writer. The default database is the primary checkout's shared `.product-delivery/delivery.sqlite3`, used by linked worktrees and trusted local accounts. Do not edit it directly, commit it, or create a parallel `CompletionLedger.md` in any repository.
 
 `gantt-data` produces renderer-neutral schedule data. A separately installed DevCoordinator may render it only when capability discovery advertises a compatible delivery or Gantt action; the skill does not depend on a DevCoordinator checkout or guess unsupported commands.

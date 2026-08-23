@@ -1,37 +1,113 @@
 # Decision History
 
-Direction: Confirmed: user decisions favor concise rationale that preserves project direction,
-complete truthful end-to-end behavior, informed choices, outcome-aware efficiency measurement that
-cannot reward reduced scope or verification,
-production-grade foundations, canonical ownership, persistent account- and repository-attributed
-efficiency evidence with explicit phase attribution and optional bounded Coordinator projection,
-mutually trusted VPS workspaces with equal exact-path repository access while account-local
-telemetry remains separate,
-scoped persistent memory for user-indicated
-mistakes, realistic verification, audits that begin only
-after their target implementation exists, explicit user activation for exhaustive repository and
-implemented-UI audits, complete diagnostic passes before batch repair,
-unacceptable under-engineering, every planned addition outside the evidence-backed agreed scope
-requiring prior approval even when small, proportional questions for materially distinct in-scope
-choices, reader-first authoritative completion ledgers with permanent software-owned database
-history for explicitly governed product delivery, and security controls grounded in
-user-confirmed project assumptions without reopening a settled baseline for routine reviewed tool use,
-relevant bounded agent context, proportionate runtime effort, software-owned concurrent activation
-proof with opaque per-target attribution, and a proxy-aware one-shot installer handoff with exact
-native managed-daemon control instead of user-operated shell choreography or raw process killing,
-and interfaces whose visible hierarchy matches the task and promised content and whose
-enabled controls and requested journeys are proven through rendered interactions, with concise
-self-explanatory headings and labels instead of redundant default descriptions, and autonomous
-in-scope browser QA and local runtime coordination without repeat authorization prompts
-(D-20260819-02, D-20260819-01, D-20260815-01, D-20260812-01, D-20260809-01, D-20260805-02, D-20260805-01, D-20260804-01, D-20260802-02, D-20260802-01, D-20260801-03, D-20260801-02, D-20260801-01,
-D-20260714-03, D-20260713-03,
-D-20260713-04, D-20260714-04, D-20260720-01, D-20260731-01, D-20260731-02,
-D-20260729-01,
-D-20260728-02, D-20260728-01, D-20260726-01, D-20260710-03,
-D-20260710-05). Inferred: repeated choices indicate a taste for compact low-noise UI,
+Direction: Confirmed: user decisions favor concise rationale, complete truthful end-to-end
+behavior, production-grade foundations, canonical ownership, scoped persistent memory for
+user-indicated mistakes, complete diagnostic passes before batch repair, and explicit approval for
+every planned addition outside the evidence-backed agreed scope. Approval and other blocking
+questions follow read-only investigation, arrive as one plain-language outcome-and-boundary
+decision, and accept a plain yes without identifier transcription. The software-owned database is the
+only completion ledger, ongoing coordination is real only after same-chat scheduling and first-run
+proof, mutually trusted VPS workspaces share repository access, and the withdrawn token-usage
+recorder, hooks, runtime, and policy are retired rather than repaired. Interfaces put the promised
+content first, prove enabled behavior through rendered interactions, use concise nonredundant copy,
+and permit routine in-scope browser QA and local runtime coordination without repeat authorization
+prompts (D-20260821-01, D-20260820-04, D-20260820-02, D-20260820-01, D-20260819-02,
+D-20260819-01, D-20260815-01, D-20260805-02, D-20260805-01, D-20260804-01,
+D-20260801-03, D-20260801-01, D-20260714-03, D-20260713-03, D-20260713-04,
+D-20260714-04, D-20260731-01, D-20260731-02, D-20260728-01, D-20260726-01,
+D-20260710-03, D-20260710-05). Inferred: repeated choices indicate a taste for compact low-noise UI,
 stable ordering and grouping, visible exceptions, contextual actions, and durable state rather than
 volatile cleverness (D-20260707-01, D-20260707-02, D-20260707-07, D-20260707-08); apply these
 patterns by default while treating them as inference when a new context materially differs.
+
+## [D-20260821-01 — Approval is one plain-language outcome decision](DecisionDetails/D-20260821-01.md)
+
+Decision: Before any approval request or other blocking question, complete available read-only
+investigation and bundle all known consequential effects into one plain-language decision covering
+the problem, recommended outcome, boundaries, consequences, and meaningful tradeoffs. Approval
+authorizes that recorded outcome and its boundaries rather than only the named mechanics; a plain
+yes is sufficient. Never make the user repeat an internal identifier or technical phrase, and ask
+again only when later evidence materially changes the approved outcome or boundaries.
+
+Why: Options: selected one investigated outcome-and-boundary approval over piecemeal technical
+prompts, implementation-detail consent, or eliminating necessary approval gates. This gives the user
+an understandable decision while preserving control over consequential changes and mandatory native
+approval surfaces. Prior attempts: the proportional-question and scope-approval rules controlled
+when agents asked but failed to stop them from exposing implementation jargon, requesting serial
+approvals as details appeared, or demanding copied identifiers and confirmation phrases. Intent:
+the user decides what will happen and within which limits, while the agent owns technical discovery
+and execution inside those limits. Revisit only if: a host supplies a stronger native mechanism that
+preserves the same plain-language decision, bundled consequences, outcome-bound approval, and no-chat-transcription guarantees.
+
+## [D-20260820-04 — Token-usage recording is retired](DecisionDetails/D-20260820-04.md)
+
+Decision: Retire the Holy Skills token-usage recorder completely: remove its managed Codex hooks and
+OTel configuration, installed skill links, canonical skill and runtime source, current policy,
+documentation, validation, and CI integration. Preserve unrelated Codex configuration and permanent
+project history; private uninstall rollback artifacts are inactive evidence, not an installed feature.
+
+Why: Options: selected complete retirement over repairing `0.2.9`, retrying the deferred handoff, or
+keeping dormant source and policy. The user explicitly withdrew the approach after the UI-only
+upgrade workflow repeatedly failed despite a proper full quit. Prior attempts: the upgrade remained
+on `0.2.8` and produced failed-closed handoff receipts without delivering the intended reporting.
+Intent: token-usage measurement must no longer affect Codex, agent instructions, repository
+ownership, or validation. This supersedes D-20260820-03, D-20260812-01, D-20260809-01,
+D-20260802-02, D-20260802-01, D-20260801-02, D-20260729-01, D-20260728-03,
+D-20260728-02, and D-20260720-01. Revisit only if: the user explicitly chooses a new measurement
+approach and approves its separate scope and controls.
+
+## [D-20260820-03 — Recorder availability requires host-loopback proof](DecisionDetails/D-20260820-03.md)
+
+Decision: Treat delivery-efficiency loopback failures from a network-restricted coding sandbox as
+inconclusive. Retry only the exact stable `status`, `report`, and `declare` launcher through the
+narrow approved host boundary before diagnosing health. Keep one receiver, credential, and store per
+OS account; cover all four Codex accounts through separate verified installations and optional
+opaque aggregate projection, never by sharing raw stores.
+
+Why: Options: selected authenticated host health plus account-local installations over the rejected
+sandbox inference, shared cross-account credential/store, alternate ledger reader, or estimated
+counters. This preserves the existing privacy and ownership boundary while making reports and agent
+declarations reliably reachable. Prior attempts: sandboxed status and report calls returned
+`receiver-unavailable` and `StorageUnavailableError`; this caused a false outage report even though the
+receiver, listener, hooks, and store remained healthy. Intent: distinguish execution-boundary
+failures from telemetry failures and keep every supported chat observable without fabricating data.
+Revisit only if: Codex exposes authenticated loopback safely inside the sandbox or supplies another
+authoritative per-task counter/report channel with equal privacy, persistence, and attribution.
+
+## [D-20260820-02 — Ongoing coordination requires verified scheduling](DecisionDetails/D-20260820-02.md)
+
+Decision: Treat product-delivery monitoring as unarmed until an enabled scheduled task inside the
+same coordinator chat binds the executor thread and host, hourly cadence, retained cursor,
+idempotent overlap handling, terminal stop conditions, and a successfully verified first run. If
+automation capability or any readiness gate is unavailable, report monitoring blocked and never
+claim ongoing coordination or fall back to active-turn polling.
+
+Why: Options: selected hard schedule-and-first-run readiness over the rejected optional scheduler,
+active-turn waits, independent scheduled runs, or database durability alone. Only same-chat
+scheduling can resume the coordinator after its turn ends while preserving context. Prior attempts:
+the optional fallback caused the coordinator to message the executor a few times, send a final
+response, and stop monitoring while the user expected permanent supervision. Intent: make ongoing
+guidance a real observable service rather than a promise inferred from durable state. Revisit only
+if: the host supplies a different persistent wake mechanism with equivalent same-context identity,
+idempotency, first-run proof, availability disclosure, failure gating, and terminal shutdown.
+
+## [D-20260820-01 — Completion history is database-only](DecisionDetails/D-20260820-01.md)
+
+Decision: Use one software-owned database work graph and Completion Ledger with permanent events
+for every repository. Normal queries expose the active projection; implementation and verification
+append transitions. Never create, update, or fall back to `CompletionLedger.md`. Full-repository
+audits export digest-bound transactional database imports rather than file mutation plans.
+
+Why: Options: selected one shared database and reviewed import interface over the rejected optional
+Markdown default, parallel file and database stores, per-account databases, or chat-memory fallback.
+This keeps all trusted Codex accounts and linked worktrees on one durable state history without
+polluting routine context. Prior attempts: the dual-mode policy caused agent instructions and the
+full-repository audit to continue directing work into `CompletionLedger.md`, splitting authority and
+contradicting the selected permanent-history model. Intent: make unfinished work, its full story, and
+release progress software-owned and consistent everywhere. This supersedes D-20260714-02 completely
+and supersedes D-20260819-02's optional-mode compatibility; its coordinator topology and scope
+authority remain unchanged. Revisit only if: a replacement database proves the same single-store,
+permanent-history, transactional-import, bounded-query, and cross-account behavior.
 
 ## [D-20260819-02 — Product delivery uses a permanent software-owned ledger](DecisionDetails/D-20260819-02.md)
 

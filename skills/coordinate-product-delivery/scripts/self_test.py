@@ -79,6 +79,22 @@ def main() -> int:
 
         initialized = invoke(project, database, "init")
         check(initialized["schema_version"] == 1, "database schema should initialize")
+        shared_project = temporary / "shared-project"
+        shared_project.mkdir()
+        subprocess.run(["git", "init", "-q", str(shared_project)], check=True, timeout=10)
+        shared_init = subprocess.run(
+            [sys.executable, str(CLI), "--project", str(shared_project), "init"],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+        check(shared_init.returncode == 0, f"shared default database should initialize: {shared_init.stderr}")
+        check(
+            (shared_project / ".product-delivery" / "delivery.sqlite3").is_file(),
+            "default database should live in shared repository state",
+        )
         other_project = temporary / "other-project"
         other_project.mkdir()
         subprocess.run(["git", "init", "-q", str(other_project)], check=True, timeout=10)
@@ -420,6 +436,56 @@ def main() -> int:
             "issue history should retain every lifecycle transition",
         )
 
+        import_path = (temporary / "completion-import.json").resolve()
+        import_payload = {
+            "schema": "holyskills.completion-ledger-import.v1",
+            "import_id": "audit-import-1",
+            "issues": [
+                {
+                    "id": "CI-2",
+                    "title": "Recovery path remains incomplete",
+                    "remaining_outcome": "Users must be able to retry a failed save.",
+                    "impact": "A failed save currently leaves the user unable to recover.",
+                    "state": "planned",
+                    "blocks_release": False,
+                    "release_id": None,
+                    "requirement_id": None,
+                    "task_ids": [],
+                    "detected_by": "full-repo-audit",
+                    "summary": "A reviewed audit finding was imported.",
+                    "evidence_ref": "audit:finding-2",
+                    "metadata": {"priority": "P2"},
+                }
+            ],
+        }
+        import_path.write_text(json.dumps(import_payload), encoding="utf-8")
+        imported = invoke(
+            project,
+            database,
+            *mutation("issue-import", "--input", str(import_path)),
+        )
+        check(imported["status"] == "applied", "reviewed issue import should apply transactionally")
+        repeated_import = invoke(
+            project,
+            database,
+            *mutation("issue-import", "--input", str(import_path)),
+        )
+        check(repeated_import["status"] == "already_applied", "exact import replay should be idempotent")
+        import_payload["issues"][0]["impact"] = "Changed after review."
+        import_path.write_text(json.dumps(import_payload), encoding="utf-8")
+        drifted_import = invoke(
+            project,
+            database,
+            *mutation("issue-import", "--input", str(import_path)),
+            expect=2,
+        )
+        check(
+            "different content" in drifted_import["error"],
+            "an import ID must reject changed reviewed content",
+        )
+        imported_issues = invoke(project, database, "issue-list", "--state", "all")
+        check(imported_issues["count"] == 2, "imported issues must join permanent ledger history")
+
         invoke(
             project,
             database,
@@ -509,6 +575,341 @@ def main() -> int:
         check(rebased["releases"][0]["scope_revision"] == 2, "rebaseline should increment revision")
         check(rebased["releases"][0]["weight"] == 3.0, "rebaseline should update release weight")
 
+        invoke(
+            project,
+            database,
+            *mutation(
+                "release-create",
+                "--id",
+                "R3",
+                "--name",
+                "Monitored release",
+                "--outcome",
+                "The executor remains under durable coordinator supervision.",
+            ),
+        )
+        invoke(
+            project,
+            database,
+            *mutation(
+                "requirement-create",
+                "--id",
+                "REQ-3",
+                "--release",
+                "R3",
+                "--statement",
+                "The coordinator keeps monitoring after its initial turn.",
+                "--acceptance",
+                "A same-chat scheduled run polls the executor hourly until release stop.",
+            ),
+        )
+        invoke(
+            project,
+            database,
+            *mutation(
+                "task-create",
+                "--id",
+                "T3",
+                "--release",
+                "R3",
+                "--requirement",
+                "REQ-3",
+                "--title",
+                "Exercise durable monitoring",
+                "--outcome",
+                "Scheduled reconciliation remains active across turns.",
+                "--weight",
+                "1",
+                "--owner-thread",
+                "executor-thread-3",
+                "--owner-host",
+                "host-3",
+            ),
+        )
+        invoke(
+            project,
+            database,
+            *mutation(
+                "release-transition",
+                "--id",
+                "R3",
+                "--state",
+                "approved",
+                "--summary",
+                "Release 3 scope is approved.",
+            ),
+        )
+        invoke(
+            project,
+            database,
+            *mutation(
+                "release-transition",
+                "--id",
+                "R3",
+                "--state",
+                "active",
+                "--summary",
+                "Release 3 execution started.",
+            ),
+        )
+        missing_monitor = invoke(project, database, "monitor-status", "--release", "R3")
+        check(not missing_monitor["configured"] and not missing_monitor["ready"], "missing schedule must be unarmed")
+        invoke(
+            project,
+            database,
+            *mutation(
+                "monitor-configure",
+                "--release",
+                "R3",
+                "--coordinator-thread",
+                "coordinator-thread-3",
+                "--executor-thread",
+                "executor-thread-3",
+                "--executor-host",
+                "host-3",
+                "--cadence-minutes",
+                "60",
+                "--local-files",
+            ),
+        )
+        unavailable_local_runtime = invoke(
+            project,
+            database,
+            *mutation(
+                "monitor-arm",
+                "--release",
+                "R3",
+                "--automation-id",
+                "automation-3",
+                "--next-run-at",
+                "2026-08-20T19:00:00+00:00",
+                "--evidence-ref",
+                "automation:create-3",
+            ),
+            expect=2,
+        )
+        check(
+            "desktop app and machine availability" in unavailable_local_runtime["error"],
+            "local monitoring must require runtime availability confirmation",
+        )
+        invoke(
+            project,
+            database,
+            *mutation(
+                "monitor-configure",
+                "--release",
+                "R3",
+                "--coordinator-thread",
+                "coordinator-thread-3",
+                "--executor-thread",
+                "executor-thread-3",
+                "--executor-host",
+                "host-3",
+                "--cadence-minutes",
+                "60",
+                "--local-files",
+                "--availability-confirmed",
+            ),
+        )
+        invoke(
+            project,
+            database,
+            *mutation(
+                "monitor-arm",
+                "--release",
+                "R3",
+                "--automation-id",
+                "automation-3",
+                "--next-run-at",
+                "2026-08-20T19:00:00+00:00",
+                "--evidence-ref",
+                "automation:create-3",
+            ),
+        )
+        arming = invoke(project, database, "monitor-status", "--release", "R3")
+        check(arming["monitoring"]["state"] == "arming", "enabled schedule must await first-run proof")
+        check(not arming["monitoring"]["ready"], "monitoring must not be ready before its first run")
+        invoke(
+            project,
+            database,
+            *mutation(
+                "monitor-run-start",
+                "--release",
+                "R3",
+                "--run-key",
+                "monitor-run-3-1",
+                "--scheduled-for",
+                "2026-08-20T18:00:00+00:00",
+            ),
+        )
+        replayed_start = invoke(
+            project,
+            database,
+            *mutation(
+                "monitor-run-start",
+                "--release",
+                "R3",
+                "--run-key",
+                "monitor-run-3-1",
+                "--scheduled-for",
+                "2026-08-20T18:00:00+00:00",
+            ),
+        )
+        check(replayed_start["status"] == "already_running", "same run key must be idempotent")
+        overlap = invoke(
+            project,
+            database,
+            *mutation(
+                "monitor-run-start",
+                "--release",
+                "R3",
+                "--run-key",
+                "monitor-run-3-overlap",
+                "--scheduled-for",
+                "2026-08-20T18:00:00+00:00",
+            ),
+        )
+        check(overlap["status"] == "skipped_overlap", "overlapping monitor runs must be skipped")
+        invoke(
+            project,
+            database,
+            *mutation(
+                "monitor-run-finish",
+                "--run-key",
+                "monitor-run-3-1",
+                "--state",
+                "completed",
+                "--summary",
+                "Executor and database reconciliation completed without intervention.",
+                "--cursor",
+                "cursor-3-1",
+                "--next-run-at",
+                "2026-08-20T19:00:00+00:00",
+                "--evidence-ref",
+                "monitor:first-run-3",
+            ),
+        )
+        invoke(
+            project,
+            database,
+            *mutation(
+                "monitor-verify-first-run",
+                "--release",
+                "R3",
+                "--run-key",
+                "monitor-run-3-1",
+                "--evidence-ref",
+                "monitor:first-run-3",
+            ),
+        )
+        armed = invoke(project, database, "monitor-status", "--release", "R3")
+        check(armed["monitoring"]["ready"], "first-run proof must promote monitoring to armed")
+        check(armed["monitoring"]["cursor"] == "cursor-3-1", "armed monitoring must retain its cursor")
+        pause_while_armed = invoke(
+            project,
+            database,
+            *mutation(
+                "release-transition",
+                "--id",
+                "R3",
+                "--state",
+                "paused",
+                "--summary",
+                "Attempted pause before disabling monitoring.",
+            ),
+            expect=2,
+        )
+        check(
+            "must be disabled and stopped" in pause_while_armed["error"],
+            "release pause must fail while monitoring is enabled",
+        )
+        invoke(
+            project,
+            database,
+            *mutation(
+                "monitor-stop",
+                "--release",
+                "R3",
+                "--reason",
+                "Release 3 was paused by the coordinator.",
+                "--evidence-ref",
+                "automation:disable-3",
+            ),
+        )
+        invoke(
+            project,
+            database,
+            *mutation(
+                "release-transition",
+                "--id",
+                "R3",
+                "--state",
+                "paused",
+                "--summary",
+                "Release 3 paused after scheduled monitoring stopped.",
+            ),
+        )
+
+        invoke(
+            project,
+            database,
+            *mutation(
+                "release-create",
+                "--id",
+                "R4",
+                "--name",
+                "Blocked monitoring release",
+                "--outcome",
+                "Unavailable scheduler capability is reported truthfully.",
+            ),
+        )
+        invoke(
+            project,
+            database,
+            *mutation(
+                "release-transition",
+                "--id",
+                "R4",
+                "--state",
+                "approved",
+                "--summary",
+                "Release 4 scope is approved.",
+            ),
+        )
+        invoke(
+            project,
+            database,
+            *mutation(
+                "monitor-configure",
+                "--release",
+                "R4",
+                "--coordinator-thread",
+                "coordinator-thread-4",
+                "--executor-thread",
+                "executor-thread-4",
+                "--executor-host",
+                "host-4",
+                "--cadence-minutes",
+                "60",
+            ),
+        )
+        invoke(
+            project,
+            database,
+            *mutation(
+                "monitor-block",
+                "--release",
+                "R4",
+                "--reason",
+                "automation_update is unavailable; monitoring is unarmed.",
+                "--evidence-ref",
+                "tool-search:no-automation-update",
+            ),
+        )
+        monitoring_snapshot = invoke(project, database, "monitor-snapshot")
+        gaps = {item["release_id"]: item for item in monitoring_snapshot["monitoring_gaps"]}
+        check(gaps["R4"]["monitoring_state"] == "blocked", "unavailable scheduler must remain visible")
+
         with sqlite3.connect(database) as connection:
             try:
                 connection.execute("DELETE FROM completion_issues WHERE id = 'CI-1'")
@@ -545,11 +946,23 @@ def main() -> int:
             "one primary execution task",
             "do not create a separate direct-execution mode",
             "database is the authoritative work graph and Completion Ledger",
-            "once per hour",
+            "monitoring is not established until",
+            "scheduled task inside the same coordinator chat",
+            "first scheduled run",
+            "monitoring unarmed and blocked",
+            "executor thread ID and host ID",
+            "retained cursor",
+            "overlap",
+            "desktop app and computer",
+            "released, paused, or cancelled",
             "overall progress percentage",
             "true product expansion",
         ]:
             check(required.lower() in lower_skill, f"skill contract should contain {required!r}")
+        check(
+            "otherwise maintain the cadence only while the coordinator task is actively running" not in lower_skill,
+            "active-turn polling must not be a fallback for durable monitoring",
+        )
 
         metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
         check("allow_implicit_invocation: false" in metadata, "coordinator skill should require deliberate invocation")

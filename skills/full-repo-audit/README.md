@@ -4,7 +4,7 @@
 product: semantic implementation, user journeys, feature set, UI elements,
 tests, architecture, and operational quality. Every verified artifact-backed
 audit produces a verified file and implementation-trace record, a prioritized
-plan, and an exact reviewed active-only completion-ledger projection, including
+plan, and an exact reviewed database completion-ledger projection, including
 an empty projection for a clean audit.
 
 ## Target
@@ -35,9 +35,10 @@ Use this skill when you want a repository-wide audit that checks:
 
 The audited repository is read-only by default. Audit artifacts and an exact
 ledger projection live outside it. Only an explicit request or applicable
-project instruction to record findings authorizes the updater to mutate
-project-root `CompletionLedger.md`; it never authorizes implementation,
-commits, pushes, or other source changes.
+project instruction to record findings authorizes a transactional import into
+the software-owned database completion ledger; it never authorizes
+implementation, commits, pushes, or other source changes. The workflow never
+creates or updates `CompletionLedger.md`.
 
 ## How To Use
 
@@ -78,11 +79,12 @@ The harness creates an audit output directory containing:
 - `verification_receipt.json`: written only after a passing stable verifier run; binds the manifest, exact report root, and every authorized report hash used by consolidation.
 - `consolidated-findings.json` / `.md`: mechanically merged candidates.
 - `completion_ledger_projection.json`: every candidate's lead-reviewed
-  disposition and proposed active row.
-- `completion-ledger-plan.json`: before/after ledger plan produced only after
-  the updater reruns the verifier over guarded manifest-owned reports, source
-  files, effort/queue/exclusion records, prompts, and bound evidence artifacts
-  and matches that canonical pass result to the receipt.
+  disposition and proposed active database issue.
+- `completion-ledger-database-import.json`: digest-bound transactional import
+  produced only after the exporter reruns the verifier over guarded
+  manifest-owned reports, source files, effort/queue/exclusion records,
+  prompts, and bound evidence artifacts and matches that canonical pass result
+  to the receipt.
 
 Workers write full reports directly to their prompt-declared paths and return
 only compact filename/hash/byte/count receipts. The complete lead result belongs
@@ -160,22 +162,23 @@ candidate is disposed, set top-level `review_status` to `complete`, including
 for a clean empty projection.
 
 When ledger mutation is authorized by an explicit user request or applicable
-project instruction, plan and apply only the reviewed projection:
+project instruction, export and apply only the reviewed database import. Resolve
+`PRODUCT_DELIVERY_SKILL_DIR` from the loaded `coordinate-product-delivery`
+skill before applying:
 
 ```bash
-python3 scripts/update_completion_ledger.py plan \
+python3 scripts/update_completion_ledger.py database-import \
   --repo /path/to/repo \
   --manifest /tmp/full-repo-audit-run/manifest.json \
   --reports /tmp/full-repo-audit-run/reports \
   --projection /tmp/full-repo-audit-run/completion_ledger_projection.json \
-  --out /tmp/full-repo-audit-run/completion-ledger-plan.json
+  --import-id full-repo-audit:RUN_ID \
+  --out /tmp/full-repo-audit-run/completion-ledger-database-import.json
 
-python3 scripts/update_completion_ledger.py apply \
-  --repo /path/to/repo \
-  --manifest /tmp/full-repo-audit-run/manifest.json \
-  --reports /tmp/full-repo-audit-run/reports \
-  --projection /tmp/full-repo-audit-run/completion_ledger_projection.json \
-  --plan /tmp/full-repo-audit-run/completion-ledger-plan.json
+python3 "$PRODUCT_DELIVERY_SKILL_DIR/scripts/delivery_state.py" \
+  --project /path/to/repo issue-import \
+  --input /tmp/full-repo-audit-run/completion-ledger-database-import.json \
+  --actor full-repo-audit:RUN_ID
 ```
 
 When working from a repository that vendors this skill under `skills/full-repo-audit`, replace `scripts/...` above with `skills/full-repo-audit/scripts/...`.

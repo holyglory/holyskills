@@ -1,4 +1,0 @@
-interface:
-  display_name: "Install Delivery Efficiency Hooks"
-  short_description: "Install and verify Codex and Claude telemetry hooks"
-  default_prompt: "Use $install-delivery-efficiency-hooks to install and verify the repository delivery-efficiency recorder for my Codex and Claude runtimes."

@@ -90,19 +90,21 @@ Release effect:
 
 The coordinator classifies the proposal. It may resolve clarifications, necessary completion work, and defects within the approved baseline. It sends true product expansion to the user in plain language and does not authorize it until the user decides.
 
-## Hourly Reconciliation
+## Scheduled Monitoring Contract
 
-While execution is active, wait for completion or attention events. Once per hour, obtain one compact snapshot even if no event arrived.
+Monitoring is unarmed until a scheduled task inside the coordinator chat is enabled and its first run succeeds. Store the scheduled-task ID, coordinator thread ID, executor thread and host IDs, 60-minute cadence, retained cursor, next run, local-runtime requirement, and first-run evidence in the database. A final response cannot turn active-turn waiting into durable monitoring.
 
-Reconcile:
+The scheduled prompt must be self-contained and stable across context loss. On every run it:
 
-1. Executor task lifecycle and whether it needs attention
-2. Database `monitor-snapshot`
-3. Missed `expected_update_at` values
-4. Failed or blocked tasks
-5. Blocking Completion Ledger issues
-6. Executor scope revision versus the release scope revision
-7. Newly completed evidence versus task completion
+1. Claims an idempotent run key derived from scheduled-task ID and scheduled time.
+2. Skips when the key was already recorded or another run overlaps.
+3. Stops and disables itself when the release is released, paused, or cancelled.
+4. Reads one executor snapshot through the stored thread/host identity and cursor.
+5. Reconciles database `monitor-snapshot`, missed `expected_update_at`, failures, blockers, Completion Ledger issues, scope revision, and new acceptance evidence.
+6. Sends guidance only when intervention is required.
+7. Persists the cursor, result, evidence, and next run before exiting.
+
+For local files, the desktop app must remain running, the machine must stay on, and the project must remain on disk. If the automation tool, same-chat destination, first run, or availability gate fails, store the blocker and report monitoring as unarmed; do not claim ongoing coordination.
 
 Do not treat one quiet hour as stale when the expected update is later. Do not narrate unchanged snapshots. Continue independent work while resolving a local blocker.
 

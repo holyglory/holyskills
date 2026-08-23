@@ -14,6 +14,10 @@ Overall approved-roadmap progress: <percent>% at <baseline or scope revision>
 
 <Release name>: <percent>% complete, <ready|not ready|at risk|blocked>
 
+Monitoring: <armed|unarmed|blocked|stopped>
+Schedule: <same-chat scheduled-task ID>, every <minutes> minutes, next run <time>
+First run: <verified evidence|not verified>
+
 What now works
 <user-visible outcomes>
 
@@ -28,6 +32,8 @@ Decision needed
 ```
 
 Do not list files, functions, APIs, libraries, database columns, logs, or internal agent names unless the user asks. Translate a technical blocker into the affected user outcome and the next result.
+
+When ongoing supervision was requested and monitoring is not armed, lead with `Monitoring is unarmed and blocked.` Do not use an ordinary progress report or wording that implies the coordinator will keep watching after the current turn.
 
 ## Blocker Report
 

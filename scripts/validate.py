@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Complete validation for seven HolySkills packages and the portable recorder."""
+"""Complete validation for six HolySkills packages."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = ROOT / "full_repo_harness"
-RECORDER = ROOT / "tools" / "delivery-efficiency"
 PYCACHE_ROOT = Path(tempfile.mkdtemp(prefix="holyskills-validation-pycache-"))
 atexit.register(shutil.rmtree, PYCACHE_ROOT, True)
 SKILL_NAMES = (
@@ -26,11 +25,10 @@ SKILL_NAMES = (
     "formal-web-ui-verification",
     "full-repo-audit",
     "full-repo-test-coverage-audit",
-    "install-delivery-efficiency-hooks",
     "ui-implementation-audit",
     "user-journey-docs-audit",
 )
-SKILLS_WITH_REQUIRED_README = set(SKILL_NAMES) - {"install-delivery-efficiency-hooks"}
+SKILLS_WITH_REQUIRED_README = set(SKILL_NAMES)
 SKILLS = tuple(ROOT / "skills" / name for name in SKILL_NAMES)
 HARNESS_SKILL_NAMES = (
     "full-repo-audit",
@@ -141,16 +139,6 @@ def check_standalone_skill(skill: Path) -> None:
         shutil.rmtree(temporary, ignore_errors=True)
 
 
-def check_standalone_recorder() -> None:
-    temporary = Path(tempfile.mkdtemp(prefix="delivery-efficiency-standalone-"))
-    try:
-        copied = temporary / "delivery-efficiency"
-        shutil.copytree(RECORDER, copied)
-        run([sys.executable, str(copied / "self_test.py")])
-    finally:
-        shutil.rmtree(temporary, ignore_errors=True)
-
-
 def check_include_glob_exclusions() -> None:
     temporary = Path(tempfile.mkdtemp(prefix="include-glob-exclusion-"))
     try:
@@ -236,6 +224,8 @@ def main() -> int:
     run([sys.executable, "scripts/check_decision_history.py"])
     run([sys.executable, "scripts/check_completion_ledger_self_test.py"])
     run([sys.executable, "scripts/check_completion_ledger.py"])
+    run([sys.executable, "scripts/check_completion_ledger_instructions_self_test.py"])
+    run([sys.executable, "scripts/check_completion_ledger_instructions.py"])
     run([sys.executable, "scripts/check_user_issue_ledgers_self_test.py"])
     run([sys.executable, "scripts/check_user_issue_ledgers.py"])
     run([sys.executable, "scripts/check_repository_freshness_self_test.py"])
@@ -252,8 +242,6 @@ def main() -> int:
     run([sys.executable, "scripts/merge_findings_self_test.py"])
     run([sys.executable, "scripts/self_test_public_artifact_guard.py"])
     run([sys.executable, "scripts/public_artifact_guard.py", "--repo", str(ROOT)])
-    run([sys.executable, "tools/delivery-efficiency/self_test.py"])
-
     for skill in SKILLS:
         run([sys.executable, str(skill.relative_to(ROOT) / "scripts" / "self_test.py")])
 
@@ -264,20 +252,17 @@ def main() -> int:
             "compileall",
             "scripts",
             "full_repo_harness",
-            "tools/delivery-efficiency/delivery_efficiency",
             *[f"skills/{name}/scripts" for name in SKILL_NAMES],
         ]
     )
 
     for skill in SKILLS:
         attempt(f"standalone skill {skill.name}", lambda skill=skill: check_standalone_skill(skill))
-    attempt("standalone delivery-efficiency recorder", check_standalone_recorder)
-
     if FAILURES:
         print_failure_summary()
         return 1
 
-    print("validation ok (7 canonical skills + portable recorder; standalone matrix passed)")
+    print("validation ok (6 canonical skills; standalone matrix passed)")
     return 0
 
 

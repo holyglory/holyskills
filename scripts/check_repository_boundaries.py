@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail when the seven-skill repository regains a DevCoordinator dependency."""
+"""Fail when the six-skill repository regains a DevCoordinator dependency."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ CANONICAL_SKILLS = {
     "formal-web-ui-verification",
     "full-repo-audit",
     "full-repo-test-coverage-audit",
-    "install-delivery-efficiency-hooks",
     "ui-implementation-audit",
     "user-journey-docs-audit",
 }
@@ -262,7 +261,7 @@ def audit_repository(repository: Path) -> dict[str, object]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Verify that HolySkills owns exactly seven skills and has no source/build/CI dependency on DevCoordinator."
+        description="Verify that HolySkills owns exactly six skills and has no source/build/CI dependency on DevCoordinator."
     )
     parser.add_argument("--repo", default=".")
     parser.add_argument("--json", action="store_true")
@@ -275,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     elif report["ok"]:
-        print("repository boundary check ok (7 skills; no DevCoordinator source/build/CI dependency)")
+        print("repository boundary check ok (6 skills; no DevCoordinator source/build/CI dependency)")
     else:
         for finding in report["findings"]:
             location = f"{finding['path']}:{finding['line']}" if finding["line"] else finding["path"]
