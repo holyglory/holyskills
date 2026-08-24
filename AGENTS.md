@@ -107,8 +107,8 @@ without requiring a repository-owned workflow skill.
 
 ## Skill Installation Source Of Truth
 
-- This repository is the only writable canonical source for its six skills:
-  `coordinate-product-delivery`, `formal-web-ui-verification`, `full-repo-audit`,
+- This repository is the only writable canonical source for its five skills:
+  `formal-web-ui-verification`, `full-repo-audit`,
   `full-repo-test-coverage-audit`, `ui-implementation-audit`, and
   `user-journey-docs-audit`.
   Do not hand-edit copies under Codex, Claude, Parall, or another runtime home.
@@ -194,18 +194,11 @@ without requiring a repository-owned workflow skill.
   installed coordinator script to discover already-running URLs. That optional
   runtime adapter must remain path-agnostic and must not become a source,
   checkout, build, CI, or version dependency.
-- `coordinate-product-delivery` owns its portable database state engine and may
-  use a separately installed DevCoordinator only when capability discovery
-  advertises a compatible Gantt-rendering action. It must not import, pin,
-  package, or assume a DevCoordinator checkout, and absence of that capability
-  leaves only the derived rendered view unavailable, not the authoritative
-  work graph or completion ledger.
-- Every repository completion ledger is software- and database-owned. No
-  repository instruction or skill may create, update, or treat
-  `CompletionLedger.md` as a fallback or source of truth. The reviewed database
-  interface owns active queries, permanent history, transitions, and imports.
+- Every repository completion ledger is DevCoordinator2's planning database,
+  reached through its reviewed tools (`plan_overview`, `task_create`,
+  `task_update`, `task_history`), which own active queries, permanent
+  history, transitions, and imports.
 - Run `python3 scripts/check_repository_boundaries.py --repo "$PWD"` as part of
   every validation and ownership-affecting change. Keep historical migration
-  prose in `DecisionHistory.md`, its exactly linked `DecisionDetails/<ID>.md`
-  files, or `MERGE_IMPROVEMENT_LEDGER.md`; do not weaken the current-tree
+  prose in `MERGE_IMPROVEMENT_LEDGER.md`; do not weaken the current-tree
   detector to hide a real dependency.

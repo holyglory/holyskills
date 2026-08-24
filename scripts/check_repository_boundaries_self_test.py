@@ -61,9 +61,9 @@ def make_clean_repository(root: Path) -> None:
         "const args = ['--from-coordinator', '--coordinator-script', process.env.COORDINATOR_SCRIPT];\n",
     )
     write(
-        root / "skills" / "coordinate-product-delivery" / "SKILL.md",
-        "Use a separately installed DevCoordinator only after `devcoordinator capabilities` "
-        "advertises Gantt rendering.\n",
+        root / "skills" / "full-repo-audit" / "SKILL.md",
+        "Record confirmed projection issues in DevCoordinator2's completion "
+        "ledger with `task_create`.\n",
     )
 
 

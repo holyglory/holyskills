@@ -13,7 +13,6 @@ from pathlib import Path
 
 
 CANONICAL_SKILLS = {
-    "coordinate-product-delivery",
     "formal-web-ui-verification",
     "full-repo-audit",
     "full-repo-test-coverage-audit",

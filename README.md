@@ -10,12 +10,6 @@ does not import, clone, pin, build, or test their source repository.
 
 ## Canonical skills
 
-- `coordinate-product-delivery`: an explicit-invocation product and project
-  delivery coordinator with approved release baselines, one primary execution
-  task, a software-owned SQLite work graph and permanent Completion Ledger,
-  weighted progress, mandatory verified same-chat scheduled monitoring, bounded
-  events, and renderer-neutral Gantt data. A separately installed DevCoordinator is used for Gantt rendering only
-  when capability discovery advertises that action.
 - `formal-web-ui-verification`: a deterministic Playwright/Chromium heuristic
   for rendered geometry, visibility, clipping, overlap, media health, target
   coverage, declared areas, and visible scrollbars. It can optionally consume
@@ -58,62 +52,25 @@ vendored copy so its directory remains independently installable and testable.
   runners while retaining trusted push and manual native-platform jobs.
 - `scripts/check_app_wide_policy.py`: semantic contract guard for the universal
   policy.
-- `scripts/check_decision_history.py`: compact decision-index, selective detail,
-  stable-ID, and anti-loop guard.
-- `scripts/check_completion_ledger.py`: database-only ledger guard; it rejects
-  `CompletionLedger.md` and can verify the live SQLite schema, permanence
-  triggers, and integrity.
 - `scripts/check_user_issue_ledgers.py`: recursive, no-follow validation for
   persistent scoped user-correction ledgers; absence is valid before the first
   qualifying correction.
 - `scripts/public_artifact_guard.py`: public-text, symlink, and PNG provenance
   guard.
 - `SKILL_AUDIT.md`: honest capabilities, improvements, and residual limits for
-  all six skills.
-- `DecisionHistory.md`: compact major-decision and project-direction index.
-- `DecisionDetails/`: one cold supporting record per indexed decision.
+  the audited skills.
 - `UserIssueLedgers/`: compact persistent prevention rules separated by
   surface, domain, or business-logic perspective.
 
-`DecisionHistory.md` is routine context; `DecisionDetails/` is not. The index
-contains one evidence-linked `Direction:` paragraph, then entries with this
-exact shape:
-
-```markdown
-## [D-YYYYMMDD-NN — Short title](DecisionDetails/D-YYYYMMDD-NN.md)
-
-Decision: The selected direction.
-
-Why: Concise rationale. Options: selected A over rejected B because A fits the goal. Prior attempts: B failed in the observed way. Intent: durable user or project preference this reveals. Revisit only if: new evidence or a changed requirement invalidates the reason.
-```
-
-Use `Options: no material alternative` and `Prior attempts: none known` when
-true; never invent either. `Why` captures the underlying project direction,
-quality bar, workflow expectation, and UI taste that future work should follow.
-The top synthesis labels `Confirmed:` user intent separately from `Inferred:`
-patterns and cites the supporting decision IDs. A detail file starts with the
-matching ID/title and an index backlink, and holds all evidence, implementation,
-verification, chronology, and sources. Open only the detail relevant to a
-decision being applied, challenged, superseded, or explicitly audited.
-
-The Completion Ledger is software-owned database state. Its default shared
-location is `.product-delivery/delivery.sqlite3` in the primary checkout and is
-ignored by Git. Linked worktrees and the four trusted Codex accounts address
-that same database. The reviewed `delivery_state.py` interface owns every read,
-mutation, transactional import, and progress calculation.
-
-Issues and events are permanent. Implementation, verification, reopening,
-release moves, reassignment, and supersession append transitions; nothing
-deletes prior history. Normal queries return only the bounded active projection
-or one named issue's bounded history. Every issue starts with the incomplete
-outcome and current user or product impact in plain language, then records its
-state, unblock condition, evidence, and supporting technical references.
-
-`CompletionLedger.md`, `CompletionHistory.md`, checklists, alternate databases,
-and chat-memory fallbacks are prohibited. A database outage keeps affected work
-incomplete. `full-repo-audit` emits a digest-bound
-`holyskills.completion-ledger-import.v1` artifact, and the database validates
-the entire payload before one idempotent transaction.
+Decisions and the completion ledger live in DevCoordinator2's planning
+database: record decisions with `decision_record` (aspect, plain
+management-facing title and body, `supersedes`, stable `ref`), load context
+with `decision_tail`, search with `decision_search`, and store rolling
+summaries with `decision_summarize` when a read reports `summary_due`.
+Work items are `task_create`/`task_update` tasks sized in estimated lines
+of code; issues and events are permanent, and normal queries return the
+bounded active projection. A database outage keeps affected work
+incomplete.
 
 `UserIssueLedgers/` is a different lifecycle: its rows remain after a fix so a
 later task cannot repeat the same user-indicated mistake. It contains multiple

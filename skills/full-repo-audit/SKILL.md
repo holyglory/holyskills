@@ -99,7 +99,7 @@ unrecognized UI toolkit.
 
 2. **Generate the audit queue**
    - Resolve the audited repo to an absolute path before generation and echo it in your working notes.
-   - Resolve `FULL_REPO_AUDIT_SKILL_DIR` to the directory containing this `SKILL.md` from the loaded skill path. Preflight the skill harness before starting: verify `scripts/build_audit_batches.py`, `scripts/verify_audit_results.py`, `scripts/update_completion_ledger.py`, and `scripts/self_test.py` exist and are readable, then run `python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/self_test.py" --cached` unless the user forbids validation commands. Reuse is valid only for the exact skill-tree digest, Python executable/version, and platform; drift runs the complete suite. If the self-test fails, stop instead of treating it as an audited-repo finding.
+   - Resolve `FULL_REPO_AUDIT_SKILL_DIR` to the directory containing this `SKILL.md` from the loaded skill path. Preflight the skill harness before starting: verify `scripts/build_audit_batches.py`, `scripts/verify_audit_results.py`, and `scripts/self_test.py` exist and are readable, then run `python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/self_test.py" --cached` unless the user forbids validation commands. Reuse is valid only for the exact skill-tree digest, Python executable/version, and platform; drift runs the complete suite. If the self-test fails, stop instead of treating it as an audited-repo finding.
    - Run:
      ```bash
      REPO_ROOT="${REPO_ROOT:-$PWD}"
@@ -216,21 +216,7 @@ unrecognized UI toolkit.
    - Complete every projection disposition. After every candidate is disposed, set top-level `review_status` to `complete`, including when the candidate list is empty. Only `confirmed` unresolved implementation, verification, integration, limitation, improvement, or generalization obligations become database issues. Keep hypotheses, open questions, audit-environment limitations, exclusions, invalid findings, and resolved work outside the active projection. A concrete external blocker uses state `blocked` and names its unblock condition.
    - Map each confirmed atomic obligation to exactly one issue with stable ID, plain-language remaining outcome, user or product impact, active state, verification requirement, priority, and affected repo-relative paths. Raw evidence and audit chronology stay in the external artifacts.
    - Preserve every unrelated database issue and permanent event. Reuse an existing ID only by marking the candidate `duplicate` of that issue. Never remove an issue because a later audit did not rediscover it, never prune during import, and emit an empty import for a clean audit. Later implementation and verification append transitions; they never delete the issue.
-   - When ledger mutation is not authorized, keep the completed exact projection in the audit output and report `not applied`. When authorized, resolve `PRODUCT_DELIVERY_SKILL_DIR` from the loaded `coordinate-product-delivery` skill, verify its `scripts/delivery_state.py`, generate the exact database import, review its stable import ID and issue mapping, then apply it transactionally:
-     ```bash
-     python3 "$FULL_REPO_AUDIT_SKILL_DIR/scripts/update_completion_ledger.py" database-import \
-       --repo <repo> --manifest <audit-output>/manifest.json \
-       --reports <audit-output>/reports \
-       --projection <audit-output>/completion_ledger_projection.json \
-       --import-id full-repo-audit:<run-id> \
-       --out <audit-output>/completion-ledger-database-import.json
-
-     python3 "$PRODUCT_DELIVERY_SKILL_DIR/scripts/delivery_state.py" \
-       --project <repo> issue-import \
-       --input <audit-output>/completion-ledger-database-import.json \
-       --actor full-repo-audit:<run-id>
-     ```
-   - The exporter must not trust the receipt as proof by itself. It reopens the exact manifest-authorized report set, holds the manifest, reports, current source files, queue/exclusion/effort records, prompts, visual-evidence manifest, and referenced artifacts under no-follow guards, reruns `verify_audit_results.py`, validates every guard, and requires the canonical rerun result digest to equal the receipt's verifier-result digest. It rejects pending, omitted, tampered, or non-atomic candidates plus source, report, companion, or evidence drift. The database validates the entire import before one transaction, stores its digest, rejects changed content under a reused import ID, and treats an exact replay as idempotent. If the database interface is unavailable, retain the reviewed import as not applied and report the blocker; never fall back to a file. Recording a finding is not fixing it and does not make the audited product ready.
+   - Keep the completed exact projection in the audit output. When ledger mutation is authorized, record each confirmed projection issue in DevCoordinator2's completion ledger with `task_create` (equivalently `devcoordinator2 task create`): the plain-language remaining outcome as `title`/`outcome`, the user or product impact as `impact`, the verification requirement as `verification`, affected paths and the projection's stable issue ID in `technical_note`, kind `stub` or `improvement`, sized in estimated lines of code. Before recording, search the existing ledger (`plan_overview`, `task_history`) for the stable ID in `technical_note` and update that task instead of duplicating it. A `daemon_unavailable` or database error keeps the import not applied; report the blocker. Recording a finding is not fixing it and does not make the audited product ready.
 
 ## Subagent Artifact Requirements
 
@@ -399,7 +385,6 @@ During the visual journey pass, use available visual tooling such as Playwright,
 Companion scripts included with this skill:
 
 - `scripts/verify_audit_results.py`: result verifier for returned subagent `Run ID`, exact report section shape, `File Coverage` SHA-256 tables, per-unit and responsibility-level source-backed `Implementation Inventory` coverage with unique `Contract ID` and atomic result/finding linkage, required manifest-declared `lead_reconciliation.md` cross-file trace and atomic findings, `Interface Inventory` coverage and concrete visible-text checks, source-backed UI asset evidence, generic trace rejection, obvious placeholder/stub/dead-control source omission checks, finding severity/field shape/content and batch-file binding, current file fingerprints, queue marker consistency, effort and journey-worker ledger completion/provenance fields, `excluded_files.json` count/digest consistency, policy-blocking unresolved scope warnings, and a pass-only stable-input verification receipt.
-- `scripts/update_completion_ledger.py`: verifier-rerunning database-import exporter for a fully reviewed projection. It binds the exact verifier input closure and canonical pass result to the receipt, rejects raw/pending/omitted candidates and drift, and produces the bounded payload consumed transactionally by `coordinate-product-delivery`.
 - `scripts/self_test.py`: deterministic fixture tests for classification, interface detection, env/generated/vendor exclusion and opt-in behavior, batch invariants, evidence-contract enforcement, and result verification. These tests prove verifier behavior, not manual-agent semantic recall.
 - `evals/marker-free/`: six isolated manual-agent evaluations for ignored input/config, partial plumbing, false persistence/success, missing registration/lifecycle, production fixture data, and shallow outcome tests. When supplied with responses from fresh agent runs, its deterministic scorer can measure finding recall and intentional-lookalike precision. Its self-test uses synthesized oracle-derived responses and proves only the schemas and scorer, so it is not empirical evidence of agent performance; keep actual run results separate from verifier self-tests and do not generalize one run into a mechanical guarantee.
 

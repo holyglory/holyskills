@@ -125,25 +125,22 @@
 
 ## Keep decisions compact and usable
 
-- Keep project-root `DecisionHistory.md` as a dense, concise index of major
-  consequential user, product, architecture, data, and operational decisions,
-  not a report, timeline, or implementation log. Each stable-ID entry contains
-  only `Decision` and `Why`, plus a link to exactly one project-root
-  `DecisionDetails/<decision-id>.md` file.
-- In `Why`, name materially distinct options considered, why the selected
-  option better serves the goals, and why a previously tried option failed.
-  Capture durable intent such as project direction, quality bar, workflow
-  expectations, and UI preferences or taste.
-- Keep evidence, sources, experiments, implementation, verification, timelines,
-  and operations in the linked detail file. Do not load detail files into
-  routine context; read only the relevant file when applying or revisiting its
-  decision or doing explicit historical or audit work.
-- Maintain one concise evidence-linked `Direction` synthesis at the top of the
-  index. Distinguish confirmed user intent from inferred patterns and cite
-  decision IDs. Apply supported direction to analogous work, never infer a
-  durable preference from one ambiguous choice, and do not retry a rejected or
-  failed option without new evidence. Record what changed and make a
-  superseding decision explicit so context loss cannot revive the old path.
+- Record consequential per-repository product decisions with
+  `decision_record`: an aspect tag; a plain management-facing title and body
+  naming what was decided, the materially distinct options, and cost and
+  risk in user terms; `technical_note` for implementation detail;
+  `supersedes` when replacing an earlier decision; and a stable `ref` when
+  code or docs will cite it. Capture durable intent such as project
+  direction, quality bar, workflow expectations, and UI preferences or
+  taste.
+- Load routine decision context with `decision_tail` (the rolling summary
+  plus the last N decisions). Search the whole history with
+  `decision_search` before retrying an option that may already have been
+  tried and rejected.
+- When any decision read reports `summary_due`, write and store the rolling
+  summary with `decision_summarize` before continuing. Give the summary the
+  Direction synthesis's job: durable intent and quality bar, confirmed user
+  decisions distinguished from inferred patterns, decision refs cited.
 
 ## Deliver the complete agreed scope
 
@@ -156,10 +153,13 @@
   first delivery or remain an active, specific item in the project's
   authoritative completion ledger. No agreed gap is too small to record, and
   work is not ready while one remains.
-- Use exactly one authoritative, software-owned database completion ledger with
-  permanent event history. Use its reviewed interface for every read and
-  mutation; never create, update, import through, or fall back to
-  `CompletionLedger.md`, another Markdown ledger, a checklist, or chat memory.
+- Use DevCoordinator2's planning database as the one authoritative
+  completion ledger with permanent event history. Read it with
+  `plan_overview` and `task_history`; record and change work items with
+  `task_create` and `task_update` (CLI: `devcoordinator2 plan|task …`).
+  Size tasks in estimated lines of code and split large work into subtask
+  trees. A `daemon_unavailable` or database error from these tools blocks
+  the affected completion claim.
 - Record active unresolved partial implementations, temporary bridges, missing
   integrations, limitations, affected-path TODOs, improvements, and
   generalizations as database issues. Write every issue for a reader who does
@@ -168,16 +168,17 @@
   blocked; current state names the concrete unblock condition; and verification
   names the observable proof that will close the gap. Technical detail,
   affected paths, identifiers, and test names may follow but never replace that
-  account; raw logs remain in cold artifacts.
+  account; raw logs remain in cold artifacts. Create each such issue with
+  `task_create` (kind `stub`, `improvement`, or `user_feedback`).
 - Never delete an issue or prior event. Mark implementation, verification,
   reopening, reassignment, release moves, and supersession as append-only state
   transitions. Normal queries return the bounded active projection; load one
   issue's bounded history only for a concrete recurrence, decision, or audit
   need. A database outage blocks affected completion claims and never
   authorizes a file, alternate store, or chat-memory fallback.
-- Use `DecisionHistory.md` for consequential choices, not as duplicate ledger
-  state. The database event history is the only completion history; never
-  create `CompletionHistory.md` or a second archive of ledger records.
+- Record consequential choices in the decision history (`decision_record`),
+  not as duplicate ledger state. The database event history is the only
+  completion history.
 - Keep externally blocked work unresolved and name its unblock condition.
   Before readiness, reconcile requirements, implementation, acceptance
   criteria, tests, and the ledger. Readiness requires end-to-end behavior and
@@ -294,7 +295,7 @@ checks may support evidence but do not constitute interaction verification.
   could repeat. Create the directory and first scoped ledger on the first
   qualifying correction; absence is valid before then. These persistent
   prevention ledgers are separate from the authoritative completion ledger's
-  active work view, major decisions in `DecisionHistory.md`, and incident
+  active work view, major decisions in the decision history, and incident
   history.
 - Use multiple narrowly scoped ledgers, never one mixed catch-all. Separate UI,
   automation, coding-style, math, data, security, operations, testing, and
@@ -418,7 +419,10 @@ checks may support evidence but do not constitute interaction verification.
 - Lead with outcomes and evidence. Distinguish facts, inferences, assumptions,
   risks, and blockers. Report incremental progress as progress, never ready,
   complete, fixed, or done while requested behavior, verification, or
-  completion-ledger work remains open.
+  completion-ledger work remains open. Address the user as a capable
+  non-technical manager: plain outcomes and decision-relevant tradeoffs
+  first, with identifiers and implementation detail only in supporting
+  positions — the same register as the ledger's plain-language fields.
 - When a completion ledger exists, lead with a plain-language account of what
   works now, what remains incomplete for users, what blocks it, and what result
   comes next. Technical identifiers and implementation detail may support that

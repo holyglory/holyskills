@@ -21,8 +21,6 @@ from shutil import rmtree, which
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "scripts" / "build_audit_batches.py"
 VERIFY = ROOT / "scripts" / "verify_audit_results.py"
-LEDGER_SELF_TEST = ROOT / "scripts" / "update_completion_ledger_self_test.py"
-UPDATE_LEDGER = ROOT / "scripts" / "update_completion_ledger.py"
 MERGE_FINDINGS = ROOT / "scripts" / "_vendor" / "full_repo_harness" / "merge_findings.py"
 MARKER_FREE_EVAL_SELF_TEST = ROOT / "evals" / "marker-free" / "self_test.py"
 SELF_TEST_CACHE_SCHEMA = 1
@@ -1668,7 +1666,6 @@ def main() -> int:
     if not which("git"):
         print("self-test requires git on PATH", file=sys.stderr)
         return 2
-    run([sys.executable, str(LEDGER_SELF_TEST)])
     run([sys.executable, str(MARKER_FREE_EVAL_SELF_TEST), "--quick"])
 
     invalid_timeout_env = os.environ.copy()
@@ -5054,77 +5051,6 @@ None.
         )
         lead_candidate["ledger_row"]["id"] = candidate["ledger_row"]["id"]
         write(projection_path, json.dumps(projection, indent=2, sort_keys=True))
-        import_path = semantic_output / "completion-ledger-database-import.json"
-        updater_common = [
-            "--repo",
-            str(semantic_repo),
-            "--manifest",
-            str(semantic_output / "manifest.json"),
-            "--reports",
-            str(semantic_output / "reports"),
-            "--projection",
-            str(projection_path),
-        ]
-        run(
-            [
-                sys.executable,
-                str(UPDATE_LEDGER),
-                "database-import",
-                *updater_common,
-                "--import-id",
-                "semantic-audit-import",
-                "--out",
-                str(import_path),
-            ]
-        )
-        database_import = json.loads(import_path.read_text(encoding="utf-8"))
-        check(
-            database_import["schema"] == "holyskills.completion-ledger-import.v1",
-            "audit exporter must emit the database import schema",
-        )
-        check(len(database_import["issues"]) == 1, "one confirmed semantic gap must emit one issue")
-        check(
-            database_import["issues"][0]["id"] == candidate["ledger_row"]["id"],
-            "confirmed semantic gap must preserve its reviewed database issue ID",
-        )
-        second_import = semantic_output / "completion-ledger-database-import-second.json"
-        run(
-            [
-                sys.executable,
-                str(UPDATE_LEDGER),
-                "database-import",
-                *updater_common,
-                "--import-id",
-                "semantic-audit-import",
-                "--out",
-                str(second_import),
-            ]
-        )
-        check(
-            import_path.read_bytes() == second_import.read_bytes(),
-            "re-exporting unchanged reviewed evidence must be deterministic",
-        )
-        original_semantic_source = semantic_source.read_text(encoding="utf-8")
-        write(semantic_source, original_semantic_source + "# concurrent change\n")
-        stale_import_result = run(
-            [
-                sys.executable,
-                str(UPDATE_LEDGER),
-                "database-import",
-                *updater_common,
-                "--import-id",
-                "stale-semantic-audit-import",
-                "--out",
-                str(semantic_output / "stale-database-import.json"),
-            ],
-            expect=1,
-        )
-        check_output(
-            stale_import_result,
-            "manifest source changed after pass-only audit verification",
-            "src/calculate.py",
-        )
-        write(semantic_source, original_semantic_source)
 
         set_scenario("fallback ledger and optional scope modes")
         run([sys.executable, str(BUILD), "--repo", str(fixture), "--out", str(fallback_output), "--batch-size", "200"])

@@ -21,7 +21,6 @@ HARNESS = ROOT / "full_repo_harness"
 PYCACHE_ROOT = Path(tempfile.mkdtemp(prefix="holyskills-validation-pycache-"))
 atexit.register(shutil.rmtree, PYCACHE_ROOT, True)
 SKILL_NAMES = (
-    "coordinate-product-delivery",
     "formal-web-ui-verification",
     "full-repo-audit",
     "full-repo-test-coverage-audit",
@@ -220,12 +219,6 @@ def main() -> int:
     run([sys.executable, "scripts/validate_self_test.py"])
     run([sys.executable, "scripts/check_app_wide_policy_self_test.py"])
     run([sys.executable, "scripts/check_app_wide_policy.py"])
-    run([sys.executable, "scripts/check_decision_history_self_test.py"])
-    run([sys.executable, "scripts/check_decision_history.py"])
-    run([sys.executable, "scripts/check_completion_ledger_self_test.py"])
-    run([sys.executable, "scripts/check_completion_ledger.py"])
-    run([sys.executable, "scripts/check_completion_ledger_instructions_self_test.py"])
-    run([sys.executable, "scripts/check_completion_ledger_instructions.py"])
     run([sys.executable, "scripts/check_user_issue_ledgers_self_test.py"])
     run([sys.executable, "scripts/check_user_issue_ledgers.py"])
     run([sys.executable, "scripts/check_repository_freshness_self_test.py"])
@@ -262,7 +255,7 @@ def main() -> int:
         print_failure_summary()
         return 1
 
-    print("validation ok (6 canonical skills; standalone matrix passed)")
+    print(f"validation ok ({len(SKILL_NAMES)} canonical skills; standalone matrix passed)")
     return 0
 
 

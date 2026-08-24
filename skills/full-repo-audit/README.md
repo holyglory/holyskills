@@ -162,26 +162,11 @@ candidate is disposed, set top-level `review_status` to `complete`, including
 for a clean empty projection.
 
 When ledger mutation is authorized by an explicit user request or applicable
-project instruction, export and apply only the reviewed database import. Resolve
-`PRODUCT_DELIVERY_SKILL_DIR` from the loaded `coordinate-product-delivery`
-skill before applying:
-
-```bash
-python3 scripts/update_completion_ledger.py database-import \
-  --repo /path/to/repo \
-  --manifest /tmp/full-repo-audit-run/manifest.json \
-  --reports /tmp/full-repo-audit-run/reports \
-  --projection /tmp/full-repo-audit-run/completion_ledger_projection.json \
-  --import-id full-repo-audit:RUN_ID \
-  --out /tmp/full-repo-audit-run/completion-ledger-database-import.json
-
-python3 "$PRODUCT_DELIVERY_SKILL_DIR/scripts/delivery_state.py" \
-  --project /path/to/repo issue-import \
-  --input /tmp/full-repo-audit-run/completion-ledger-database-import.json \
-  --actor full-repo-audit:RUN_ID
-```
-
-When working from a repository that vendors this skill under `skills/full-repo-audit`, replace `scripts/...` above with `skills/full-repo-audit/scripts/...`.
+project instruction, record each confirmed projection issue in
+DevCoordinator2's completion ledger with `task_create` (plain-language
+outcome and impact; paths and the projection's stable issue ID in
+`technical_note`; kind `stub` or `improvement`; sized in estimated lines of
+code), updating an existing task when its stable ID is already recorded.
 
 Useful builder options:
 
