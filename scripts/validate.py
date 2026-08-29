@@ -37,13 +37,20 @@ HARNESS_SKILL_NAMES = (
 FAILURES: list[str] = []
 
 
-def run(args: list[str], *, cwd: Path = ROOT) -> bool:
+def run(
+    args: list[str],
+    *,
+    cwd: Path = ROOT,
+    extra_env: dict[str, str] | None = None,
+) -> bool:
     """Run one command, retain its failure, and let the validation pass continue."""
 
     rendered = shlex.join(args)
     print("+", rendered, flush=True)
     environment = dict(os.environ)
     environment["PYTHONPYCACHEPREFIX"] = str(PYCACHE_ROOT)
+    if extra_env:
+        environment.update(extra_env)
     completed = subprocess.run(args, cwd=cwd, env=environment, check=False)
     if completed.returncode != 0:
         FAILURES.append(f"command exited {completed.returncode}: {rendered}")
@@ -133,7 +140,21 @@ def check_standalone_skill(skill: Path) -> None:
             )
         copied = temporary / skill.name
         shutil.copytree(skill, copied)
-        run([sys.executable, str(copied / "scripts" / "self_test.py")])
+        extra_env = None
+        if skill.name == "formal-web-ui-verification":
+            playwright_modules = ROOT / "ci" / "playwright" / "node_modules"
+            if not (playwright_modules / "playwright" / "package.json").is_file():
+                raise RuntimeError(
+                    "standalone formal UI validation requires the locked Playwright dependency; "
+                    "run `npm ci --ignore-scripts --prefix ci/playwright`"
+                )
+            extra_env = {
+                "FORMAL_WEB_UI_PLAYWRIGHT_NODE_MODULES": str(playwright_modules.resolve()),
+            }
+        run(
+            [sys.executable, str(copied / "scripts" / "self_test.py")],
+            extra_env=extra_env,
+        )
     finally:
         shutil.rmtree(temporary, ignore_errors=True)
 
@@ -213,6 +234,47 @@ def check_interaction_label_parity() -> None:
                 )
 
 
+def check_changed_visual_review_parity() -> None:
+    required = {
+        ROOT / "skills" / "formal-web-ui-verification" / "SKILL.md": (
+            "review-queue.json",
+            "formal_web_ui_review.py",
+            "secondary-workflow-precedes-primary",
+            "declared-theme-contradiction",
+        ),
+        ROOT / "skills" / "user-journey-docs-audit" / "SKILL.md": (
+            "Formal Web UI verification handoff",
+            "continuation anchor",
+            "changed visual review",
+        ),
+        ROOT / "skills" / "ui-implementation-audit" / "SKILL.md": (
+            "Changed Visual Review",
+            "not reopened — carried unchanged",
+            "manual-review",
+        ),
+        ROOT / "skills" / "full-repo-audit" / "SKILL.md": (
+            "Changed Visual Review",
+            "formal_web_ui_review.py",
+            "manual-review",
+        ),
+        HARNESS / "evidence.py": (
+            '"review-queue"',
+            '"manual-review"',
+            "formal-web-ui-manual-review",
+        ),
+        HARNESS / "queue.py": (
+            "Changed Visual Review",
+            "review-queue.json",
+            "formal_web_ui_review.py",
+        ),
+    }
+    for path, tokens in required.items():
+        text = path.read_text(encoding="utf-8")
+        missing = [token for token in tokens if token not in text]
+        if missing:
+            raise SystemExit(f"Changed visual-review contract drift in {path}: missing={missing}")
+
+
 def main() -> int:
     FAILURES.clear()
     attempt("repository layout", check_repository_layout)
@@ -229,6 +291,7 @@ def main() -> int:
     run([sys.executable, "scripts/sync_vendored_harness.py", "--check"])
     attempt("vendored harness sync", check_vendor_sync)
     attempt("interaction label parity", check_interaction_label_parity)
+    attempt("changed visual-review parity", check_changed_visual_review_parity)
     attempt("include-glob exclusions", check_include_glob_exclusions)
     run([sys.executable, "scripts/self_test_manage_skill_links.py"])
     run([sys.executable, "scripts/manage_global_policy_self_test.py"])

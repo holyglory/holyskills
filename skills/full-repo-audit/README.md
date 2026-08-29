@@ -22,7 +22,9 @@ Use this skill when you want a repository-wide audit that checks:
   paths, permissions, and tests that should exist.
 - UI controls, messages, routes, forms, menu items, and visible copy that imply missing or incorrect behavior.
 - User journeys through the UI, including multi-journey relevance, route priority, decision-making information, information hierarchy, compact desktop/native/mobile fit, UI assumption status, rare/detail/debug content risk, readability, and test-mode availability.
-- Visual journey testability when the repo has a rendered UI or visual tooling.
+- Visual journey testability when the repo has a rendered UI or visual tooling,
+  including primary-journey hierarchy, activation continuation, theme/palette
+  evidence, and changed-input-only screenshot review after automatic checks.
 - TODO, stub, placeholder, console-only, mocked-as-real, dead-ended, or partially implemented behavior.
 - Semantic gaps without markers: hard-coded substitutes for calculations,
   ignored inputs/configuration, fake success, incomplete plumbing, memory-only
@@ -69,7 +71,9 @@ The harness creates an audit output directory containing:
 - `lead_reconciliation.md`: required lead prompt for cross-file contract traces,
   atomic findings, and open questions.
 - `effort_ledger.json`: lead-recorded worker/effort/fallback ledger.
-- `visual_evidence.json`: hashes and metadata for real screenshots/native captures and formal-verifier JSON.
+- `visual_evidence.json`: hashes and metadata for real screenshot pairs/native
+  captures, formal-verifier JSON, changed-review queue, and manual-review
+  manifest.
 - `excluded_files.json`: skipped files and scope-warning reasons.
 - `reports/`: required returned worker reports plus verified
   `lead_reconciliation.md`.
@@ -200,7 +204,9 @@ Do not treat queue generation as audit completion. A run is complete only after:
 3. Required journey reports exist when interface-relevant files are queued.
 4. `effort_ledger.json` records completed lead, worker, journey, and fallback status.
 5. Every high-risk manifest file has a direct lead-review row.
-6. Applicable visual reports bind real `evidence:<id>` artifacts.
+6. Applicable visual reports bind real `evidence:<id>` artifacts; web UI binds
+   the formal report, initial/full-page pairs, changed-review queue, and
+   finalized decisions, with carried unchanged images explicitly not reopened.
 7. `reports/lead_reconciliation.md` supplies the manifest-declared, verified
    cross-file trace and atomic lead findings.
 8. A passing stable verifier run writes `verification_receipt.json`; manifest-mode consolidation consumes its exact report hashes.

@@ -32,6 +32,19 @@ INTERACTION_TERMS = (
     "icon meaning",
     "passive metadata",
 )
+FORMAL_WEB_HANDOFF_TERMS = (
+    "primary journey",
+    "usage percentage",
+    "risk if broken",
+    "initial viewport",
+    "continuation anchor",
+    "theme intent",
+    "review inputs",
+    "initial-viewport screenshot",
+    "full-page screenshot",
+    "changed visual review",
+)
+FORMAL_WEB_NOT_APPLICABLE = "formal web ui verification handoff not applicable: no web ui surfaces documented."
 
 
 def sections(text: str) -> tuple[list[str], dict[str, str]]:
@@ -85,6 +98,11 @@ def verify(text: str) -> list[str]:
         missing_interaction = [term for term in INTERACTION_TERMS if term not in interaction]
         if missing_interaction:
             issues.append(f"Interaction Affordance And Metadata Gaps omits required checks: {missing_interaction}")
+    normalized_report = text.lower()
+    if FORMAL_WEB_NOT_APPLICABLE not in normalized_report:
+        missing_handoff = [term for term in FORMAL_WEB_HANDOFF_TERMS if term not in normalized_report]
+        if missing_handoff:
+            issues.append(f"report omits formal Web UI verification handoff checks: {missing_handoff}")
     return issues
 
 

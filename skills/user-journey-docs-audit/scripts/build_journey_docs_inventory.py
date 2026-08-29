@@ -158,6 +158,43 @@ UI_HANDOFF_CONSTRAINT_TERMS = {
     "viewport measurement",
     "visual audit",
 }
+FORMAL_PRIORITY_TERMS = {
+    "primary journey",
+    "usage percentage",
+    "frequency percent",
+    "priority override reason",
+    "risk if broken",
+}
+FORMAL_HIERARCHY_TERMS = {
+    "initial viewport",
+    "primary-content",
+    "workflow-surface",
+    "blocking-alert",
+    "supporting region",
+}
+FORMAL_CONTINUATION_TERMS = {
+    "continuation anchor",
+    "focus enters",
+    "document scroll",
+    "expected destination route",
+    "without scrolling",
+}
+FORMAL_THEME_TERMS = {
+    "theme intent",
+    "light, dark, or mixed",
+    "declared theme",
+}
+FORMAL_REVIEW_INPUT_TERMS = {
+    "review inputs",
+    "ui code, styles, tokens, fonts, and assets",
+    "implementation-input ownership",
+    "changed visual review",
+}
+FORMAL_SCREENSHOT_TERMS = {
+    "initial-viewport screenshot",
+    "full-page screenshot",
+    "screenshot pair",
+}
 FEATURE_TERMS = {
     "capability",
     "capabilities",
@@ -759,6 +796,15 @@ def build_inventory(repo: Path) -> dict:
     has_ui_element_inventory = any(has_any_term(text, UI_ELEMENT_TERMS) for text in doc_texts)
     has_implementation_expectations = any(has_any_term(text, IMPLEMENTATION_EXPECTATION_TERMS) for text in doc_texts)
     has_test_expectations = any(has_any_term(text, TEST_EXPECTATION_TERMS) for text in doc_texts)
+    formal_handoff_parts = {
+        "priority": any(has_any_term(text, FORMAL_PRIORITY_TERMS) for text in doc_texts),
+        "hierarchy": any(has_any_term(text, FORMAL_HIERARCHY_TERMS) for text in doc_texts),
+        "continuation": any(has_any_term(text, FORMAL_CONTINUATION_TERMS) for text in doc_texts),
+        "theme": any(has_any_term(text, FORMAL_THEME_TERMS) for text in doc_texts),
+        "review_inputs": any(has_any_term(text, FORMAL_REVIEW_INPUT_TERMS) for text in doc_texts),
+        "screenshots": any(has_any_term(text, FORMAL_SCREENSHOT_TERMS) for text in doc_texts),
+    }
+    has_formal_verification_handoff = all(formal_handoff_parts.values())
     if docs and not has_feature_inventory:
         missing_signals.append("No complete feature inventory documentation detected.")
     if docs and not has_ui_element_inventory:
@@ -824,10 +870,18 @@ def build_inventory(repo: Path) -> dict:
         ui_implementation_risk_signals.append(
             "Source hints expose UI surfaces, but docs do not provide a journey decision model; source hints must not substitute for product truth."
         )
+    if docs and not has_formal_verification_handoff:
+        missing_parts = sorted(name for name, present in formal_handoff_parts.items() if not present)
+        missing_signals.append("No complete formal Web UI verification handoff documentation detected.")
+        ui_implementation_risk_signals.append(
+            "Docs do not completely define primary journey frequency/risk, initial-viewport region roles, visible/focused continuation, light/dark/mixed theme intent, implementation review-input ownership, and initial/full-page changed-review evidence. "
+            f"Missing handoff parts: {', '.join(missing_parts)}."
+        )
     ui_audit_handoff_ready = bool(
         decision_model_doc_count
         and information_relevance_doc_count
         and ui_handoff_constraint_doc_count
+        and has_formal_verification_handoff
         and not prescriptive_ui_risk_doc_count
         and (not has_interaction_surface_terms or (has_interaction_access_terms and has_transient_disclosure_terms))
         and (not has_navigation_surface_terms or has_navigation_affordance_terms)
@@ -848,6 +902,8 @@ def build_inventory(repo: Path) -> dict:
         "has_ui_element_inventory": has_ui_element_inventory,
         "has_implementation_expectations": has_implementation_expectations,
         "has_test_expectations": has_test_expectations,
+        "has_formal_verification_handoff": has_formal_verification_handoff,
+        "formal_verification_handoff_parts": formal_handoff_parts,
         "has_interaction_access_model": bool(
             (not has_interaction_surface_terms or (has_interaction_access_terms and has_transient_disclosure_terms))
             and (not has_navigation_surface_terms or has_navigation_affordance_terms)

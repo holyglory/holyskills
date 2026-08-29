@@ -28,6 +28,10 @@ Use this reference when judging whether docs are strong enough to support an eas
 - Which message metadata is decision-relevant versus passive: sender labels, routing labels, timestamps, copy controls, concise tool/runtime status, raw execution details, and whether metadata should be selectable.
 - Which states must exist: loading, empty, error, success, partial success, denied, offline, retry, undo, and recovery.
 - Which constraints apply: mobile, accessibility, latency, permissions, security, data loss, stress, expertise, and localization.
+- For each web route/state, which journey is primary, its usage estimate and
+  risk, which semantic regions may precede it, how activation continues without
+  a viewport hunt, the intended light/dark/mixed theme, which implementation
+  inputs own visual change, and which initial/full-page evidence needs review.
 
 ## Signs Of Excellent Journey Docs
 
@@ -62,6 +66,10 @@ Use this reference when judging whether docs are strong enough to support an eas
 - Requirements that only say "compact", "dense", or "no horizontal overflow" miss the more important question: what decision must the user make in that context?
 - Overexposed configuration is a documentation risk when docs do not say which controls are frequent, occasional, rare, admin-only, or conditional.
 - A UI implementation audit needs handoff constraints: primary goal, primary decision, required facts, action frequency, importance class, lower-importance access expectations, states to verify, and evidence expectations.
+- A formal verifier cannot infer product priority from source or DOM order.
+  Without primary-journey frequency/risk, initial-viewport region roles,
+  continuation, theme, review-input ownership, and changed-review evidence, a
+  geometry pass can certify the wrong page hierarchy.
 - Handoff docs can accidentally create wrong UI when "required visible evidence" or "must show" lists include secondary/detail/debug facts without separating default decision state from hover/focus hints and click/drill-down detail access.
 - Icon-only expansion, badge-only detail, and popover-only information can create wrong UI when docs do not define the intended target size, row activation, keyboard path, hover/focus feedback, and relationship to nearby scrollbars.
 - Message metadata becomes visual noise when docs do not explain whether sender/authorship labels, routing labels, timestamps, and execution metadata are decision-driving content or passive context.

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import ssl
@@ -18,6 +19,7 @@ from socketserver import TCPServer
 
 ROOT = Path(__file__).resolve().parents[1]
 VERIFY = ROOT / "scripts" / "formal_web_ui_verify.mjs"
+REVIEW = ROOT / "scripts" / "formal_web_ui_review.py"
 TIMEOUT_SECONDS = int(os.environ.get("FORMAL_WEB_UI_SELF_TEST_TIMEOUT", "45"))
 KEEP_TEMP = os.environ.get("FORMAL_WEB_UI_SELF_TEST_KEEP_TEMP", "").lower() in {"1", "true", "yes", "on"}
 
@@ -41,7 +43,7 @@ def page(body: str, css: str = "") -> str:
   </style>
 </head>
 <body>
-  <main>
+  <main data-ui-continuation-anchor>
     {body}
   </main>
 </body>
@@ -117,6 +119,40 @@ class CleanPageHandler(_FixedPageHandler):
         return page("<h1>Secure</h1><p>Served over self-signed TLS.</p><button>Save changes</button>")
 
 
+class RedirectToSignInHandler(BaseHTTPRequestHandler):
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def do_GET(self) -> None:
+        if self.path == "/dashboard":
+            self.send_response(302)
+            self.send_header("Location", "/sign-in")
+            self.end_headers()
+            return
+        data = page("<h1>Sign in</h1><form><input placeholder='Email address'></form>").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+class SourceBindingHandler(BaseHTTPRequestHandler):
+    revision = "deployed-revision"
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def do_GET(self) -> None:
+        data = page("<h1>Bound deployment</h1><p>Current page content.</p>").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("X-UI-Source-Revision", self.revision)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
 class DynamicServer:
     def __init__(self, handler: type[BaseHTTPRequestHandler]) -> None:
         self.httpd = FastBindThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -163,11 +199,59 @@ def node_binary() -> str:
     return os.environ.get("FORMAL_WEB_UI_NODE") or shutil.which("node") or "node"
 
 
+def playwright_module_dir() -> Path:
+    """Resolve the verifier dependency independently of the audited cwd."""
+
+    candidates: list[Path] = []
+    explicit = os.environ.get("FORMAL_WEB_UI_PLAYWRIGHT_NODE_MODULES")
+    if explicit:
+        candidates.append(Path(explicit).expanduser())
+    # Installed skills are direct links to <repo>/skills/<skill>. Resolve the
+    # repository's locked dependency from the canonical script path.
+    candidates.append(ROOT.parents[1] / "ci" / "playwright" / "node_modules")
+    for item in os.environ.get("NODE_PATH", "").split(os.pathsep):
+        if item.strip():
+            candidates.append(Path(item.strip()).expanduser())
+    candidates.append(
+        Path.home()
+        / ".cache"
+        / "codex-runtimes"
+        / "codex-primary-runtime"
+        / "dependencies"
+        / "node"
+        / "node_modules"
+    )
+    checked: list[str] = []
+    for candidate in candidates:
+        resolved = candidate.resolve(strict=False)
+        if str(resolved) in checked:
+            continue
+        checked.append(str(resolved))
+        if (resolved / "playwright" / "package.json").is_file():
+            return resolved
+    raise AssertionError(
+        "Playwright is unavailable for the formal UI self-test. Install the "
+        f"locked dependency with `npm ci --ignore-scripts --prefix {ROOT.parents[1] / 'ci' / 'playwright'}` "
+        "or set FORMAL_WEB_UI_PLAYWRIGHT_NODE_MODULES to a node_modules directory containing Playwright. "
+        f"Checked: {checked}"
+    )
+
+
+def verifier_command(*args: str) -> list[str]:
+    return [
+        node_binary(),
+        str(VERIFY),
+        "--playwright-module-dir",
+        str(playwright_module_dir()),
+        *args,
+    ]
+
+
 def verifier_env() -> dict[str, str]:
     env = os.environ.copy()
-    bundled_node_modules = Path.home() / ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules"
-    if bundled_node_modules.is_dir():
-        env["NODE_PATH"] = str(bundled_node_modules) + (os.pathsep + env["NODE_PATH"] if env.get("NODE_PATH") else "")
+    # The command carries an explicit module directory. Leaving NODE_PATH in
+    # the child would hide regressions back to cwd/environment-only discovery.
+    env.pop("NODE_PATH", None)
     return env
 
 
@@ -214,16 +298,63 @@ def assert_complete_artifacts(json_out: Path, markdown_out: Path, *, expect: int
     if report.get("runId") is None or (expect == 2 and report.get("status") != "setup-failure"):
         raise AssertionError(f"JSON artifact is not the complete expected report: {json_out}")
     if expect == 2:
-        if not report.get("error", {}).get("message") or "## Diagnostic" not in markdown:
+        if (
+            not report.get("error", {}).get("message")
+            or not report.get("startedAt")
+            or not report.get("endedAt")
+            or len(report.get("evidence", {}).get("verifier", {}).get("sha256", "")) != 64
+            or "## Diagnostic" not in markdown
+        ):
             raise AssertionError(f"Setup-failure artifacts omitted diagnostic evidence: {json_out}")
     elif (
-        not isinstance(report.get("pages"), list)
+        report.get("schemaVersion") != 2
+        or not isinstance(report.get("pages"), list)
         or not isinstance(report.get("findings"), list)
         or not isinstance(report.get("coverage"), dict)
+        or not report.get("startedAt")
+        or not report.get("endedAt")
+        or len(report.get("evidence", {}).get("verifier", {}).get("sha256", "")) != 64
+        or len(report.get("evidence", {}).get("config", {}).get("sha256", "")) != 64
+        or report.get("plan", {}).get("widthCoverage") != "sampled-only"
+        or not isinstance(report.get("review"), dict)
+        or len(report.get("review", {}).get("queueSha256", "")) != 64
+        or len(report.get("coverage", {}).get("cells", [])) != len(report.get("pages", []))
+        or any(
+            "requestedPath" not in page_report
+            or "finalPath" not in page_report
+            or not isinstance(page_report.get("sourceBinding"), dict)
+            or not page_report.get("startedAt")
+            or not page_report.get("endedAt")
+            for page_report in report.get("pages", [])
+        )
         or "## Target Coverage" not in markdown
+        or "## Changed Visual Review" not in markdown
         or "## Findings" not in markdown
     ):
         raise AssertionError(f"Verification artifacts omitted full report evidence: {json_out}")
+    if expect != 2:
+        queue_path = Path(report["review"]["queuePath"])
+        if not queue_path.is_file() or hashlib.sha256(queue_path.read_bytes()).hexdigest() != report["review"]["queueSha256"]:
+            raise AssertionError(f"Review queue is missing or not hash-bound: {queue_path}")
+        queue = json.loads(queue_path.read_text(encoding="utf-8"))
+        if queue.get("kind") != "formal-web-ui-review-queue" or queue.get("runId") != report.get("runId"):
+            raise AssertionError(f"Review queue does not belong to the report: {queue_path}")
+        for page_report in report.get("pages", []):
+            if page_report.get("outcome") != "checked":
+                continue
+            screenshots = page_report.get("screenshots", {})
+            for key in ("viewport", "fullPage"):
+                evidence = screenshots.get(key)
+                if not isinstance(evidence, dict):
+                    raise AssertionError(f"Checked page omitted {key} screenshot evidence")
+                screenshot_path = Path(evidence.get("path", ""))
+                if (
+                    not screenshot_path.is_file()
+                    or evidence.get("mime") != "image/png"
+                    or len(evidence.get("sha256", "")) != 64
+                    or hashlib.sha256(screenshot_path.read_bytes()).hexdigest() != evidence.get("sha256")
+                ):
+                    raise AssertionError(f"Invalid {key} screenshot evidence: {evidence}")
     return report
 
 
@@ -256,37 +387,96 @@ def run_verifier_command(
     return assert_complete_artifacts(json_out, markdown_out, expect=expect)
 
 
+def default_target_contract() -> dict:
+    return {
+        "journeys": [
+            {
+                "id": "fixture-primary",
+                "name": "Exercise the fixture",
+                "frequencyPercent": 100,
+                "risk": "normal",
+                "rationale": "Self-test target",
+            }
+        ],
+        "primaryJourney": "fixture-primary",
+        "regions": [
+            {
+                "selector": "main",
+                "role": "primary-content",
+                "journey": "fixture-primary",
+                "name": "Fixture content",
+            }
+        ],
+        "theme": "light",
+        "reviewInputs": [
+            {"path": "SKILL.md", "kind": "ui-code"}
+        ],
+    }
+
+
+def with_target_contract(config: dict) -> dict:
+    prepared = json.loads(json.dumps(config))
+    prepared.setdefault("repoRoot", str(ROOT.resolve()))
+    defaults = default_target_contract()
+    target_defaults = prepared.setdefault("targetDefaults", {})
+    if isinstance(target_defaults, dict):
+        for key, value in defaults.items():
+            target_defaults.setdefault(key, value)
+    targets = prepared.get("targets")
+    if isinstance(targets, list):
+        normalized_targets: list[dict | str] = []
+        for target in targets:
+            if not isinstance(target, dict):
+                normalized_targets.append(target)
+                continue
+            for key, value in defaults.items():
+                target.setdefault(key, value)
+            for state in target.get("states", []):
+                if not isinstance(state, dict) or "continuation" in state:
+                    continue
+                actions = state.get("actions", [])
+                if any(
+                    isinstance(action, dict)
+                    and action.get("action") in {"click", "press", "check", "uncheck", "selectOption"}
+                    for action in actions
+                ):
+                    state["continuation"] = {
+                        "kind": "in-page",
+                        "anchor": "main",
+                        "focusWithin": "main",
+                    }
+            normalized_targets.append(target)
+        prepared["targets"] = normalized_targets
+    return prepared
+
+
 def run_verify(url: str, out: Path, *, expect: int, extra: list[str] | None = None) -> dict:
-    json_out = out / "report.json"
-    md_out = out / "report.md"
-    cmd = [
-        node_binary(),
-        str(VERIFY),
-        "--url",
-        url,
-        "--viewport",
-        "mobile=390x844",
-        "--json-out",
-        str(json_out),
-        "--markdown-out",
-        str(md_out),
-        "--fail-on",
-        "critical",
-    ]
-    if extra:
-        cmd.extend(extra)
-    return run_verifier_command(cmd, json_out, md_out, expect=expect)
+    return run_verify_config(
+        {
+            "targets": [{"url": url}],
+            "viewports": [{"name": "mobile", "width": 390, "height": 844}],
+        },
+        out,
+        expect=expect,
+        extra=extra,
+    )
 
 
-def run_verify_config(config: dict, out: Path, *, expect: int) -> dict:
+def run_verify_config(
+    config: dict,
+    out: Path,
+    *,
+    expect: int,
+    extra: list[str] | None = None,
+    apply_contract_defaults: bool = True,
+) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     json_out = out / "report.json"
     md_out = out / "report.md"
     config_path = out / "formal-web-ui.json"
-    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
-    cmd = [
-        node_binary(),
-        str(VERIFY),
+    effective = with_target_contract(config) if apply_contract_defaults else config
+    config_path.write_text(json.dumps(effective, ensure_ascii=False, indent=2), encoding="utf-8")
+    cmd = verifier_command(
         "--config",
         str(config_path),
         "--json-out",
@@ -295,8 +485,28 @@ def run_verify_config(config: dict, out: Path, *, expect: int) -> dict:
         str(md_out),
         "--fail-on",
         "critical",
-    ]
+    )
+    if extra:
+        cmd.extend(extra)
     return run_verifier_command(cmd, json_out, md_out, expect=expect)
+
+
+def run_review(args: list[str], *, expect: int) -> dict:
+    result = subprocess.run(
+        [sys.executable, str(REVIEW), *args],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=TIMEOUT_SECONDS,
+    )
+    if result.returncode != expect or result.stderr.strip():
+        raise AssertionError(
+            f"Expected review exit {expect}, got {result.returncode}: {result.stdout} {result.stderr}"
+        )
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(f"Review helper must emit one JSON receipt: {result.stdout}") from exc
 
 
 def finding_rules(report: dict) -> set[str]:
@@ -360,10 +570,32 @@ def main() -> int:
             or "human-only" not in skill_contract
             or "default" not in skill_contract
             or "bounded" not in skill_contract
+            or "control-text-clipped" not in skill_contract
+            or "data-ui-verify-min-content-inset" not in skill_contract
+            or "breakpointProfile" not in skill_contract
+            or "maxPageCount" not in skill_contract
+            or "sampled-only" not in skill_contract
+            or "sourceBinding" not in skill_contract
+            or "journey_review_contract.md" not in skill_contract
+            or "review-queue.json" not in skill_contract
+            or "formal_web_ui_review.py" not in skill_contract
+            or "secondary-workflow-precedes-primary" not in skill_contract
+            or "insufficient-text-contrast" not in skill_contract
+            or "declared-theme-contradiction" not in skill_contract
         ):
-            raise AssertionError("Skill contract must make artifact-first bounded output the software-owned default")
+            raise AssertionError("Skill contract omits required output, detector, breakpoint, or evidence behavior")
+        journey_reference = ROOT / "references" / "journey_review_contract.md"
+        if not journey_reference.is_file() or not all(
+            token in journey_reference.read_text(encoding="utf-8")
+            for token in ("primaryJourney", "continuation", "reviewInputs", "manual-review.json", "Screenshot SHA-256")
+        ):
+            raise AssertionError("Journey/theme/changed-review reference is missing or incomplete")
         fixtures = tmp / "site"
         write(fixtures / "clean.html", page("<h1>Dashboard</h1><p>Everything fits.</p><button>Save changes</button>"))
+        write(
+            fixtures / "source-binding-meta.html",
+            page("<meta name='ui-source-revision' content='meta-deployed-revision'><h1>Meta-bound deployment</h1>"),
+        )
         write(
             fixtures / "clipped-button.html",
             page("<button class='bad'>Save changes now</button>", ".bad { width: 42px; overflow: hidden; white-space: nowrap; }"),
@@ -663,6 +895,67 @@ def main() -> int:
                 ".f { width: 120px; }",
             ),
         )
+        write(
+            fixtures / "native-placeholder-clipped.html",
+            page(
+                "<label for='query'>Search</label>"
+                "<input id='query' class='narrow' placeholder='PRIVATE_PLACEHOLDER_MUST_NOT_LEAK'>",
+                ".narrow { width: 92px; padding: 5px 10px; font: 16px Arial, sans-serif; }",
+            ),
+        )
+        write(
+            fixtures / "native-select-clipped.html",
+            page(
+                "<label for='choice'>Choice</label>"
+                "<select id='choice' class='narrow'><option selected>PRIVATE_SELECTED_LABEL_MUST_NOT_LEAK</option></select>",
+                ".narrow { width: 112px; padding: 5px 10px; font: 16px Arial, sans-serif; }",
+            ),
+        )
+        write(
+            fixtures / "native-typed-scrollable.html",
+            page(
+                "<label for='typed'>Reference</label>"
+                "<input id='typed' class='narrow' value='PRIVATE_TYPED_VALUE_MUST_NOT_LEAK'>",
+                ".narrow { width: 92px; padding: 5px 10px; font: 16px Arial, sans-serif; }",
+            ),
+        )
+        write(
+            fixtures / "native-placeholder-allowed.html",
+            page(
+                "<input class='narrow' data-ui-allow-truncation='compact search prompt' "
+                "placeholder='PRIVATE_ALLOWED_PLACEHOLDER_MUST_NOT_LEAK'>",
+                ".narrow { width: 92px; padding: 5px 10px; font: 16px Arial, sans-serif; }",
+            ),
+        )
+        write(
+            fixtures / "content-inset-bad.html",
+            page(
+                "<section class='card' data-ui-verify-min-content-inset='12'><span>Items</span></section>",
+                ".card { width: 240px; border: 1px solid #aaa; }",
+            ),
+        )
+        write(
+            fixtures / "content-inset-clean.html",
+            page(
+                "<section class='card'><span>Items</span><button>Add item</button></section>",
+                ".card { width: 240px; padding: 16px; border: 1px solid #aaa; } .card button { display: block; margin-top: 8px; }",
+            ),
+        )
+        write(
+            fixtures / "content-inset-intentional-edges.html",
+            page(
+                "<fieldset><legend>Delivery</legend><label>Street <input></label></fieldset>"
+                "<div class='attached'><input aria-label='Quantity'><button>Apply</button></div>",
+                ".attached { display: flex; margin-top: 16px; } .attached input, .attached button { margin: 0; }",
+            ),
+        )
+        write(
+            fixtures / "breakpoint-edge.html",
+            page(
+                "<button class='bp'>Responsive navigation actions</button>",
+                "@media (max-width: 767px) { .bp { width: 38px; overflow: hidden; white-space: nowrap; } }",
+            ),
+        )
         # Scroll-container reachability: a wide table row scrolled out of its own
         # overflow-x container sits (in document coordinates) under a neighboring
         # panel. That is reachable content, not an occlusion — hit-testing must
@@ -722,7 +1015,173 @@ def main() -> int:
                 " .cover { position: absolute; left: 0; top: 0; width: 220px; height: 44px; background: #222; }",
             ),
         )
+        write(
+            fixtures / "accounts-form-first.html",
+            page(
+                """
+<section id="add-account" class="add-account">
+  <h2>Add account</h2>
+  <label>Name <input></label>
+  <button>Save account</button>
+</section>
+<section id="account-list" class="account-list">
+  <h1>Accounts</h1>
+  <article>Ada</article><article>Grace</article><article>Linus</article>
+</section>
+""",
+                ".add-account { min-height: 320px; padding: 24px; background: #eef2ff; }"
+                " .account-list { min-height: 420px; padding: 24px; }",
+            ),
+        )
+        write(
+            fixtures / "accounts-offscreen-add.html",
+            page(
+                """
+<h1>Accounts</h1>
+<button id="open-add">Add account</button>
+<section id="account-list" class="long-list">
+  <p>Ada</p><p>Grace</p><p>Linus</p><p>Margaret</p><p>Barbara</p>
+</section>
+<form id="add-form" hidden>
+  <h2>Add account</h2>
+  <label>Name <input id="account-name"></label>
+</form>
+<script>
+document.querySelector('#open-add').addEventListener('click', () => {
+  document.querySelector('#add-form').hidden = false;
+});
+</script>
+""",
+                ".long-list { min-height: 1450px; } #add-form { min-height: 260px; padding: 20px; background: #eef2ff; }",
+            ),
+        )
+        write(
+            fixtures / "accounts-modal-add.html",
+            page(
+                """
+<h1>Accounts</h1>
+<button id="open-add">Add account</button>
+<section id="account-list" class="long-list"><p>Ada</p><p>Grace</p><p>Linus</p></section>
+<div id="add-dialog" role="dialog" aria-modal="true" hidden>
+  <h2>Add account</h2>
+  <label>Name <input id="account-name"></label>
+  <button>Save</button>
+</div>
+<script>
+document.querySelector('#open-add').addEventListener('click', () => {
+  const dialog = document.querySelector('#add-dialog');
+  dialog.hidden = false;
+  document.querySelector('#account-name').focus();
+});
+</script>
+""",
+                ".long-list { min-height: 1400px; } #add-dialog { position: fixed; inset: 18% 12%; z-index: 20; padding: 24px; background: white; border: 2px solid #334155; }",
+            ),
+        )
+        write(
+            fixtures / "accounts-toolbar.html",
+            page(
+                """
+<div id="account-tools"><label>Search <input></label><button>Filter</button></div>
+<section id="account-list"><h1>Accounts</h1><article>Ada</article><article>Grace</article></section>
+""",
+                "#account-tools { min-height: 44px; display: flex; gap: 8px; } #account-list { min-height: 420px; }",
+            ),
+        )
+        write(
+            fixtures / "accounts-alert.html",
+            page(
+                """
+<div id="blocking-alert" role="alert">Account data is unavailable until the connection is restored.</div>
+<section id="account-list"><h1>Accounts</h1><p>Unavailable</p></section>
+""",
+                "#blocking-alert { padding: 18px; background: #fee2e2; color: #7f1d1d; } #account-list { min-height: 360px; }",
+            ),
+        )
+        write(
+            fixtures / "create-account.html",
+            page(
+                """
+<form id="create-form">
+  <h1>Add account</h1>
+  <label>Name <input id="account-name" autofocus></label>
+  <button>Save account</button>
+</form>
+""",
+                "#create-form { min-height: 420px; padding: 24px; }",
+            ),
+        )
+        write(
+            fixtures / "accounts-navigation.html",
+            page(
+                "<h1>Accounts</h1><a id='go-create' href='/create-account.html'>Add account</a><section id='account-list'><p>Ada</p></section>",
+                "#account-list { min-height: 420px; }",
+            ),
+        )
+        write(
+            fixtures / "theme-dark-with-bright-surface.html",
+            page(
+                "<section id='primary' class='bright'><h1>Dark workspace</h1><p>A bright sheet dominates this dark target.</p></section>",
+                "body { background: #0b1020; color: #e5e7eb; } .bright { min-height: 760px; background: #fff; color: #111; padding: 24px; }",
+            ),
+        )
+        write(
+            fixtures / "theme-light-with-dark-surface.html",
+            page(
+                "<section id='primary' class='dark'><h1>Light workspace</h1><p>A dark sheet dominates this light target.</p></section>",
+                ".dark { min-height: 760px; background: #111827; color: #fff; padding: 24px; }",
+            ),
+        )
+        write(
+            fixtures / "theme-mixed.html",
+            page(
+                "<section id='primary' class='mixed'><div class='light'><h1>Mixed canvas</h1></div><div class='dark'>Dark comparison surface</div></section>",
+                ".mixed { display: grid; grid-template-columns: 1fr 1fr; min-height: 760px; } .light { background: white; color: #111; padding: 24px; } .dark { background: #111827; color: white; padding: 24px; }",
+            ),
+        )
+        write(
+            fixtures / "contrast-aa-fail.html",
+            page("<section id='primary'><h1>Accounts</h1><p class='low'>Normal text below AA contrast.</p></section>", ".low { color: #888; background: #fff; } #primary { min-height: 360px; }"),
+        )
+        write(
+            fixtures / "contrast-large-pass.html",
+            page("<section id='primary'><h1>Accounts</h1><p class='large'>Large text passes its 3:1 threshold.</p></section>", ".large { color: #777; background: #fff; font-size: 24px; } #primary { min-height: 360px; }"),
+        )
+        write(
+            fixtures / "contrast-allowed.html",
+            page("<section id='primary'><h1>Accounts</h1><p data-ui-allow-contrast='inactive decorative watermark' class='low'>Watermark</p></section>", ".low { color: #aaa; background: #fff; } #primary { min-height: 360px; }"),
+        )
+        write(
+            fixtures / "palette-competing.html",
+            page(
+                "<section id='primary' class='palette'><div class='red'></div><div class='green'></div><div class='blue'></div><div class='purple'></div><h1>Palette lab</h1></section>",
+                ".palette { position: relative; display: grid; grid-template-columns: 1fr 1fr; min-height: 760px; }"
+                " .palette > div { min-height: 380px; } .red { background: #ef233c; } .green { background: #00a878; }"
+                " .blue { background: #0057ff; } .purple { background: #b517ff; }"
+                " .palette h1 { position: absolute; top: 12px; left: 12px; margin: 0; padding: 8px; color: white; background: #111; }",
+            ),
+        )
+        write(
+            fixtures / "dynamic-review.html",
+            page(
+                "<section id='primary'><h1>Dynamic review fixture</h1><p id='dynamic'></p></section><script>document.querySelector('#dynamic').textContent = String(Date.now());</script>",
+                "#primary { min-height: 420px; }",
+            ),
+        )
         server = Server(fixtures)
+        clean_contract_config = tmp / "clean-contract.json"
+        clean_contract_config.write_text(
+            json.dumps(
+                with_target_contract(
+                    {
+                        "targets": [{"url": f"{server.base_url}/clean.html"}],
+                        "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+                    }
+                ),
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         # The normal no-output-path invocation must create both complete
         # artifacts outside the audited working tree and print only a receipt.
@@ -733,14 +1192,10 @@ def main() -> int:
         default_env = verifier_env()
         default_env["TMPDIR"] = str(default_root)
         automatic = subprocess.run(
-            [
-                node_binary(),
-                str(VERIFY),
-                "--url",
-                f"{server.base_url}/clean.html",
-                "--viewport",
-                "desktop=1280x800",
-            ],
+            verifier_command(
+                "--config",
+                str(clean_contract_config),
+            ),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -780,19 +1235,15 @@ def main() -> int:
         alias_json = alias_dir / "report.json"
         alias_markdown = alias_dir / "report.md"
         alias_report = run_verifier_command(
-            [
-                node_binary(),
-                str(VERIFY),
-                "--url",
-                f"{server.base_url}/clean.html",
-                "--viewport",
-                "desktop=1280x800",
+            verifier_command(
+                "--config",
+                str(clean_contract_config),
                 "--json-out",
                 str(alias_json),
                 "--markdown-out",
                 str(alias_markdown),
                 "--receipt-only",
-            ],
+            ),
             alias_json,
             alias_markdown,
             expect=0,
@@ -819,19 +1270,15 @@ def main() -> int:
         human_json = human_dir / "report.json"
         human_markdown = human_dir / "report.md"
         human = subprocess.run(
-            [
-                node_binary(),
-                str(VERIFY),
-                "--url",
-                f"{server.base_url}/clean.html",
-                "--viewport",
-                "desktop=1280x800",
+            verifier_command(
+                "--config",
+                str(clean_contract_config),
                 "--json-out",
                 str(human_json),
                 "--markdown-out",
                 str(human_markdown),
                 "--human-readable-stdout",
-            ],
+            ),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -848,9 +1295,7 @@ def main() -> int:
         setup_json = setup_dir / "report.json"
         setup_markdown = setup_dir / "report.md"
         setup_report = run_verifier_command(
-            [
-                node_binary(),
-                str(VERIFY),
+            verifier_command(
                 "--url",
                 f"{server.base_url}/clean.html",
                 "--json-out",
@@ -859,7 +1304,7 @@ def main() -> int:
                 str(setup_markdown),
                 "--fail-on",
                 "not-a-severity",
-            ],
+            ),
             setup_json,
             setup_markdown,
             expect=2,
@@ -881,7 +1326,7 @@ def main() -> int:
         # Even a parse failure with no caller paths gets a machine-readable
         # failure artifact in the software-owned external directory.
         no_path_failure = subprocess.run(
-            [node_binary(), str(VERIFY), "--unknown-option"],
+            verifier_command("--unknown-option"),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -908,6 +1353,115 @@ def main() -> int:
         non_html = run_verify(f"{server.base_url}/plain.txt", tmp / "non-html", expect=3)
         if not non_html.get("coverage", {}).get("failed"):
             raise AssertionError("Non-HTML explicit target should record a coverage failure")
+
+        redirect_server = DynamicServer(RedirectToSignInHandler).start()
+        try:
+            redirected = run_verify(
+                f"{redirect_server.base_url}/dashboard",
+                tmp / "redirected-to-sign-in",
+                expect=3,
+            )
+            redirected_page = redirected.get("pages", [{}])[0]
+            if (
+                redirected_page.get("outcome") != "route_mismatch"
+                or redirected_page.get("requestedPath") != "/dashboard"
+                or redirected_page.get("finalPath") != "/sign-in"
+                or redirected.get("coverage", {}).get("checkedPages") != 0
+            ):
+                raise AssertionError(f"Sign-in redirect counted as checked coverage: {redirected_page}")
+        finally:
+            redirect_server.close()
+
+        binding_server = DynamicServer(SourceBindingHandler).start()
+        try:
+            binding_config = {
+                "targets": [{
+                    "url": f"{binding_server.base_url}/bound",
+                    "sourceBinding": {"expected": SourceBindingHandler.revision},
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+                "maxPageCount": 1,
+            }
+            binding_match = run_verify_config(
+                binding_config,
+                tmp / "source-binding-match",
+                expect=0,
+            )
+            binding_page = binding_match.get("pages", [{}])[0]
+            if binding_page.get("sourceBinding", {}).get("status") != "matched":
+                raise AssertionError(f"Matching deployment/source binding was not recorded: {binding_page}")
+            if binding_page.get("requestedPath") != "/bound" or binding_page.get("finalPath") != "/bound":
+                raise AssertionError("Matching page omitted requested/final path evidence")
+
+            binding_repeat = run_verify_config(
+                binding_config,
+                tmp / "source-binding-match-repeat",
+                expect=0,
+            )
+            evidence = binding_match.get("evidence", {})
+            verifier_hash = evidence.get("verifier", {}).get("sha256", "")
+            config_hash = evidence.get("config", {}).get("sha256", "")
+            expected_verifier_hash = hashlib.sha256(VERIFY.read_bytes()).hexdigest()
+            if verifier_hash != expected_verifier_hash or len(config_hash) != 64:
+                raise AssertionError(f"Verifier/config hashes are incomplete: {evidence}")
+            if config_hash != binding_repeat.get("evidence", {}).get("config", {}).get("sha256"):
+                raise AssertionError("Equivalent effective configs did not produce a stable hash")
+            if not binding_match.get("startedAt") or not binding_match.get("endedAt"):
+                raise AssertionError("Run start/end times are missing")
+            if binding_match.get("durationMs", -1) < 0 or binding_page.get("durationMs", -1) < 0:
+                raise AssertionError("Run/cell durations must be non-negative")
+            if binding_match.get("plan", {}).get("widthCoverage") != "sampled-only":
+                raise AssertionError("Plan omitted sampled-only width coverage")
+            binding_markdown = (tmp / "source-binding-match" / "report.md").read_text(encoding="utf-8")
+            if "## Evidence Identity" not in binding_markdown or "Requested path" not in binding_markdown:
+                raise AssertionError("Markdown report omitted evidence identity or exact path cells")
+
+            stale_config = {
+                **binding_config,
+                "targets": [{
+                    "url": f"{binding_server.base_url}/bound",
+                    "sourceBinding": {"expected": "newer-source-revision"},
+                }],
+            }
+            stale = run_verify_config(stale_config, tmp / "source-binding-stale", expect=3)
+            stale_page = stale.get("pages", [{}])[0]
+            if (
+                stale_page.get("outcome") != "stale_deployment"
+                or stale_page.get("sourceBinding", {}).get("status") != "mismatched"
+                or stale.get("coverage", {}).get("checkedPages") != 0
+            ):
+                raise AssertionError(f"Stale deployment counted as checked coverage: {stale_page}")
+        finally:
+            binding_server.close()
+
+        missing_binding = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/clean.html",
+                    "sourceBinding": {"expected": "required-revision"},
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "source-binding-missing",
+            expect=3,
+        )
+        if missing_binding.get("pages", [{}])[0].get("outcome") != "source_binding_missing":
+            raise AssertionError("A missing required deployment binding did not fail coverage")
+
+        meta_binding = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/source-binding-meta.html",
+                    "sourceBinding": {"expected": "meta-deployed-revision"},
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "source-binding-meta",
+            expect=0,
+        )
+        meta_evidence = meta_binding.get("pages", [{}])[0].get("sourceBinding", {})
+        if meta_evidence.get("status") != "matched" or meta_evidence.get("observedFrom") != "meta:ui-source-revision":
+            raise AssertionError(f"Meta deployment/source binding fallback was not exercised: {meta_evidence}")
 
         allowed_missing = run_verify_config(
             {
@@ -1239,6 +1793,161 @@ def main() -> int:
         form = run_verify(f"{server.base_url}/form-controls.html", tmp / "form-controls", expect=0)
         assert_no_critical(form)
 
+        # Native control text is not represented by DOM text geometry. Measure
+        # placeholders and selected labels against the true inner content width,
+        # but never persist the text being measured or a typed value.
+        placeholder = run_verify(
+            f"{server.base_url}/native-placeholder-clipped.html",
+            tmp / "native-placeholder-clipped",
+            expect=1,
+        )
+        assert_critical_rule(placeholder, "control-text-clipped")
+        placeholder_blob = json.dumps(placeholder)
+        if "PRIVATE_PLACEHOLDER_MUST_NOT_LEAK" in placeholder_blob:
+            raise AssertionError("Clipped placeholder text leaked into the privacy-safe report")
+        placeholder_findings = [
+            item for item in placeholder.get("findings", []) if item.get("rule") == "control-text-clipped"
+        ]
+        if not placeholder_findings or any(item.get("textSnippet") for item in placeholder_findings):
+            raise AssertionError("control-text-clipped findings must redact their text snippet")
+        if not all(
+            item.get("evidence", {}).get("measuredTextWidth", 0)
+            > item.get("evidence", {}).get("availableInnerWidth", 0)
+            for item in placeholder_findings
+        ):
+            raise AssertionError("Placeholder finding omitted real inner-width evidence")
+
+        selected = run_verify(
+            f"{server.base_url}/native-select-clipped.html",
+            tmp / "native-select-clipped",
+            expect=1,
+        )
+        assert_critical_rule(selected, "control-text-clipped")
+        if "PRIVATE_SELECTED_LABEL_MUST_NOT_LEAK" in json.dumps(selected):
+            raise AssertionError("Selected option label leaked into the privacy-safe report")
+        selected_evidence = [
+            item.get("evidence", {})
+            for item in selected.get("findings", [])
+            if item.get("rule") == "control-text-clipped"
+        ]
+        if not any(
+            evidence.get("controlTextKind") == "selected-option"
+            and evidence.get("nativeAffordanceWidth", 0) > 0
+            for evidence in selected_evidence
+        ):
+            raise AssertionError("Selected option measurement did not account for the native select affordance")
+
+        typed = run_verify(
+            f"{server.base_url}/native-typed-scrollable.html",
+            tmp / "native-typed-scrollable",
+            expect=0,
+        )
+        assert_no_critical(typed)
+        assert_no_rule(typed, "control-text-clipped")
+        if "PRIVATE_TYPED_VALUE_MUST_NOT_LEAK" in json.dumps(typed):
+            raise AssertionError("A typed, scrollable native control value leaked into the report")
+
+        allowed_control = run_verify(
+            f"{server.base_url}/native-placeholder-allowed.html",
+            tmp / "native-placeholder-allowed",
+            expect=0,
+        )
+        assert_no_critical(allowed_control)
+        assert_no_rule(allowed_control, "control-text-clipped")
+        assert_warning_rule(allowed_control, "allowed-truncation")
+        if "PRIVATE_ALLOWED_PLACEHOLDER_MUST_NOT_LEAK" in json.dumps(allowed_control):
+            raise AssertionError("Allowed placeholder text leaked into the report")
+
+        inset_bad = run_verify(
+            f"{server.base_url}/content-inset-bad.html",
+            tmp / "content-inset-bad",
+            expect=1,
+        )
+        assert_critical_rule(inset_bad, "content-inset-below-minimum")
+        inset_clean = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/content-inset-clean.html",
+                    "contentInsets": [{"selector": ".card", "min": 12, "name": "items card"}],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "content-inset-clean",
+            expect=0,
+        )
+        assert_no_critical(inset_clean)
+        inset_entries = [
+            entry
+            for metrics in page_metrics(inset_clean)
+            for entry in metrics.get("contentInsetMeasurements", [])
+        ]
+        if not any(entry.get("status") == "passed" and entry.get("requiredInset") == 12 for entry in inset_entries):
+            raise AssertionError(f"Configured content inset was not measured as passing: {inset_entries}")
+        intentional_edges = run_verify(
+            f"{server.base_url}/content-inset-intentional-edges.html",
+            tmp / "content-inset-intentional-edges",
+            expect=0,
+        )
+        assert_no_critical(intentional_edges)
+        assert_no_rule(intentional_edges, "content-inset-below-minimum")
+
+        breakpoint_config = {
+            "targets": [
+                {
+                    "name": "breakpoint edge",
+                    "url": f"{server.base_url}/breakpoint-edge.html",
+                    "breakpointProfile": {
+                        "name": "navigation",
+                        "breakpoints": [768],
+                        "height": 800,
+                    },
+                },
+                {"name": "plain target", "url": f"{server.base_url}/clean.html"},
+            ],
+            "viewports": [{"name": "configured-768", "width": 768, "height": 800}],
+            "maxPageCount": 4,
+        }
+        breakpoint_report = run_verify_config(
+            breakpoint_config,
+            tmp / "breakpoint-profile",
+            expect=1,
+        )
+        edge_pages = [
+            item for item in breakpoint_report.get("pages", [])
+            if item.get("target", {}).get("name") == "breakpoint edge"
+        ]
+        plain_pages = [
+            item for item in breakpoint_report.get("pages", [])
+            if item.get("target", {}).get("name") == "plain target"
+        ]
+        if sorted(page_item.get("viewport", {}).get("width") for page_item in edge_pages) != [767, 768, 769]:
+            raise AssertionError(f"Breakpoint profile did not generate exact boundary widths: {edge_pages}")
+        if len(plain_pages) != 1 or plain_pages[0].get("viewport", {}).get("width") != 768:
+            raise AssertionError("Breakpoint profile leaked onto a target that did not declare it")
+        if not any(
+            page_item.get("viewport", {}).get("width") == 767
+            and any(finding.get("rule") == "clipped-x" for finding in page_item.get("findings", []))
+            for page_item in edge_pages
+        ):
+            raise AssertionError("The breakpoint-minus-one must-catch defect was not detected")
+        exact_cells = breakpoint_report.get("coverage", {}).get("cells", [])
+        if len(exact_cells) != 4 or any(not cell.get("cellId") for cell in exact_cells):
+            raise AssertionError(f"Coverage omitted exact route/state/viewport cells: {exact_cells}")
+        if breakpoint_report.get("coverage", {}).get("widthCoverageMode") != "sampled-only":
+            raise AssertionError("Width coverage must be labelled sampled-only")
+        exact_viewport = next(
+            page_item.get("viewport", {})
+            for page_item in edge_pages
+            if page_item.get("viewport", {}).get("width") == 768
+        )
+        if set(exact_viewport.get("sampling", {}).get("sources", [])) != {"configured", "breakpoint-profile"}:
+            raise AssertionError("Equivalent configured/breakpoint cells were not deterministically de-duplicated")
+
+        over_budget = {**breakpoint_config, "maxPageCount": 3}
+        budget_failure = run_verify_config(over_budget, tmp / "breakpoint-budget", expect=2)
+        if "exceeding maxPageCount 3" not in budget_failure.get("error", {}).get("message", ""):
+            raise AssertionError("Breakpoint expansion did not fail closed at the hard page-count budget")
+
         # --cookie: the gated fixture is broken for anonymous visitors and clean
         # with the session cookie, proving the cookie reaches the page (recall
         # both ways: the anon run must still catch the critical).
@@ -1288,7 +1997,7 @@ def main() -> int:
                 encoding="utf-8",
             )
             bad_result = subprocess.run(
-                [node_binary(), str(VERIFY), "--config", str(bad_config)],
+                verifier_command("--config", str(bad_config)),
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -1349,6 +2058,423 @@ def main() -> int:
         assert_no_critical(dev_overlay)
         assert_no_rule(dev_overlay, "occluded")
         assert_no_rule(dev_overlay, "partially-occluded")
+
+        # Journey contracts are mandatory for every target, including an
+        # otherwise healthy bare URL.
+        missing_contract = run_verify_config(
+            {
+                "targets": [{"url": f"{server.base_url}/clean.html"}],
+                "viewports": [{"name": "mobile", "width": 390, "height": 844}],
+            },
+            tmp / "missing-journey-contract",
+            expect=3,
+            apply_contract_defaults=False,
+        )
+        if missing_contract.get("pages", [{}])[0].get("outcome") != "journey_contract_error":
+            raise AssertionError("A target without journey/theme/review-input intent did not fail coverage")
+
+        account_journeys = [
+            {"id": "view-accounts", "frequencyPercent": 99, "risk": "normal", "rationale": "Normal destination use"},
+            {"id": "add-account", "frequencyPercent": 1, "risk": "normal", "rationale": "Occasional creation"},
+        ]
+        account_review_inputs = [{"path": "SKILL.md", "kind": "ui-code"}]
+        account_base = {
+            "journeys": account_journeys,
+            "primaryJourney": "view-accounts",
+            "theme": "light",
+            "reviewInputs": account_review_inputs,
+        }
+        form_first = run_verify_config(
+            {
+                "targets": [{
+                    **account_base,
+                    "url": f"{server.base_url}/accounts-form-first.html",
+                    "regions": [
+                        {"selector": "#add-account", "role": "workflow-surface", "journey": "add-account"},
+                        {"selector": "#account-list", "role": "primary-content", "journey": "view-accounts"},
+                    ],
+                }],
+                "viewports": [{"name": "mobile", "width": 390, "height": 844}],
+            },
+            tmp / "accounts-form-first",
+            expect=1,
+        )
+        assert_critical_rule(form_first, "secondary-workflow-precedes-primary")
+
+        compact_toolbar = run_verify_config(
+            {
+                "targets": [{
+                    **account_base,
+                    "url": f"{server.base_url}/accounts-toolbar.html",
+                    "regions": [
+                        {"selector": "#account-tools", "role": "supporting"},
+                        {"selector": "#account-list", "role": "primary-content", "journey": "view-accounts"},
+                    ],
+                }],
+                "viewports": [{"name": "mobile", "width": 390, "height": 844}],
+            },
+            tmp / "accounts-toolbar",
+            expect=0,
+        )
+        assert_no_rule(compact_toolbar, "supporting-content-dominates-primary")
+
+        blocking_alert = run_verify_config(
+            {
+                "targets": [{
+                    **account_base,
+                    "url": f"{server.base_url}/accounts-alert.html",
+                    "regions": [
+                        {"selector": "#blocking-alert", "role": "blocking-alert", "reason": "The collection cannot load"},
+                        {"selector": "#account-list", "role": "primary-content", "journey": "view-accounts"},
+                    ],
+                }],
+                "viewports": [{"name": "mobile", "width": 390, "height": 844}],
+            },
+            tmp / "accounts-blocking-alert",
+            expect=0,
+        )
+        assert_no_critical(blocking_alert)
+
+        dedicated_create = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/create-account.html",
+                    "journeys": [{"id": "add-account", "frequencyPercent": 100, "risk": "normal"}],
+                    "primaryJourney": "add-account",
+                    "regions": [{"selector": "#create-form", "role": "primary-content", "journey": "add-account"}],
+                    "theme": "light",
+                    "reviewInputs": account_review_inputs,
+                }],
+                "viewports": [{"name": "mobile", "width": 390, "height": 844}],
+            },
+            tmp / "dedicated-create",
+            expect=0,
+        )
+        assert_no_critical(dedicated_create)
+
+        offscreen_add = run_verify_config(
+            {
+                "targets": [{
+                    **account_base,
+                    "url": f"{server.base_url}/accounts-offscreen-add.html",
+                    "includeBase": False,
+                    "regions": [{"selector": "#account-list", "role": "primary-content", "journey": "view-accounts"}],
+                    "states": [{
+                        "name": "add-open",
+                        "actions": [{"action": "click", "selector": "#open-add"}],
+                        "primaryJourney": "add-account",
+                        "priorityOverrideReason": "The user explicitly activated account creation",
+                        "regions": [{"selector": "#add-form", "role": "primary-content", "journey": "add-account"}],
+                        "continuation": {"kind": "in-page", "anchor": "#add-form h2", "focusWithin": "#add-form"},
+                    }],
+                }],
+                "viewports": [{"name": "mobile", "width": 390, "height": 844}],
+            },
+            tmp / "accounts-offscreen-add",
+            expect=1,
+        )
+        assert_critical_rule(offscreen_add, "continuation-anchor-offscreen")
+        assert_critical_rule(offscreen_add, "continuation-focus-missing")
+
+        modal_add = run_verify_config(
+            {
+                "targets": [{
+                    **account_base,
+                    "url": f"{server.base_url}/accounts-modal-add.html",
+                    "includeBase": False,
+                    "regions": [{"selector": "#account-list", "role": "primary-content", "journey": "view-accounts"}],
+                    "states": [{
+                        "name": "add-dialog",
+                        "actions": [{"action": "click", "selector": "#open-add"}],
+                        "primaryJourney": "add-account",
+                        "priorityOverrideReason": "The user explicitly activated account creation",
+                        "regions": [{"selector": "#add-dialog", "role": "primary-content", "journey": "add-account"}],
+                        "continuation": {"kind": "in-page", "anchor": "#add-dialog h2", "focusWithin": "#add-dialog"},
+                    }],
+                }],
+                "viewports": [{"name": "mobile", "width": 390, "height": 844}],
+            },
+            tmp / "accounts-modal-add",
+            expect=0,
+        )
+        assert_no_critical(modal_add)
+        if not modal_add.get("pages", [{}])[0].get("continuation", {}).get("evidence", {}).get("focusSatisfied"):
+            raise AssertionError("Visible modal continuation did not preserve focus evidence")
+
+        broad_container_anchor = run_verify_config(
+            {
+                "targets": [{
+                    **account_base,
+                    "url": f"{server.base_url}/accounts-modal-add.html",
+                    "includeBase": False,
+                    "regions": [{"selector": "#account-list", "role": "primary-content", "journey": "view-accounts"}],
+                    "states": [{
+                        "name": "add-dialog-broad-anchor",
+                        "actions": [{"action": "click", "selector": "#open-add"}],
+                        "primaryJourney": "add-account",
+                        "priorityOverrideReason": "The user explicitly activated account creation",
+                        "regions": [{"selector": "#add-dialog", "role": "primary-content", "journey": "add-account"}],
+                        "continuation": {"kind": "in-page", "anchor": "#add-dialog", "focusWithin": "#add-dialog"},
+                    }],
+                }],
+                "viewports": [{"name": "mobile", "width": 390, "height": 844}],
+            },
+            tmp / "accounts-broad-container-anchor",
+            expect=1,
+        )
+        assert_critical_rule(broad_container_anchor, "continuation-anchor-not-recognizable")
+
+        navigation_add = run_verify_config(
+            {
+                "targets": [{
+                    **account_base,
+                    "url": f"{server.base_url}/accounts-navigation.html",
+                    "includeBase": False,
+                    "regions": [{"selector": "#account-list", "role": "primary-content", "journey": "view-accounts"}],
+                    "states": [{
+                        "name": "dedicated-create",
+                        "actions": [{"action": "click", "selector": "#go-create"}],
+                        "primaryJourney": "add-account",
+                        "priorityOverrideReason": "The user explicitly activated account creation",
+                        "regions": [{"selector": "#create-form", "role": "primary-content", "journey": "add-account"}],
+                        "continuation": {"kind": "navigation", "anchor": "#create-form h1", "expectedPath": "/create-account.html"},
+                    }],
+                }],
+                "viewports": [{"name": "mobile", "width": 390, "height": 844}],
+            },
+            tmp / "accounts-navigation",
+            expect=0,
+        )
+        if navigation_add.get("pages", [{}])[0].get("finalPath") != "/create-account.html":
+            raise AssertionError("Expected journey navigation was not accepted and recorded")
+
+        dark_inversion = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/theme-dark-with-bright-surface.html",
+                    "theme": "dark",
+                    "regions": [{"selector": "#primary", "role": "primary-content", "journey": "fixture-primary"}],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "dark-theme-inversion",
+            expect=1,
+        )
+        assert_critical_rule(dark_inversion, "declared-theme-contradiction")
+        light_inversion = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/theme-light-with-dark-surface.html",
+                    "theme": "light",
+                    "regions": [{"selector": "#primary", "role": "primary-content", "journey": "fixture-primary"}],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "light-theme-inversion",
+            expect=1,
+        )
+        assert_critical_rule(light_inversion, "declared-theme-contradiction")
+        mixed_theme = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/theme-mixed.html",
+                    "theme": "mixed",
+                    "regions": [{"selector": "#primary", "role": "primary-content", "journey": "fixture-primary"}],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "mixed-theme",
+            expect=0,
+        )
+        assert_no_rule(mixed_theme, "declared-theme-contradiction")
+
+        contrast_fail = run_verify(f"{server.base_url}/contrast-aa-fail.html", tmp / "contrast-aa-fail", expect=1)
+        assert_critical_rule(contrast_fail, "insufficient-text-contrast")
+        contrast_large = run_verify(f"{server.base_url}/contrast-large-pass.html", tmp / "contrast-large-pass", expect=0)
+        assert_no_rule(contrast_large, "insufficient-text-contrast")
+        contrast_allowed = run_verify(f"{server.base_url}/contrast-allowed.html", tmp / "contrast-allowed", expect=0)
+        assert_warning_rule(contrast_allowed, "allowed-contrast")
+        palette_risk = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/palette-competing.html",
+                    "theme": "mixed",
+                    "regions": [{"selector": "#primary", "role": "primary-content", "journey": "fixture-primary"}],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "palette-competing",
+            expect=0,
+        )
+        assert_warning_rule(palette_risk, "high-chroma-surface-risk")
+        assert_warning_rule(palette_risk, "competing-accent-hues")
+
+        # Review selection follows declared implementation inputs and intent,
+        # never screenshot pixels or unrelated files.
+        review_repo = (tmp / "review-repo").resolve()
+        write(review_repo / "ui" / "screen.css", ".screen { padding: 16px; }\n")
+        write(review_repo / "backend.txt", "unrelated backend v1\n")
+        review_config = {
+            "repoRoot": str(review_repo),
+            "targets": [{
+                "url": f"{server.base_url}/dynamic-review.html",
+                "reviewInputs": [{"path": "ui/screen.css", "kind": "style"}],
+            }],
+            "viewports": [{"name": "mobile", "width": 390, "height": 844}],
+        }
+        review_first_dir = tmp / "review-first"
+        review_first = run_verify_config(review_config, review_first_dir, expect=0)
+        if review_first.get("review", {}).get("pendingCount") != 1:
+            raise AssertionError("A newly covered cell must enter changed visual review")
+        first_cell = review_first["review"]["cells"][0]
+        decisions_path = review_first_dir / "decisions.json"
+        decisions_path.write_text(
+            json.dumps({"decisions": [{"reviewCellKey": first_cell["reviewCellKey"], "decision": "pass"}]}),
+            encoding="utf-8",
+        )
+        prior_pass = review_first_dir / "manual-review.json"
+        run_review(
+            [
+                "--report", str(review_first_dir / "report.json"),
+                "--queue", str(review_first_dir / "review-queue.json"),
+                "--decisions", str(decisions_path),
+                "--out", str(prior_pass),
+            ],
+            expect=0,
+        )
+
+        review_second_dir = tmp / "review-second"
+        review_second = run_verify_config(
+            {**review_config, "reviewAgainst": str(prior_pass)},
+            review_second_dir,
+            expect=0,
+        )
+        if review_second.get("review", {}).get("pendingCount") != 0 or review_second.get("review", {}).get("carriedPassCount") != 1:
+            raise AssertionError("Unchanged UI inputs and intent should carry the pass without reopening screenshots")
+        first_hash = first_cell["screenshots"]["viewport"]["sha256"]
+        second_hash = review_second["review"]["cells"][0]["screenshots"]["viewport"]["sha256"]
+        if first_hash == second_hash:
+            raise AssertionError("Dynamic fixture did not prove that pixel drift is ignored as a review trigger")
+
+        write(review_repo / "backend.txt", "unrelated backend v2\n")
+        unrelated = run_verify_config(
+            {**review_config, "reviewAgainst": str(prior_pass)},
+            tmp / "review-unrelated-change",
+            expect=0,
+        )
+        if unrelated.get("review", {}).get("pendingCount") != 0:
+            raise AssertionError("An unrelated file change incorrectly triggered manual UI review")
+
+        write(review_repo / "ui" / "screen.css", ".screen { padding: 24px; }\n")
+        mapped_change = run_verify_config(
+            {**review_config, "reviewAgainst": str(prior_pass)},
+            tmp / "review-mapped-change",
+            expect=0,
+        )
+        if mapped_change.get("review", {}).get("pendingCount") != 1:
+            raise AssertionError("A declared UI-input change did not trigger manual review")
+        write(review_repo / "ui" / "screen.css", ".screen { padding: 16px; }\n")
+
+        intent_change = run_verify_config(
+            {
+                **review_config,
+                "reviewAgainst": str(prior_pass),
+                "targets": [{
+                    "url": f"{server.base_url}/dynamic-review.html",
+                    "theme": "mixed",
+                    "reviewInputs": [{"path": "ui/screen.css", "kind": "style"}],
+                }],
+            },
+            tmp / "review-intent-change",
+            expect=0,
+        )
+        if intent_change.get("review", {}).get("pendingCount") != 1:
+            raise AssertionError("Changed journey/theme intent did not trigger manual review")
+
+        new_viewport = run_verify_config(
+            {
+                **review_config,
+                "reviewAgainst": str(prior_pass),
+                "viewports": [
+                    {"name": "mobile", "width": 390, "height": 844},
+                    {"name": "desktop", "width": 1280, "height": 800},
+                ],
+            },
+            tmp / "review-new-viewport",
+            expect=0,
+        )
+        if new_viewport.get("review", {}).get("pendingCount") != 1 or new_viewport.get("review", {}).get("carriedPassCount") != 1:
+            raise AssertionError("A new viewport should be reviewed without reopening the unchanged existing viewport")
+
+        raw_prior = run_verify_config(
+            {**review_config, "reviewAgainst": str(review_first_dir / "report.json")},
+            tmp / "review-raw-prior-rejected",
+            expect=2,
+        )
+        if "not a supported reviewed manifest" not in raw_prior.get("error", {}).get("message", ""):
+            raise AssertionError("An unreviewed formal report was accepted as a manual-review baseline")
+
+        removed_undisposed = run_verify_config(
+            {
+                **review_config,
+                "reviewAgainst": str(prior_pass),
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "review-removed-undisposed",
+            expect=3,
+        )
+        if not removed_undisposed.get("coverage", {}).get("reviewFailures"):
+            raise AssertionError("A removed reviewed cell disappeared without an explicit disposition")
+        removed_key = first_cell["reviewCellKey"]
+        removed_disposed = run_verify_config(
+            {
+                **review_config,
+                "reviewAgainst": str(prior_pass),
+                "reviewRemovedCells": [{"reviewCellKey": removed_key, "reason": "The mobile viewport is no longer supported"}],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "review-removed-disposed",
+            expect=0,
+        )
+        if removed_disposed.get("coverage", {}).get("reviewFailures"):
+            raise AssertionError("An explicitly dispositioned removed cell still failed review coverage")
+
+        gap_decisions = review_first_dir / "gap-decisions.json"
+        gap_decisions.write_text(
+            json.dumps({"decisions": [{"reviewCellKey": first_cell["reviewCellKey"], "decision": "gap", "note": "Palette needs correction"}]}),
+            encoding="utf-8",
+        )
+        prior_gap = review_first_dir / "manual-review-gap.json"
+        run_review(
+            [
+                "--report", str(review_first_dir / "report.json"),
+                "--queue", str(review_first_dir / "review-queue.json"),
+                "--decisions", str(gap_decisions),
+                "--out", str(prior_gap),
+            ],
+            expect=1,
+        )
+        carried_gap = run_verify_config(
+            {**review_config, "reviewAgainst": str(prior_gap)},
+            tmp / "review-carried-gap",
+            expect=1,
+        )
+        if carried_gap.get("review", {}).get("pendingCount") != 0:
+            raise AssertionError("An unchanged prior gap should remain blocking without reopening images")
+        assert_critical_rule(carried_gap, "manual-review-gap-carried")
+
+        first_screenshot = Path(first_cell["screenshots"]["viewport"]["path"])
+        first_screenshot.write_bytes(first_screenshot.read_bytes() + b"tampered")
+        tampered_review = run_review(
+            [
+                "--report", str(review_first_dir / "report.json"),
+                "--queue", str(review_first_dir / "review-queue.json"),
+                "--review", str(prior_pass),
+            ],
+            expect=2,
+        )
+        if "hash mismatch" not in tampered_review.get("error", ""):
+            raise AssertionError("Screenshot replacement was not rejected as an integrity failure")
 
         print("self-test ok")
         return 0

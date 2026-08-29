@@ -111,11 +111,19 @@ and the documentation handoff conflict instead of marking the UI as compliant.
   native simulator/preview tools, or screenshot-capable test commands. It must
   check desktop and narrow mobile viewports when a web UI exists.
 - When a web UI has a safe render path, the visual comparison worker must run
-  `formal-web-ui-verification` or explicitly report why it is blocked. Treat
-  unresolved critical formal findings for clipping, overlap, off-canvas
-  controls, broken media, invisible text, document overflow, or area violations
-  as audit gaps. Always include the verifier's visible scrollbar inventory in
-  visual evidence, even when it has no critical findings.
+  `formal-web-ui-verification` with a complete per-target/state journey,
+  semantic-region, continuation, light/dark/mixed theme, and declared UI-input
+  mapping, or explicitly report why it is blocked. Treat unresolved critical
+  findings for displaced primary content, offscreen/unfocused continuation,
+  WCAG contrast, theme contradiction, clipping, overlap, off-canvas controls,
+  broken media, invisible text, document overflow, or area violations as audit
+  gaps. Always include its visible scrollbar and palette-risk inventory.
+- Finish formal verification and all other automatic tests before manual image
+  judgment. Read `review-queue.json`, open only queued initial-viewport/full-page
+  pairs, finalize decisions with `formal_web_ui_review.py`, and bind the formal
+  report, queue, screenshot pairs, and manual-review manifest in
+  `visual_evidence.json`. Never reopen carried unchanged images; carried prior
+  gaps remain findings. Screenshot hash/pixel drift is integrity evidence only.
 - The visual comparison worker must answer whether each rendered viewport
   supports the current journey decision. Except on pages whose primary purpose
   is data entry, visible content should mostly drive the current decision;
@@ -242,6 +250,9 @@ and the documentation handoff conflict instead of marking the UI as compliant.
      or configuration, and whether details are reachable without overwhelming
      the decision path.
    - Identify the safest way to render each high-priority screen.
+   - Map each web route/state to the exact repo-relative UI code, styles,
+     tokens, fonts, and assets that can change it. Do not use an all-repository
+     digest as a substitute for target ownership.
 
 5. **Dispatch workers**
    - Dispatch one Light/runtime-low worker per `batch_###.md`; in Codex set
@@ -393,15 +404,24 @@ Findings must use either `No findings.` or field blocks with:
 The visual comparison report is not complete if it only says the UI "looks
 good" or "matches the mockup." It must include `Mockup And Asset Inventory`,
 `Visual Tooling`, `Journey Decision Model`, `Rendered Journey Usability`, and
-`Visual Comparison Checks` with
+`Visual Comparison Checks`, followed by `Changed Visual Review`, with
 desktop and mobile/narrow rows when a web UI can be rendered. Evidence must
 name the command/tool and bind `evidence:<id>` records from `visual_evidence.json`.
 If screenshots cannot be produced, the row result must be `BLOCKED` and the
 findings must explain the missing safe render path.
 When the web UI can be rendered, evidence should also name the
-`formal-web-ui-verification` command and report path. If the verifier cannot
+`formal-web-ui-verification` command, report, changed-review queue, and finalized
+manual-review paths. If the verifier cannot
 run, mark formal DOM/layout verification as `BLOCKED`; if it runs, summarize
-critical findings and visible scrollbars from the Markdown or JSON report.
+critical findings, visible scrollbars, palette risks, pending changed-review
+cells, and carried gaps from the Markdown or JSON report.
+
+`Changed Visual Review` uses columns `Review cell`, `Trigger/status`, `Initial
+viewport evidence`, `Full-page evidence`, `Decision`, and `Note`. Queued cells
+cite both screenshot artifacts and use `pass`/`gap`/`blocked`; carried cells say
+`not reopened — carried unchanged` in both image columns and use
+`carried-pass`/`carried-gap`/`carried-blocked`. It also cites the formal report,
+review queue, and manual-review manifest evidence ids.
 
 For each rendered screen, check:
 

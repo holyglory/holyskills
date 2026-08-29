@@ -35,6 +35,10 @@ Use this template when recommending docs to add or repair.
 - Warning/flag conditions:
 - Primary actions:
 - Secondary/rare actions:
+- Usage percentage or best available frequency estimate:
+- Risk if broken:
+- Is this the primary journey on each surface/state?:
+- Priority override reason when a lower-frequency journey is primary:
 - Conditional or rare details and when they matter:
 - Interaction targets and feedback:
 - Message metadata relevance:
@@ -43,6 +47,11 @@ Use this template when recommending docs to add or repair.
 - Recovery and undo:
 - Device/context constraints:
 - Accessibility expectations:
+- Initial-viewport region roles: primary content, secondary workflow surfaces, compact supporting regions, and justified blocking alerts:
+- Activation continuation: visible anchor, focus destination, document-scroll expectation, or expected destination route:
+- Theme intent per state: light, dark, or mixed:
+- Implementation-input ownership: UI code, styles, tokens, fonts, and assets that an implementation must map into formal verification:
+- Visual evidence: initial-viewport and full-page screenshot pair plus changed-review expectations:
 - Acceptance criteria:
 - Analytics/support signals:
 
@@ -71,6 +80,18 @@ Use this template when recommending docs to add or repair.
 | Screen or route | Decisions and required facts from the journey model | Screenshot, rendered state, visual tree, DOM/native measurement, accessibility evidence, or blocker | Loading, empty, error, permission, success, warning, destructive, or recovery states | Relevant design artifacts | Open product/journey questions |
 
 Do not turn this table into a fixed layout recipe. If default-visible content is product-critical, state the decision it supports and separate default state, hover/focus hints, row selection, expansion, drawer, modal, and deep detail access. Otherwise leave exact grouping, widgets, and disclosure controls to UI design and `ui-implementation-audit`.
+
+## Formal Web UI Verification Handoff
+
+| Surface/state | Primary journey | Usage % | Risk if broken | Priority override reason | Initial-viewport region roles | Activation continuation | Theme intent | Implementation-input ownership | Evidence/review expectation |
+| --- | --- | ---: | --- | --- | --- | --- | --- | --- | --- |
+| Route and state | Stable journey id and user-readable name | Best available estimate | critical / high / normal / low | Required when a lower-frequency journey is primary | primary-content, workflow-surface, compact supporting region, justified blocking-alert | visible/focused continuation anchor without document jump, or expected destination route and visible primary anchor | light / dark / mixed | Components plus UI code, styles, design tokens, fonts, and assets the implementation must map to repository-relative review inputs | Initial-viewport and full-page screenshot pair; manual review only for changed mapped inputs/intent or new cells |
+
+This table defines semantic intent, not CSS selectors or a widget prescription.
+The implemented verifier configuration owns the exact selectors and
+repository-relative input paths. Every audited target, including component
+demos and utility routes, needs a complete mapping before formal journey
+verification can pass.
 
 When flags, badges, expandable rows, message streams, tool/result blocks, copy controls, or icons are part of a journey, document their intent rather than only naming the component. State whether the whole row or only the icon is the activation target, what hover/focus/click feedback reveals, whether a navigational item has a predictable destination and pointer/focus affordance, whether popover detail is expected and how it closes, which copy/status controls appear only on hover/focus, and which metadata such as sender labels or timestamps is passive rather than selectable content.
 

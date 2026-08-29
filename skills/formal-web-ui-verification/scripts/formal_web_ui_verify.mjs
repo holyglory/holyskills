@@ -2,20 +2,49 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
+const VERIFIER_PATH = fileURLToPath(import.meta.url);
 const SEVERITY_ORDER = { info: 0, warning: 1, critical: 2 };
 const DEFAULT_VIEWPORTS = [
   { name: "mobile", width: 390, height: 844 },
   { name: "desktop", width: 1440, height: 900 },
 ];
+const DEFAULT_MAX_PAGE_COUNT = 60;
 const RECEIPT_MAX_BYTES = 2048;
 const DEFAULT_ARTIFACT_PREFIX = "formal-web-ui-verification-";
+const REPORT_SCHEMA_VERSION = 2;
+const REVIEW_QUEUE_SCHEMA_VERSION = 1;
+const MANUAL_REVIEW_SCHEMA_VERSION = 1;
+const MANUAL_REVIEW_KIND = "formal-web-ui-manual-review";
+const REVIEW_QUEUE_KIND = "formal-web-ui-review-queue";
+const SHA256_RE = /^[0-9a-f]{64}$/;
+const SCREENSHOT_REDACTION_STYLE = `
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+textarea,
+select {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important;
+  caret-color: transparent !important;
+}
+input::placeholder,
+textarea::placeholder {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important;
+}
+`;
 
 let fallbackArtifacts;
 let activeArtifacts;
+let activeConfigSha256 = null;
+const runStartedAt = new Date().toISOString();
+const verifierSha256 = createHash("sha256").update(fs.readFileSync(VERIFIER_PATH)).digest("hex");
 
 function usage() {
   return `Usage:
@@ -24,15 +53,20 @@ function usage() {
   node scripts/formal_web_ui_verify.mjs --from-coordinator --coordinator-script path/to/dev_coordinator.py --only-current
 
 Options:
-  --url <url>                       Add a URL target. Can be repeated.
+  --url <url>                       Add a URL target. Requires complete targetDefaults from --config.
   --config <path>                   Load JSON config.
   --viewport <name=WIDTHxHEIGHT>    Add viewport. Can be repeated.
+  --max-page-count <count>          Hard cap on route/state/viewport cells. Default: ${DEFAULT_MAX_PAGE_COUNT}.
+  --repo-root <path>                Repository root for declared per-target UI review inputs.
+  --review-against <path>           Explicit prior reviewed manifest for changed-input review selection.
   --json-out <path>                 Override the auto-created JSON artifact path.
   --markdown-out <path>             Override the auto-created Markdown artifact path.
+  --review-queue-out <path>         Override the generated changed-visual-review queue path.
   --receipt-only                    Deprecated no-op; bounded receipt output is already the default.
   --human-readable-stdout           Human-only compatibility mode: print the full Markdown report instead of the bounded JSON receipt.
   --fail-on <critical|warning|info> Exit 1 when this severity or higher is found. Default: critical.
   --browser-executable <path>       Use a specific Chrome/Chromium executable.
+  --playwright-module-dir <path>    Resolve Playwright from this explicit node_modules directory.
   --from-coordinator                Read current URLs from codex-dev-coordinator inventory.
   --coordinator-script <path>       Coordinator script path for --from-coordinator.
   --coordinator-project <path>      Optional inventory project filter for --from-coordinator.
@@ -43,7 +77,7 @@ Options:
   --ignore <selector=reason>        Ignore selector with reason.
   --allow-truncation <selector=reason>
   --allow-overlap <selector=reason>
-  --screenshot-dir <path>           Save full-page screenshots for evidence.
+  --screenshot-dir <path>           Override the automatic initial/full-page screenshot directory.
   --no-scroll                       Skip the full-page scroll pass (default: scroll on).
   --cookie <name=value>             Send a cookie with every target (repeatable). Use for
                                     auth-gated pages; scoped to the target URL by default.
@@ -71,6 +105,8 @@ function createDefaultArtifacts() {
         directory,
         jsonOut: path.join(directory, "report.json"),
         markdownOut: path.join(directory, "report.md"),
+        reviewQueueOut: path.join(directory, "review-queue.json"),
+        screenshotDir: path.join(directory, "screenshots"),
         automatic: true,
       };
     } catch (error) {
@@ -98,7 +134,19 @@ function deriveCompanionPath(source, extension) {
 function resolveArtifactPaths(config, cli, defaults) {
   let jsonOut = normalizeOutputPath(cli.jsonOut ?? config.jsonOut, "jsonOut");
   let markdownOut = normalizeOutputPath(cli.markdownOut ?? config.markdownOut, "markdownOut");
-  if (!jsonOut && !markdownOut) return defaults;
+  if (!jsonOut && !markdownOut) {
+    return {
+      ...defaults,
+      reviewQueueOut: normalizeOutputPath(
+        cli.reviewQueueOut ?? config.reviewQueueOut ?? defaults.reviewQueueOut,
+        "reviewQueueOut",
+      ),
+      screenshotDir: normalizeOutputPath(
+        cli.screenshotDir ?? config.screenshotDir ?? defaults.screenshotDir,
+        "screenshotDir",
+      ),
+    };
+  }
   if (!jsonOut) jsonOut = deriveCompanionPath(markdownOut, ".json");
   if (!markdownOut) markdownOut = deriveCompanionPath(jsonOut, ".md");
   if (jsonOut === markdownOut) {
@@ -108,6 +156,14 @@ function resolveArtifactPaths(config, cli, defaults) {
     directory: path.dirname(jsonOut) === path.dirname(markdownOut) ? path.dirname(jsonOut) : undefined,
     jsonOut,
     markdownOut,
+    reviewQueueOut: normalizeOutputPath(
+      cli.reviewQueueOut ?? config.reviewQueueOut ?? path.join(path.dirname(jsonOut), "review-queue.json"),
+      "reviewQueueOut",
+    ),
+    screenshotDir: normalizeOutputPath(
+      cli.screenshotDir ?? config.screenshotDir ?? path.join(path.dirname(jsonOut), "screenshots"),
+      "screenshotDir",
+    ),
     automatic: false,
   };
 }
@@ -169,6 +225,11 @@ function parseArgs(argv) {
     noScroll: false,
     cookies: [],
     ignoreHttpsErrors: false,
+    maxPageCount: undefined,
+    playwrightModuleDir: undefined,
+    repoRoot: undefined,
+    reviewAgainst: undefined,
+    reviewQueueOut: undefined,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -186,10 +247,18 @@ function parseArgs(argv) {
       cli.configPath = next();
     } else if (arg === "--viewport") {
       cli.viewports.push(parseViewport(next()));
+    } else if (arg === "--max-page-count") {
+      cli.maxPageCount = next();
+    } else if (arg === "--repo-root") {
+      cli.repoRoot = next();
+    } else if (arg === "--review-against") {
+      cli.reviewAgainst = next();
     } else if (arg === "--json-out") {
       cli.jsonOut = next();
     } else if (arg === "--markdown-out") {
       cli.markdownOut = next();
+    } else if (arg === "--review-queue-out") {
+      cli.reviewQueueOut = next();
     } else if (arg === "--receipt-only") {
       // Deprecated compatibility alias. Receipt output is always the safe
       // default, and this flag can never disable artifact creation.
@@ -199,6 +268,8 @@ function parseArgs(argv) {
       cli.failOn = next();
     } else if (arg === "--browser-executable") {
       cli.browserExecutable = next();
+    } else if (arg === "--playwright-module-dir") {
+      cli.playwrightModuleDir = next();
     } else if (arg === "--from-coordinator") {
       cli.fromCoordinator = true;
     } else if (arg === "--coordinator-script") {
@@ -281,6 +352,326 @@ function normalizeSelectorReasonList(value, name) {
   });
 }
 
+function normalizeJourneyDefinitions(value, name) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error(`${name} must be an array`);
+  const seen = new Set();
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`${name}[${index}] must be an object`);
+    }
+    if (typeof item.id !== "string" || !item.id.trim()) {
+      throw new Error(`${name}[${index}].id must be a non-empty stable string`);
+    }
+    const id = item.id.trim();
+    if (seen.has(id)) throw new Error(`${name} contains duplicate journey id ${id}`);
+    seen.add(id);
+    const frequencyPercent = Number(item.frequencyPercent);
+    if (!Number.isFinite(frequencyPercent) || frequencyPercent < 0 || frequencyPercent > 100) {
+      throw new Error(`${name}[${index}].frequencyPercent must be between 0 and 100`);
+    }
+    const risk = item.risk === undefined ? "normal" : item.risk;
+    if (!["critical", "high", "normal", "low"].includes(risk)) {
+      throw new Error(`${name}[${index}].risk must be critical, high, normal, or low`);
+    }
+    if (item.name !== undefined && (typeof item.name !== "string" || !item.name.trim())) {
+      throw new Error(`${name}[${index}].name must be a non-empty string when present`);
+    }
+    if (item.rationale !== undefined && (typeof item.rationale !== "string" || !item.rationale.trim())) {
+      throw new Error(`${name}[${index}].rationale must be a non-empty string when present`);
+    }
+    return {
+      id,
+      name: item.name?.trim() || id,
+      frequencyPercent,
+      risk,
+      rationale: item.rationale?.trim() || "",
+    };
+  });
+}
+
+function normalizeJourneyRegions(value, name) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error(`${name} must be an array`);
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`${name}[${index}] must be an object`);
+    }
+    if (typeof item.selector !== "string" || !item.selector.trim()) {
+      throw new Error(`${name}[${index}].selector must be a non-empty string`);
+    }
+    const role = item.role;
+    if (!["primary-content", "workflow-surface", "supporting", "blocking-alert"].includes(role)) {
+      throw new Error(`${name}[${index}].role must be primary-content, workflow-surface, supporting, or blocking-alert`);
+    }
+    if (item.journey !== undefined && (typeof item.journey !== "string" || !item.journey.trim())) {
+      throw new Error(`${name}[${index}].journey must be a non-empty journey id when present`);
+    }
+    if (item.name !== undefined && (typeof item.name !== "string" || !item.name.trim())) {
+      throw new Error(`${name}[${index}].name must be a non-empty string when present`);
+    }
+    if (item.reason !== undefined && (typeof item.reason !== "string" || !item.reason.trim())) {
+      throw new Error(`${name}[${index}].reason must be a non-empty string when present`);
+    }
+    return {
+      selector: item.selector.trim(),
+      role,
+      journey: item.journey?.trim() || null,
+      name: item.name?.trim() || item.selector.trim(),
+      reason: item.reason?.trim() || "",
+    };
+  });
+}
+
+function normalizeReviewInputs(value, name) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error(`${name} must be an array`);
+  return value.map((item, index) => {
+    const input = typeof item === "string" ? { path: item, kind: "shared" } : item;
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw new Error(`${name}[${index}] must be a path string or {path, kind?}`);
+    }
+    if (typeof input.path !== "string" || !input.path.trim()) {
+      throw new Error(`${name}[${index}].path must be a non-empty repository-relative path`);
+    }
+    if (input.kind !== undefined && (typeof input.kind !== "string" || !input.kind.trim())) {
+      throw new Error(`${name}[${index}].kind must be a non-empty string when present`);
+    }
+    return { path: input.path.trim(), kind: input.kind?.trim() || "shared" };
+  });
+}
+
+function normalizeTheme(value, name) {
+  if (value === undefined || value === null) return null;
+  if (!["light", "dark", "mixed"].includes(value)) {
+    throw new Error(`${name} must be light, dark, or mixed`);
+  }
+  return value;
+}
+
+function normalizeContinuation(value, name) {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${name} must be an object`);
+  }
+  const kind = value.kind === undefined ? "in-page" : value.kind;
+  if (!["in-page", "navigation"].includes(kind)) {
+    throw new Error(`${name}.kind must be in-page or navigation`);
+  }
+  if (typeof value.anchor !== "string" || !value.anchor.trim()) {
+    throw new Error(`${name}.anchor must be a non-empty selector`);
+  }
+  if (value.focusWithin !== undefined && (typeof value.focusWithin !== "string" || !value.focusWithin.trim())) {
+    throw new Error(`${name}.focusWithin must be a non-empty selector when present`);
+  }
+  if (kind === "navigation" && (typeof value.expectedPath !== "string" || !value.expectedPath.startsWith("/"))) {
+    throw new Error(`${name}.expectedPath must be an absolute route path for navigation`);
+  }
+  if (kind === "in-page" && value.expectedPath !== undefined) {
+    throw new Error(`${name}.expectedPath is valid only for navigation`);
+  }
+  const maxScrollDelta = value.maxScrollDelta === undefined ? 8 : Number(value.maxScrollDelta);
+  if (!Number.isFinite(maxScrollDelta) || maxScrollDelta < 0) {
+    throw new Error(`${name}.maxScrollDelta must be a non-negative number`);
+  }
+  const triggerActionIndex = value.triggerActionIndex === undefined ? null : Number(value.triggerActionIndex);
+  if (triggerActionIndex !== null && (!Number.isInteger(triggerActionIndex) || triggerActionIndex < 0)) {
+    throw new Error(`${name}.triggerActionIndex must be a non-negative integer when present`);
+  }
+  return {
+    kind,
+    anchor: value.anchor.trim(),
+    focusWithin: value.focusWithin?.trim() || value.anchor.trim(),
+    expectedPath: kind === "navigation" ? value.expectedPath : null,
+    maxScrollDelta,
+    triggerActionIndex,
+  };
+}
+
+function normalizeRemovedReviewCells(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("reviewRemovedCells must be an array");
+  const seen = new Set();
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`reviewRemovedCells[${index}] must be {reviewCellKey, reason}`);
+    }
+    if (typeof item.reviewCellKey !== "string" || !item.reviewCellKey.trim()) {
+      throw new Error(`reviewRemovedCells[${index}].reviewCellKey must be non-empty`);
+    }
+    if (typeof item.reason !== "string" || !item.reason.trim()) {
+      throw new Error(`reviewRemovedCells[${index}].reason must be non-empty`);
+    }
+    const reviewCellKey = item.reviewCellKey.trim();
+    if (seen.has(reviewCellKey)) throw new Error(`duplicate reviewRemovedCells key ${reviewCellKey}`);
+    seen.add(reviewCellKey);
+    return { reviewCellKey, reason: item.reason.trim() };
+  });
+}
+
+function loadPriorManualReview(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("reviewAgainst must be a non-empty path string");
+  }
+  const reviewPath = path.resolve(value);
+  const stat = fs.lstatSync(reviewPath);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error("reviewAgainst must name a regular non-symlink file");
+  }
+  const bytes = fs.readFileSync(reviewPath);
+  const payload = JSON.parse(bytes.toString("utf8"));
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("reviewAgainst must contain a manual-review JSON object");
+  }
+  if (payload.schemaVersion !== MANUAL_REVIEW_SCHEMA_VERSION || payload.kind !== MANUAL_REVIEW_KIND) {
+    throw new Error("reviewAgainst is not a supported reviewed manifest");
+  }
+  for (const field of ["reviewedRunId", "reportSha256", "reviewQueueSha256"]) {
+    if (typeof payload[field] !== "string" || !payload[field].trim()) {
+      throw new Error(`reviewAgainst.${field} must be non-empty`);
+    }
+  }
+  if (!SHA256_RE.test(payload.reportSha256) || !SHA256_RE.test(payload.reviewQueueSha256)) {
+    throw new Error("reviewAgainst report and queue bindings must be SHA-256 values");
+  }
+  if (!Array.isArray(payload.decisions) || !payload.decisions.length) {
+    throw new Error("reviewAgainst.decisions must be a non-empty array");
+  }
+  const seen = new Set();
+  const decisions = payload.decisions.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`reviewAgainst.decisions[${index}] must be an object`);
+    }
+    if (typeof item.reviewCellKey !== "string" || !item.reviewCellKey.trim()) {
+      throw new Error(`reviewAgainst.decisions[${index}].reviewCellKey must be non-empty`);
+    }
+    const reviewCellKey = item.reviewCellKey.trim();
+    if (seen.has(reviewCellKey)) throw new Error(`reviewAgainst contains duplicate cell ${reviewCellKey}`);
+    seen.add(reviewCellKey);
+    if (!["pass", "gap", "blocked"].includes(item.decision)) {
+      throw new Error(`reviewAgainst.decisions[${index}].decision must be pass, gap, or blocked`);
+    }
+    if (!SHA256_RE.test(item.sourceFingerprint || "") || !SHA256_RE.test(item.intentFingerprint || "")) {
+      throw new Error(`reviewAgainst.decisions[${index}] requires source and intent SHA-256 fingerprints`);
+    }
+    const screenshots = item.screenshots;
+    if (!screenshots || !SHA256_RE.test(screenshots.viewportSha256 || "") || !SHA256_RE.test(screenshots.fullPageSha256 || "")) {
+      throw new Error(`reviewAgainst.decisions[${index}] requires both screenshot SHA-256 values`);
+    }
+    if (item.decision !== "pass" && (typeof item.note !== "string" || !item.note.trim())) {
+      throw new Error(`reviewAgainst.decisions[${index}] requires a note for ${item.decision}`);
+    }
+    return { ...item, reviewCellKey };
+  });
+  return {
+    path: reviewPath,
+    sha256: sha256(bytes),
+    reviewedRunId: payload.reviewedRunId,
+    reportSha256: payload.reportSha256,
+    reviewQueueSha256: payload.reviewQueueSha256,
+    decisions,
+  };
+}
+
+function normalizeContentInsetList(value, name) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error(`${name} must be an array`);
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`${name}[${index}] must be {selector, min, name?}`);
+    }
+    if (typeof item.selector !== "string" || !item.selector.trim()) {
+      throw new Error(`${name}[${index}].selector must be a non-empty string`);
+    }
+    const min = Number(item.min);
+    if (!Number.isFinite(min) || min <= 0) {
+      throw new Error(`${name}[${index}].min must be a positive number of CSS pixels`);
+    }
+    if (item.name !== undefined && (typeof item.name !== "string" || !item.name.trim())) {
+      throw new Error(`${name}[${index}].name must be a non-empty string when present`);
+    }
+    return {
+      selector: item.selector.trim(),
+      min,
+      name: item.name?.trim() || item.selector.trim(),
+    };
+  });
+}
+
+function normalizeSourceBinding(value, name) {
+  if (value === undefined || value === null) return null;
+  const input = typeof value === "string" ? { expected: value } : value;
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error(`${name} must be an expected binding string or object`);
+  }
+  if (typeof input.expected !== "string" || !input.expected.trim()) {
+    throw new Error(`${name}.expected must be a non-empty string`);
+  }
+  if (input.expected.trim().length > 512) {
+    throw new Error(`${name}.expected must be 512 characters or fewer`);
+  }
+  const responseHeader = input.responseHeader === undefined
+    ? "x-ui-source-revision"
+    : input.responseHeader;
+  const metaName = input.metaName === undefined
+    ? "ui-source-revision"
+    : input.metaName;
+  if (responseHeader !== null && (
+    typeof responseHeader !== "string" ||
+    !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(responseHeader)
+  )) {
+    throw new Error(`${name}.responseHeader must be null or a valid non-empty HTTP header name`);
+  }
+  if (metaName !== null && (typeof metaName !== "string" || !metaName.trim())) {
+    throw new Error(`${name}.metaName must be null or a non-empty string`);
+  }
+  if (responseHeader === null && metaName === null) {
+    throw new Error(`${name} must declare responseHeader, metaName, or both`);
+  }
+  return {
+    expected: input.expected.trim(),
+    responseHeader: responseHeader === null ? null : responseHeader.toLowerCase(),
+    metaName: metaName === null ? null : metaName.trim(),
+  };
+}
+
+function normalizeBreakpointProfile(value, name) {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${name} must be {breakpoints, height, name?, baseViewport?}`);
+  }
+  if (!Array.isArray(value.breakpoints) || !value.breakpoints.length) {
+    throw new Error(`${name}.breakpoints must be a non-empty array`);
+  }
+  const breakpoints = [...new Set(value.breakpoints.map((entry, index) => {
+    const width = Number(entry);
+    if (!Number.isInteger(width) || width < 2) {
+      throw new Error(`${name}.breakpoints[${index}] must be an integer of at least 2 CSS pixels`);
+    }
+    return width;
+  }))].sort((left, right) => left - right);
+  const height = Number(value.height);
+  if (!Number.isInteger(height) || height <= 0) {
+    throw new Error(`${name}.height must be a positive integer`);
+  }
+  const profileName = value.name === undefined ? "responsive" : value.name;
+  if (typeof profileName !== "string" || !profileName.trim()) {
+    throw new Error(`${name}.name must be a non-empty string when present`);
+  }
+  if (value.baseViewport !== undefined && (
+    typeof value.baseViewport !== "string" || !value.baseViewport.trim()
+  )) {
+    throw new Error(`${name}.baseViewport must be a non-empty viewport name when present`);
+  }
+  return {
+    name: profileName.trim(),
+    breakpoints,
+    height,
+    baseViewport: value.baseViewport?.trim(),
+  };
+}
+
 function normalizeWaitFor(value, name) {
   if (!value) return {};
   if (typeof value === "string") {
@@ -338,8 +729,31 @@ async function applyWaitFor(page, waitFor) {
   }
 }
 
+function normalizeTargetDefaults(value) {
+  if (value === undefined || value === null) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("targetDefaults must be an object");
+  }
+  return {
+    journeys: normalizeJourneyDefinitions(value.journeys, "targetDefaults.journeys"),
+    primaryJourney: value.primaryJourney === undefined || value.primaryJourney === null
+      ? null
+      : String(value.primaryJourney).trim(),
+    priorityOverrideReason: value.priorityOverrideReason === undefined || value.priorityOverrideReason === null
+      ? ""
+      : String(value.priorityOverrideReason).trim(),
+    regions: normalizeJourneyRegions(value.regions, "targetDefaults.regions"),
+    theme: normalizeTheme(value.theme, "targetDefaults.theme"),
+    reviewInputs: normalizeReviewInputs(value.reviewInputs, "targetDefaults.reviewInputs"),
+    allowContrast: normalizeSelectorReasonList(value.allowContrast, "targetDefaults.allowContrast"),
+    themeExceptions: normalizeSelectorReasonList(value.themeExceptions, "targetDefaults.themeExceptions"),
+    screenshotMasks: normalizeSelectorReasonList(value.screenshotMasks, "targetDefaults.screenshotMasks"),
+  };
+}
+
 function normalizeTargets(config, cli) {
   const targets = [];
+  const targetDefaults = normalizeTargetDefaults(config.targetDefaults);
   const normalizeStates = (value) => {
     if (value === undefined) return [];
     if (!Array.isArray(value)) throw new Error("target.states must be an array");
@@ -388,17 +802,46 @@ function normalizeTargets(config, cli) {
       if (state.allowFailure !== undefined && (typeof state.allowFailure !== "string" || !state.allowFailure.trim())) {
         throw new Error(`target.states[${stateIndex}].allowFailure must be a non-empty reason string`);
       }
+      const continuation = normalizeContinuation(
+        state.continuation,
+        `target.states[${stateIndex}].continuation`,
+      );
+      if (
+        continuation?.triggerActionIndex !== null &&
+        continuation?.triggerActionIndex >= actions.length
+      ) {
+        throw new Error(`target.states[${stateIndex}].continuation.triggerActionIndex is outside the actions array`);
+      }
       return {
         name: state.name.trim(),
         actions,
         waitFor: normalizeWaitFor(state.waitFor, `target.states[${stateIndex}].waitFor`),
         allowFailure: state.allowFailure,
+        continuation,
+        journeys: state.journeys === undefined
+          ? undefined
+          : normalizeJourneyDefinitions(state.journeys, `target.states[${stateIndex}].journeys`),
+        primaryJourney: state.primaryJourney === undefined
+          ? undefined
+          : (state.primaryJourney === null ? null : String(state.primaryJourney).trim()),
+        priorityOverrideReason: state.priorityOverrideReason === undefined
+          ? undefined
+          : (state.priorityOverrideReason === null ? "" : String(state.priorityOverrideReason).trim()),
+        regions: state.regions === undefined
+          ? undefined
+          : normalizeJourneyRegions(state.regions, `target.states[${stateIndex}].regions`),
+        theme: state.theme === undefined
+          ? undefined
+          : normalizeTheme(state.theme, `target.states[${stateIndex}].theme`),
+        reviewInputs: state.reviewInputs === undefined
+          ? undefined
+          : normalizeReviewInputs(state.reviewInputs, `target.states[${stateIndex}].reviewInputs`),
       };
     });
   };
   if (Array.isArray(config.targets)) {
-    for (const item of config.targets) {
-      if (typeof item === "string") targets.push({ url: item, source: "explicit" });
+    for (const [targetIndex, item] of config.targets.entries()) {
+      if (typeof item === "string") targets.push({ ...targetDefaults, url: item, source: "explicit" });
       else if (item && typeof item === "object" && typeof item.url === "string") {
         if (item.allowFailure !== undefined && (typeof item.allowFailure !== "string" || !item.allowFailure.trim())) {
           throw new Error("target.allowFailure must be a non-empty reason string");
@@ -409,6 +852,41 @@ function normalizeTargets(config, cli) {
         targets.push({
           ...item,
           states: normalizeStates(item.states),
+          contentInsets: normalizeContentInsetList(item.contentInsets, `targets[${targetIndex}].contentInsets`),
+          journeys: item.journeys === undefined
+            ? (targetDefaults.journeys || [])
+            : normalizeJourneyDefinitions(item.journeys, `targets[${targetIndex}].journeys`),
+          primaryJourney: item.primaryJourney === undefined
+            ? (targetDefaults.primaryJourney || null)
+            : (item.primaryJourney === null ? null : String(item.primaryJourney).trim()),
+          priorityOverrideReason: item.priorityOverrideReason === undefined
+            ? (targetDefaults.priorityOverrideReason || "")
+            : (item.priorityOverrideReason === null ? "" : String(item.priorityOverrideReason).trim()),
+          regions: item.regions === undefined
+            ? (targetDefaults.regions || [])
+            : normalizeJourneyRegions(item.regions, `targets[${targetIndex}].regions`),
+          theme: item.theme === undefined
+            ? (targetDefaults.theme || null)
+            : normalizeTheme(item.theme, `targets[${targetIndex}].theme`),
+          reviewInputs: item.reviewInputs === undefined
+            ? (targetDefaults.reviewInputs || [])
+            : normalizeReviewInputs(item.reviewInputs, `targets[${targetIndex}].reviewInputs`),
+          allowContrast: [
+            ...(targetDefaults.allowContrast || []),
+            ...normalizeSelectorReasonList(item.allowContrast, `targets[${targetIndex}].allowContrast`),
+          ],
+          themeExceptions: [
+            ...(targetDefaults.themeExceptions || []),
+            ...normalizeSelectorReasonList(item.themeExceptions, `targets[${targetIndex}].themeExceptions`),
+          ],
+          screenshotMasks: [
+            ...(targetDefaults.screenshotMasks || []),
+            ...normalizeSelectorReasonList(item.screenshotMasks, `targets[${targetIndex}].screenshotMasks`),
+          ],
+          breakpointProfile: normalizeBreakpointProfile(item.breakpointProfile, `targets[${targetIndex}].breakpointProfile`),
+          sourceBinding: item.sourceBinding === undefined
+            ? undefined
+            : normalizeSourceBinding(item.sourceBinding, `targets[${targetIndex}].sourceBinding`),
           includeBase: item.includeBase === undefined ? true : item.includeBase,
           source: item.source || "explicit",
         });
@@ -416,7 +894,7 @@ function normalizeTargets(config, cli) {
       else throw new Error("targets entries must be strings or objects with url");
     }
   }
-  for (const url of cli.urls) targets.push({ url, source: "explicit" });
+  for (const url of cli.urls) targets.push({ ...targetDefaults, url, source: "explicit" });
   return targets;
 }
 
@@ -457,6 +935,10 @@ function normalizeConfig(config, cli, artifacts) {
   if (!Number.isInteger(minCheckedPages) || minCheckedPages < 0) {
     throw new Error("minCheckedPages must be a non-negative integer");
   }
+  const maxPageCount = Number(cli.maxPageCount ?? config.maxPageCount ?? DEFAULT_MAX_PAGE_COUNT);
+  if (!Number.isInteger(maxPageCount) || maxPageCount <= 0) {
+    throw new Error("maxPageCount must be a positive integer");
+  }
   const areas = [
     ...(Array.isArray(config.areas) ? config.areas : []),
     ...cli.areas,
@@ -472,22 +954,44 @@ function normalizeConfig(config, cli, artifacts) {
   if (config.receiptOnly !== undefined && typeof config.receiptOnly !== "boolean") {
     throw new Error("receiptOnly must be a boolean when present");
   }
+  const playwrightModuleDirValue = cli.playwrightModuleDir || config.playwrightModuleDir;
+  if (playwrightModuleDirValue !== undefined && (
+    typeof playwrightModuleDirValue !== "string" || !playwrightModuleDirValue.trim()
+  )) {
+    throw new Error("playwrightModuleDir must be a non-empty path string");
+  }
+  const artifactFiles = [artifacts.jsonOut, artifacts.markdownOut, artifacts.reviewQueueOut];
+  if (new Set(artifactFiles).size !== artifactFiles.length) {
+    throw new Error("JSON, Markdown, and review-queue artifact paths must be distinct");
+  }
+  if (artifactFiles.includes(artifacts.screenshotDir)) {
+    throw new Error("screenshotDir must be distinct from report and review-queue files");
+  }
   return {
     targets: normalizeTargets(config, cli),
+    targetDefaults: normalizeTargetDefaults(config.targetDefaults),
     viewports: normalizeViewports(config, cli),
     waitFor: config.waitFor,
     areas,
+    contentInsets: normalizeContentInsetList(config.contentInsets, "contentInsets"),
     ignore: [...normalizeSelectorReasonList(config.ignore, "ignore"), ...cli.ignore],
     allowTruncation: [...normalizeSelectorReasonList(config.allowTruncation, "allowTruncation"), ...cli.allowTruncation],
     allowOverlap: [...normalizeSelectorReasonList(config.allowOverlap, "allowOverlap"), ...cli.allowOverlap],
+    allowContrast: normalizeSelectorReasonList(config.allowContrast, "allowContrast"),
+    themeExceptions: normalizeSelectorReasonList(config.themeExceptions, "themeExceptions"),
+    screenshotMasks: normalizeSelectorReasonList(config.screenshotMasks, "screenshotMasks"),
     rules: {
       failOn,
       strictTruncation: Boolean(rules.strictTruncation),
     },
     jsonOut: artifacts.jsonOut,
     markdownOut: artifacts.markdownOut,
+    reviewQueueOut: artifacts.reviewQueueOut,
     humanReadableStdout: cli.humanReadableStdout,
     browserExecutable: cli.browserExecutable || config.browserExecutable,
+    playwrightModuleDir: playwrightModuleDirValue
+      ? path.resolve(playwrightModuleDirValue)
+      : undefined,
     fromCoordinator: cli.fromCoordinator || Boolean(config.fromCoordinator),
     coordinatorScript: cli.coordinatorScript || config.coordinatorScript,
     coordinatorProject: cli.coordinatorProject || config.coordinatorProject,
@@ -495,10 +999,15 @@ function normalizeConfig(config, cli, artifacts) {
     allowDiscoveredTargetFailures:
       cli.allowDiscoveredTargetFailures || Boolean(config.allowDiscoveredTargetFailures),
     minCheckedPages,
-    screenshotDir: cli.screenshotDir || config.screenshotDir,
+    maxPageCount,
+    screenshotDir: artifacts.screenshotDir,
     scroll: cli.noScroll ? false : (config.scroll === undefined ? true : Boolean(config.scroll)),
     cookies: [...normalizeCookieList(config.cookies), ...cli.cookies],
     ignoreHttpsErrors: cli.ignoreHttpsErrors || Boolean(config.ignoreHttpsErrors),
+    sourceBinding: normalizeSourceBinding(config.sourceBinding, "sourceBinding"),
+    repoRoot: cli.repoRoot || config.repoRoot || null,
+    priorReview: loadPriorManualReview(cli.reviewAgainst || config.reviewAgainst),
+    reviewRemovedCells: normalizeRemovedReviewCells(config.reviewRemovedCells),
   };
 }
 
@@ -531,12 +1040,208 @@ function resolveViewports(viewports, devices) {
       width,
       height,
       contextOptions,
+      sampling: {
+        mode: "sampled-only",
+        sources: ["configured"],
+        breakpointSamples: [],
+      },
     };
   });
 }
 
+function stableJson(value) {
+  const normalize = (entry) => {
+    if (Array.isArray(entry)) return entry.map(normalize);
+    if (!entry || typeof entry !== "object") return entry;
+    return Object.fromEntries(
+      Object.keys(entry).sort().map((key) => [key, normalize(entry[key])]),
+    );
+  };
+  return JSON.stringify(normalize(value));
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function privacySafeConfigContract(config) {
+  const redactActions = (states) => (states || []).map((state) => ({
+    ...state,
+    actions: (state.actions || []).map((action) => ({
+      ...action,
+      ...(Object.hasOwn(action, "value") ? { value: "<redacted>" } : {}),
+    })),
+  }));
+  const targets = (config.targets || []).map((target) => ({
+    ...target,
+    states: redactActions(target.states),
+  }));
+  const cookies = (config.cookies || []).map((cookie) => ({
+    ...cookie,
+    value: "<redacted>",
+  }));
+  return {
+    targets,
+    targetDefaults: config.targetDefaults,
+    viewports: config.viewports,
+    waitFor: config.waitFor || null,
+    areas: config.areas,
+    contentInsets: config.contentInsets,
+    ignore: config.ignore,
+    allowTruncation: config.allowTruncation,
+    allowOverlap: config.allowOverlap,
+    allowContrast: config.allowContrast,
+    themeExceptions: config.themeExceptions,
+    screenshotMasks: config.screenshotMasks,
+    rules: config.rules,
+    fromCoordinator: config.fromCoordinator,
+    coordinatorProject: config.coordinatorProject || null,
+    onlyCurrent: config.onlyCurrent,
+    allowDiscoveredTargetFailures: config.allowDiscoveredTargetFailures,
+    minCheckedPages: config.minCheckedPages,
+    maxPageCount: config.maxPageCount,
+    scroll: config.scroll,
+    cookies,
+    ignoreHttpsErrors: config.ignoreHttpsErrors,
+    sourceBinding: config.sourceBinding,
+    repoRoot: config.repoRoot ? path.resolve(config.repoRoot) : null,
+    priorReview: config.priorReview
+      ? { sha256: config.priorReview.sha256, reviewedRunId: config.priorReview.reviewedRunId }
+      : null,
+    reviewRemovedCells: config.reviewRemovedCells,
+    browserExecutable: config.browserExecutable || null,
+    playwrightModuleDir: config.playwrightModuleDir || null,
+  };
+}
+
+function routeEvidence(value) {
+  try {
+    const parsed = new URL(value);
+    return {
+      origin: parsed.origin,
+      path: parsed.pathname || "/",
+      queryPresent: Boolean(parsed.search),
+      fragmentPresent: Boolean(parsed.hash),
+    };
+  } catch {
+    return {
+      origin: "",
+      path: String(value || ""),
+      queryPresent: false,
+      fragmentPresent: false,
+    };
+  }
+}
+
+function viewportExecutionSignature(viewport) {
+  return stableJson({
+    width: viewport.width,
+    height: viewport.height,
+    contextOptions: viewport.contextOptions,
+  });
+}
+
+function viewportsForTarget(target, configuredViewports) {
+  const viewports = configuredViewports.map((viewport) => ({
+    ...viewport,
+    contextOptions: { ...viewport.contextOptions },
+    sampling: {
+      mode: "sampled-only",
+      sources: [...(viewport.sampling?.sources || ["configured"])],
+      breakpointSamples: [...(viewport.sampling?.breakpointSamples || [])],
+    },
+  }));
+  const profile = target.breakpointProfile;
+  if (!profile) return viewports;
+  let base = null;
+  if (profile.baseViewport) {
+    base = configuredViewports.find((viewport) => viewport.name === profile.baseViewport);
+    if (!base) {
+      throw new Error(
+        `Breakpoint profile ${profile.name} references unknown baseViewport ${profile.baseViewport}`,
+      );
+    }
+  }
+  const bySignature = new Map(viewports.map((viewport) => [viewportExecutionSignature(viewport), viewport]));
+  for (const breakpoint of profile.breakpoints) {
+    for (const offset of [-1, 0, 1]) {
+      const width = breakpoint + offset;
+      const contextOptions = base
+        ? { ...base.contextOptions, viewport: { width, height: profile.height } }
+        : { viewport: { width, height: profile.height } };
+      const sample = {
+        profile: profile.name,
+        breakpoint,
+        offset,
+      };
+      const candidate = {
+        name: `${profile.name}-${breakpoint}-${offset < 0 ? "minus-1" : (offset > 0 ? "plus-1" : "at")}`,
+        device: base?.device,
+        width,
+        height: profile.height,
+        contextOptions,
+        sampling: {
+          mode: "sampled-only",
+          sources: ["breakpoint-profile"],
+          breakpointSamples: [sample],
+        },
+      };
+      const signature = viewportExecutionSignature(candidate);
+      const existing = bySignature.get(signature);
+      if (existing) {
+        if (!existing.sampling.sources.includes("breakpoint-profile")) {
+          existing.sampling.sources.push("breakpoint-profile");
+        }
+        existing.sampling.breakpointSamples.push(sample);
+      } else {
+        viewports.push(candidate);
+        bySignature.set(signature, candidate);
+      }
+    }
+  }
+  return viewports;
+}
+
+function buildExecutionPlan(targets, configuredViewports, maxPageCount) {
+  const cells = [];
+  for (const target of targets) {
+    for (const viewport of viewportsForTarget(target, configuredViewports)) {
+      const cellId = `cell-${String(cells.length + 1).padStart(4, "0")}`;
+      const requestedRoute = routeEvidence(target.url);
+      cells.push({
+        cellId,
+        target,
+        viewport,
+        requestedPath: requestedRoute.path,
+      });
+      if (cells.length > maxPageCount) {
+        throw new Error(
+          `Expanded verification plan has at least ${cells.length} page cells, exceeding maxPageCount ${maxPageCount}`,
+        );
+      }
+    }
+  }
+  return cells;
+}
+
+function publicExecutionPlan(cells, maxPageCount) {
+  return {
+    pageBudget: maxPageCount,
+    plannedPageCount: cells.length,
+    widthCoverage: "sampled-only",
+    widthCoverageNote: "Only the listed viewport widths were checked; widths between samples were not inspected.",
+    cells: cells.map((cell) => ({
+      cellId: cell.cellId,
+      targetName: cell.target.name || cell.target.url,
+      requestedPath: cell.requestedPath,
+      stateName: cell.target.stateName || "base",
+      viewport: publicViewport(cell.viewport),
+    })),
+  };
+}
+
 function publicTarget(target) {
-  const { states, verificationState, includeBase, ...safe } = target;
+  const { states, verificationState, includeBase, repositoryRoot, ...safe } = target;
   return safe;
 }
 
@@ -551,7 +1256,12 @@ function expandTargetStates(targets) {
     const states = Array.isArray(target.states) ? target.states : [];
     const baseName = target.name || target.url;
     if (target.includeBase !== false || !states.length) {
-      expanded.push({ ...target, name: baseName, stateName: "base" });
+      expanded.push({
+        ...target,
+        name: baseName,
+        stateName: "base",
+        continuation: null,
+      });
     }
     for (const state of states) {
       expanded.push({
@@ -560,18 +1270,217 @@ function expandTargetStates(targets) {
         stateName: state.name,
         verificationState: state,
         allowFailure: state.allowFailure || target.allowFailure,
+        journeys: state.journeys ?? target.journeys,
+        primaryJourney: state.primaryJourney ?? target.primaryJourney,
+        priorityOverrideReason: state.priorityOverrideReason ?? target.priorityOverrideReason,
+        regions: state.regions ?? target.regions,
+        theme: state.theme ?? target.theme,
+        reviewInputs: [
+          ...(target.reviewInputs || []),
+          ...(state.reviewInputs || []),
+        ],
+        continuation: state.continuation,
       });
     }
   }
   return expanded;
 }
 
+function pathHasSymlinkComponent(absolutePath) {
+  const parsed = path.parse(absolutePath);
+  let current = parsed.root;
+  const relative = absolutePath.slice(parsed.root.length);
+  for (const part of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    if (fs.lstatSync(current).isSymbolicLink()) return true;
+  }
+  return false;
+}
+
+function resolveRepositoryRoot(value) {
+  if (value === null || value === undefined || value === "") {
+    return { root: null, error: "repoRoot is required for declared UI review inputs" };
+  }
+  if (typeof value !== "string" || !value.trim()) {
+    return { root: null, error: "repoRoot must be a non-empty path string" };
+  }
+  const candidate = path.resolve(value);
+  try {
+    if (pathHasSymlinkComponent(candidate)) {
+      return { root: null, error: "repoRoot must not contain symlinked path components" };
+    }
+    const stat = fs.lstatSync(candidate);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      return { root: null, error: "repoRoot must be a regular non-symlink directory" };
+    }
+    return { root: fs.realpathSync.native(candidate), error: null };
+  } catch (error) {
+    return { root: null, error: `repoRoot could not be resolved: ${error.message}` };
+  }
+}
+
+function collectReviewInputFiles(repoRoot, declaredInputs) {
+  const files = new Map();
+  const inputs = [];
+  const walk = (absolute, kind) => {
+    const stat = fs.lstatSync(absolute);
+    if (stat.isSymbolicLink()) throw new Error("symlinked review inputs are not allowed");
+    if (stat.isFile()) {
+      const relativePath = path.relative(repoRoot, absolute).split(path.sep).join("/");
+      const bytes = fs.readFileSync(absolute);
+      const existing = files.get(relativePath);
+      const kinds = new Set(existing?.kinds || []);
+      kinds.add(kind);
+      files.set(relativePath, {
+        path: relativePath,
+        sha256: sha256(bytes),
+        kinds: [...kinds].sort(),
+      });
+      return 1;
+    }
+    if (!stat.isDirectory()) throw new Error("review inputs must be regular files or directories");
+    let discovered = 0;
+    for (const entry of fs.readdirSync(absolute, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const child = path.join(absolute, entry.name);
+      if (entry.isSymbolicLink()) throw new Error(`symlinked review input is not allowed: ${entry.name}`);
+      discovered += walk(child, kind);
+    }
+    return discovered;
+  };
+  for (const input of declaredInputs) {
+    if (path.isAbsolute(input.path) || input.path.split(/[\\/]+/).includes("..")) {
+      throw new Error(`review input must stay repository-relative: ${input.path}`);
+    }
+    const absolute = path.resolve(repoRoot, input.path);
+    if (!pathIsWithin(absolute, repoRoot)) {
+      throw new Error(`review input escapes repoRoot: ${input.path}`);
+    }
+    if (!fs.existsSync(absolute)) throw new Error(`review input does not exist: ${input.path}`);
+    if (pathHasSymlinkComponent(absolute)) {
+      throw new Error(`review input contains a symlinked path component: ${input.path}`);
+    }
+    const discovered = walk(absolute, input.kind);
+    if (discovered === 0 && fs.lstatSync(absolute).isDirectory()) {
+      throw new Error(`review input directory is empty: ${input.path}`);
+    }
+    inputs.push({ path: input.path.split(path.sep).join("/"), kind: input.kind });
+  }
+  const fileList = [...files.values()].sort((a, b) => a.path.localeCompare(b.path));
+  if (!fileList.length) throw new Error("reviewInputs resolved no files");
+  return {
+    inputs,
+    files: fileList,
+    fingerprint: sha256(stableJson({ inputs, files: fileList })),
+  };
+}
+
+function journeyContractErrors(target) {
+  const errors = [];
+  const journeys = Array.isArray(target.journeys) ? target.journeys : [];
+  const journeyIds = new Set(journeys.map((journey) => journey.id));
+  if (!journeys.length) errors.push("journeys must declare at least one journey");
+  if (!target.primaryJourney) errors.push("primaryJourney is required");
+  else if (!journeyIds.has(target.primaryJourney)) errors.push("primaryJourney must reference a declared journey id");
+  if (journeys.length && target.primaryJourney && journeyIds.has(target.primaryJourney)) {
+    const primary = journeys.find((journey) => journey.id === target.primaryJourney);
+    const highestFrequency = Math.max(...journeys.map((journey) => journey.frequencyPercent));
+    if (primary.frequencyPercent < highestFrequency && !String(target.priorityOverrideReason || "").trim()) {
+      errors.push("a lower-frequency primaryJourney requires priorityOverrideReason");
+    }
+  }
+  const regions = Array.isArray(target.regions) ? target.regions : [];
+  if (!regions.length) errors.push("regions must declare the rendered journey hierarchy");
+  const primaryRegions = regions.filter(
+    (region) => region.role === "primary-content" && region.journey === target.primaryJourney,
+  );
+  if (!primaryRegions.length) errors.push("regions must include primary-content for primaryJourney");
+  for (const region of regions) {
+    if (["primary-content", "workflow-surface"].includes(region.role)) {
+      if (!region.journey || !journeyIds.has(region.journey)) {
+        errors.push(`region ${region.name} must reference a declared journey`);
+      }
+    }
+    if (region.role === "blocking-alert" && !region.reason) {
+      errors.push(`blocking-alert region ${region.name} requires a reason`);
+    }
+  }
+  if (!target.theme) errors.push("theme must declare light, dark, or mixed");
+  if (!Array.isArray(target.reviewInputs) || !target.reviewInputs.length) {
+    errors.push("reviewInputs must declare the UI implementation inputs for this target/state");
+  }
+  const actions = target.verificationState?.actions || [];
+  const activating = actions.some((action) => ["click", "press", "check", "uncheck", "selectOption"].includes(action.action));
+  if (activating && !target.continuation) {
+    errors.push("an activating interaction state requires a continuation checkpoint");
+  }
+  return [...new Set(errors)];
+}
+
+function prepareTargetContracts(targets, config) {
+  const repo = resolveRepositoryRoot(config.repoRoot);
+  const reviewCache = new Map();
+  return targets.map((target) => {
+    const contractErrors = journeyContractErrors(target);
+    let reviewEvidence = null;
+    if (target.reviewInputs?.length) {
+      if (repo.error) {
+        contractErrors.push(repo.error);
+      } else {
+        const cacheKey = stableJson(target.reviewInputs);
+        try {
+          if (!reviewCache.has(cacheKey)) {
+            reviewCache.set(cacheKey, collectReviewInputFiles(repo.root, target.reviewInputs));
+          }
+          reviewEvidence = reviewCache.get(cacheKey);
+        } catch (error) {
+          contractErrors.push(error.message);
+        }
+      }
+    }
+    const intentContract = {
+      journeys: target.journeys || [],
+      primaryJourney: target.primaryJourney || null,
+      priorityOverrideReason: target.priorityOverrideReason || "",
+      regions: target.regions || [],
+      theme: target.theme || null,
+      stateName: target.stateName || "base",
+      continuation: target.continuation || null,
+      actions: (target.verificationState?.actions || []).map((action) => ({
+        action: action.action,
+        selector: action.selector,
+        timeoutMs: action.timeoutMs,
+        ...(Object.hasOwn(action, "value") ? { value: "<redacted>" } : {}),
+      })),
+    };
+    return {
+      ...target,
+      contractErrors: [...new Set(contractErrors)],
+      reviewEvidence,
+      intentFingerprint: sha256(stableJson(intentContract)),
+      repositoryRoot: repo.root,
+    };
+  });
+}
+
 async function applyInteractionState(page, state) {
-  if (!state) return;
-  for (const action of state.actions) {
+  if (!state) return { beforeContinuation: null };
+  const triggerActionIndex = state.continuation
+    ? (state.continuation.triggerActionIndex ?? state.actions.length - 1)
+    : -1;
+  let beforeContinuation = null;
+  for (const [index, action] of state.actions.entries()) {
     const locator = page.locator(action.selector);
     const options = { timeout: action.timeoutMs };
     try {
+      if (index === triggerActionIndex) {
+        await locator.scrollIntoViewIfNeeded(options);
+        beforeContinuation = await page.evaluate(() => ({
+          scrollX: window.scrollX,
+          scrollY: window.scrollY,
+          path: window.location.pathname,
+          origin: window.location.origin,
+        }));
+      }
       if (action.action === "click") await locator.click(options);
       else if (action.action === "hover") await locator.hover(options);
       else if (action.action === "focus") await locator.focus(options);
@@ -591,11 +1500,163 @@ async function applyInteractionState(page, state) {
   } else {
     await page.waitForTimeout(50);
   }
+  return { beforeContinuation };
 }
 
-function resolvePlaywright() {
+async function verifyContinuation(page, continuation, beforeContinuation) {
+  if (!continuation) return { checked: false, findings: [], evidence: null };
+  const findings = [];
+  const current = await page.evaluate(() => ({
+    scrollX: window.scrollX,
+    scrollY: window.scrollY,
+    path: window.location.pathname,
+    origin: window.location.origin,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  }));
+  const anchor = page.locator(continuation.anchor).first();
+  let count = 0;
+  try {
+    count = await anchor.count();
+  } catch (error) {
+    findings.push({
+      severity: "critical",
+      rule: "continuation-anchor-invalid",
+      message: "Continuation anchor selector could not be evaluated.",
+      selector: continuation.anchor,
+      textSnippet: "",
+      rect: null,
+      area: null,
+      evidence: { error: error.name || "selector error" },
+    });
+  }
+  let anchorRect = null;
+  let anchorVisible = false;
+  let anchorRecognizable = false;
+  if (count > 0) {
+    anchorRect = await anchor.boundingBox().catch(() => null);
+    anchorVisible = Boolean(anchorRect) && await anchor.isVisible().catch(() => false);
+    anchorRecognizable = await anchor.evaluate((element) => Boolean(
+      element.matches("h1,h2,h3,h4,h5,h6,input:not([type='hidden']),select,textarea,[role='heading'],[data-ui-continuation-anchor]")
+    )).catch(() => false);
+  }
+  const inViewport = Boolean(
+    anchorVisible &&
+    anchorRect.width > 1 &&
+    anchorRect.height > 1 &&
+    anchorRect.x + anchorRect.width > 0 &&
+    anchorRect.y + anchorRect.height > 0 &&
+    anchorRect.x < current.viewportWidth &&
+    anchorRect.y < current.viewportHeight
+  );
+  if (!count) {
+    findings.push({
+      severity: "critical",
+      rule: "continuation-anchor-missing",
+      message: "Activated journey did not render its declared continuation anchor.",
+      selector: continuation.anchor,
+      textSnippet: "",
+      rect: null,
+      area: null,
+      evidence: {},
+    });
+  } else if (!inViewport) {
+    findings.push({
+      severity: "critical",
+      rule: "continuation-anchor-offscreen",
+      message: "Activated journey rendered its continuation outside the current viewport.",
+      selector: continuation.anchor,
+      textSnippet: "",
+      rect: anchorRect,
+      area: null,
+      evidence: {
+        viewport: { width: current.viewportWidth, height: current.viewportHeight },
+      },
+    });
+  }
+  if (count > 0 && !anchorRecognizable) {
+    findings.push({
+      severity: "critical",
+      rule: "continuation-anchor-not-recognizable",
+      message: "Continuation anchor must be the revealed heading, first field, or an explicitly marked recognizable anchor.",
+      selector: continuation.anchor,
+      textSnippet: "",
+      rect: anchorRect,
+      area: null,
+      evidence: {},
+    });
+  }
+  let focusWithin = null;
+  if (continuation.kind === "in-page" && count > 0) {
+    const focusRoot = page.locator(continuation.focusWithin).first();
+    if (await focusRoot.count().catch(() => 0)) {
+      focusWithin = await focusRoot.evaluate((root) => {
+        let active = document.activeElement;
+        while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+        return Boolean(active && (active === root || root.contains(active)));
+      }).catch(() => false);
+    } else {
+      focusWithin = false;
+    }
+    if (!focusWithin) {
+      findings.push({
+        severity: "critical",
+        rule: "continuation-focus-missing",
+        message: "Activated in-page journey did not move focus into its declared continuation surface.",
+        selector: continuation.focusWithin,
+        textSnippet: "",
+        rect: null,
+        area: null,
+        evidence: {},
+      });
+    }
+  }
+  const scrollDelta = beforeContinuation
+    ? Math.max(
+        Math.abs(current.scrollX - beforeContinuation.scrollX),
+        Math.abs(current.scrollY - beforeContinuation.scrollY),
+      )
+    : null;
+  if (
+    continuation.kind === "in-page" &&
+    (scrollDelta === null || scrollDelta > continuation.maxScrollDelta)
+  ) {
+    findings.push({
+      severity: "critical",
+      rule: "continuation-document-jump",
+      message: "Activated in-page journey moved the document instead of continuing in the user's current viewport.",
+      selector: continuation.anchor,
+      textSnippet: "",
+      rect: anchorRect,
+      area: null,
+      evidence: { scrollDelta, maxScrollDelta: continuation.maxScrollDelta },
+    });
+  }
+  return {
+    checked: true,
+    findings,
+    evidence: {
+      kind: continuation.kind,
+      anchor: continuation.anchor,
+      focusWithin: continuation.focusWithin,
+      expectedPath: continuation.expectedPath,
+      anchorVisibleInViewport: inViewport,
+      anchorRecognizable,
+      focusSatisfied: focusWithin,
+      scrollDelta,
+      maxScrollDelta: continuation.maxScrollDelta,
+    },
+  };
+}
+
+function resolvePlaywright(explicitModuleDir) {
   const candidates = [];
   const cwd = process.cwd();
+  if (explicitModuleDir) candidates.push(explicitModuleDir);
+  // A canonically installed skill is a direct link into this repository. Resolve
+  // the locked project dependency from the script itself, never from the
+  // temporary audited working directory.
+  candidates.push(path.resolve(path.dirname(VERIFIER_PATH), "../../../ci/playwright/node_modules"));
   candidates.push(cwd);
   if (process.env.NODE_PATH) {
     for (const item of process.env.NODE_PATH.split(path.delimiter)) {
@@ -690,6 +1751,7 @@ function coordinatorTargets(config) {
     if (!item || typeof item.url !== "string") continue;
     if (config.onlyCurrent && item.status && item.status !== "running") continue;
     targets.push({
+      ...(config.targetDefaults || {}),
       url: item.url,
       name: item.name || item.url,
       project: item.project || null,
@@ -741,6 +1803,168 @@ async function scrollThroughPage(page, { maxIterations = 30, settleMs = 120 } = 
   return metrics;
 }
 
+function journeyHierarchyVerifier(contract) {
+  const findings = [];
+  const rows = [];
+  const deepQueryAll = (selector) => {
+    const matches = [];
+    const roots = [document];
+    while (roots.length) {
+      const root = roots.shift();
+      matches.push(...root.querySelectorAll(selector));
+      for (const element of root.querySelectorAll("*")) {
+        if (element.shadowRoot) roots.push(element.shadowRoot);
+      }
+    }
+    return matches;
+  };
+  const visible = (element) => {
+    const style = getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) <= 0.01) return false;
+    if (typeof element.checkVisibility === "function" && !element.checkVisibility()) return false;
+    const rect = element.getBoundingClientRect();
+    return rect.width > 1 && rect.height > 1;
+  };
+  const rectObject = (rect) => ({
+    x: Math.round(rect.x * 100) / 100,
+    y: Math.round(rect.y * 100) / 100,
+    width: Math.round(rect.width * 100) / 100,
+    height: Math.round(rect.height * 100) / 100,
+    top: Math.round(rect.top * 100) / 100,
+    right: Math.round(rect.right * 100) / 100,
+    bottom: Math.round(rect.bottom * 100) / 100,
+    left: Math.round(rect.left * 100) / 100,
+  });
+  for (const region of contract.regions || []) {
+    let elements = [];
+    try {
+      elements = deepQueryAll(region.selector);
+    } catch (error) {
+      findings.push({
+        severity: "critical",
+        rule: "invalid-journey-region-selector",
+        message: "A declared journey-region selector could not be evaluated.",
+        selector: region.selector,
+        textSnippet: "",
+        rect: null,
+        area: null,
+        evidence: { region: region.name, role: region.role, error: error.name || "selector error" },
+      });
+      continue;
+    }
+    for (const element of elements) {
+      const rect = element.getBoundingClientRect();
+      const isVisible = visible(element);
+      const visibleTop = Math.max(0, rect.top);
+      const visibleBottom = Math.min(window.innerHeight, rect.bottom);
+      const visibleHeight = isVisible ? Math.max(0, visibleBottom - visibleTop) : 0;
+      rows.push({
+        name: region.name,
+        selector: region.selector,
+        role: region.role,
+        journey: region.journey,
+        reason: region.reason,
+        visible: isVisible,
+        inViewport: visibleHeight > 1 && rect.right > 0 && rect.left < window.innerWidth,
+        visibleHeight,
+        viewportHeightFraction: visibleHeight / Math.max(1, window.innerHeight),
+        rect: rectObject(rect),
+      });
+    }
+  }
+  const primaryRows = rows.filter(
+    (row) => row.role === "primary-content" && row.journey === contract.primaryJourney && row.visible,
+  );
+  const primaryInViewport = primaryRows.filter((row) => row.inViewport);
+  if (!primaryRows.length) {
+    findings.push({
+      severity: "critical",
+      rule: "primary-journey-content-missing",
+      message: "The declared primary journey has no rendered visible primary-content region.",
+      selector: "document",
+      textSnippet: "",
+      rect: null,
+      area: null,
+      evidence: { primaryJourney: contract.primaryJourney },
+    });
+  } else if (!primaryInViewport.some((row) => row.visibleHeight >= 24)) {
+    findings.push({
+      severity: "critical",
+      rule: "primary-journey-outside-initial-viewport",
+      message: "The declared primary journey is not recognizably visible in the initial viewport.",
+      selector: primaryRows[0].selector,
+      textSnippet: "",
+      rect: primaryRows[0].rect,
+      area: null,
+      evidence: { primaryJourney: contract.primaryJourney, minimumVisibleHeight: 24 },
+    });
+  } else {
+    const strongest = primaryInViewport.reduce(
+      (best, row) => row.viewportHeightFraction > best.viewportHeightFraction ? row : best,
+      primaryInViewport[0],
+    );
+    if (strongest.viewportHeightFraction < 0.20) {
+      findings.push({
+        severity: "warning",
+        rule: "primary-journey-low-initial-visibility",
+        message: "The primary journey occupies less than 20% of the initial viewport height; review whether it is recognizable enough.",
+        selector: strongest.selector,
+        textSnippet: "",
+        rect: strongest.rect,
+        area: null,
+        evidence: {
+          primaryJourney: contract.primaryJourney,
+          viewportHeightFraction: Math.round(strongest.viewportHeightFraction * 1000) / 1000,
+        },
+      });
+    }
+  }
+  if (primaryRows.length) {
+    const primaryTop = Math.min(...primaryRows.map((row) => row.rect.top));
+    for (const row of rows) {
+      if (!row.visible || row.rect.top >= primaryTop - 8) continue;
+      if (row.role === "workflow-surface" && row.journey !== contract.primaryJourney) {
+        findings.push({
+          severity: "critical",
+          rule: "secondary-workflow-precedes-primary",
+          message: "A lower-priority journey surface appears before the destination's primary journey content.",
+          selector: row.selector,
+          textSnippet: "",
+          rect: row.rect,
+          area: null,
+          evidence: {
+            primaryJourney: contract.primaryJourney,
+            secondaryJourney: row.journey,
+            secondaryTop: row.rect.top,
+            primaryTop,
+          },
+        });
+      }
+      if (row.role === "supporting" && row.viewportHeightFraction > 0.25) {
+        findings.push({
+          severity: "critical",
+          rule: "supporting-content-dominates-primary",
+          message: "Supporting content consumes more than a compact share of the viewport before the primary journey.",
+          selector: row.selector,
+          textSnippet: "",
+          rect: row.rect,
+          area: null,
+          evidence: {
+            viewportHeightFraction: Math.round(row.viewportHeightFraction * 1000) / 1000,
+            primaryTop,
+          },
+        });
+      }
+    }
+  }
+  return {
+    primaryJourney: contract.primaryJourney,
+    viewport: { width: window.innerWidth, height: window.innerHeight, scrollX: window.scrollX, scrollY: window.scrollY },
+    regions: rows,
+    findings,
+  };
+}
+
 function pageVerifier() {
   const config = window.__FORMAL_WEB_UI_CONFIG__;
   const controlSelector = [
@@ -777,10 +2001,14 @@ function pageVerifier() {
     ignore: config.ignore || [],
     allowTruncation: config.allowTruncation || [],
     allowOverlap: config.allowOverlap || [],
+    allowContrast: config.allowContrast || [],
+    themeExceptions: config.themeExceptions || [],
   };
   const findings = [];
   const unmeasurableContrast = [];
   const ellipsisTruncations = [];
+  const controlTextMeasurements = [];
+  const contentInsetMeasurements = [];
   const hiddenTextLike = { displayNone: 0, visibilityHidden: 0, zeroOpacity: 0, zeroSize: 0 };
   let pendingMedia = 0;
   const allElements = [];
@@ -819,7 +2047,13 @@ function pageVerifier() {
     bottom: round(rect.bottom),
   });
   const textOf = (el) => (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
-  const snippet = (el) => (textOf(el) || el.getAttribute("aria-label") || el.getAttribute("title") || el.tagName).slice(0, 140);
+  const snippet = (el) => {
+    // Native form-control text may be typed, selected, or otherwise sensitive.
+    // Findings identify the control without serializing its value, placeholder,
+    // textarea content, or option labels.
+    const rendered = el.matches?.("input,textarea,select") ? "" : textOf(el);
+    return (rendered || el.getAttribute("aria-label") || el.getAttribute("title") || el.tagName).slice(0, 140);
+  };
   const selectorPath = (el) => {
     if (el.id) return `#${CSS.escape(el.id)}`;
     const parts = [];
@@ -872,6 +2106,8 @@ function pageVerifier() {
   const isIgnored = (el) => Boolean(isDevOverlay(el) || hasAttrReason(el, "data-ui-verify-ignore") || matchesList(el, selectorLists.ignore));
   const truncationReason = (el) => hasAttrReason(el, "data-ui-allow-truncation") || matchesList(el, selectorLists.allowTruncation);
   const overlapReason = (el) => hasAttrReason(el, "data-ui-allow-overlap") || matchesList(el, selectorLists.allowOverlap);
+  const contrastReason = (el) => hasAttrReason(el, "data-ui-allow-contrast") || matchesList(el, selectorLists.allowContrast);
+  const themeExceptionReason = (el) => hasAttrReason(el, "data-ui-theme-exception") || matchesList(el, selectorLists.themeExceptions);
 
   const styleCache = new WeakMap();
   const cs = (el) => {
@@ -973,7 +2209,9 @@ function pageVerifier() {
       rule,
       message,
       selector: el ? selectorPath(el) : "document",
-      textSnippet: el ? snippet(el) : "",
+      textSnippet: extra.redactText
+        ? ""
+        : (Object.hasOwn(extra, "textSnippet") ? String(extra.textSnippet || "") : (el ? snippet(el) : "")),
       rect: el ? rectObj(nowRect(el)) : null,
       area: extra.area || null,
       evidence: extra.evidence || {},
@@ -1038,6 +2276,252 @@ function pageVerifier() {
       continue;
     }
     candidates.push(el);
+  }
+
+  const px = (value) => {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const applyTextMeasurementStyle = (mirror, style) => {
+    for (const property of [
+      "font", "fontKerning", "fontFeatureSettings", "fontVariationSettings",
+      "letterSpacing", "wordSpacing", "textTransform", "textRendering",
+    ]) {
+      try {
+        mirror.style[property] = style[property];
+      } catch {
+        // Older engines may not expose every text-rendering property.
+      }
+    }
+    mirror.style.setProperty("position", "fixed", "important");
+    mirror.style.setProperty("left", "-100000px", "important");
+    mirror.style.setProperty("top", "0", "important");
+    mirror.style.setProperty("visibility", "hidden", "important");
+    mirror.style.setProperty("white-space", "pre", "important");
+    mirror.style.setProperty("width", "max-content", "important");
+    mirror.style.setProperty("max-width", "none", "important");
+    mirror.style.setProperty("min-width", "0", "important");
+    mirror.style.setProperty("padding", "0", "important");
+    mirror.style.setProperty("border", "0", "important");
+  };
+  const renderedTextWidth = (value, style) => {
+    const mirror = document.createElement("span");
+    mirror.textContent = value;
+    applyTextMeasurementStyle(mirror, style);
+    (document.body || document.documentElement).append(mirror);
+    const width = mirror.getBoundingClientRect().width;
+    mirror.remove();
+    return width;
+  };
+  const selectNativeReserve = (el, label, labelWidth, style) => {
+    const clone = document.createElement("select");
+    if (el.multiple) clone.multiple = true;
+    if (el.size > 0) clone.size = el.size;
+    clone.dir = el.dir;
+    const option = document.createElement("option");
+    option.textContent = label;
+    option.selected = true;
+    clone.append(option);
+    applyTextMeasurementStyle(clone, style);
+    clone.style.setProperty("box-sizing", style.boxSizing, "important");
+    clone.style.setProperty("appearance", style.appearance, "important");
+    clone.style.setProperty("padding-left", style.paddingLeft, "important");
+    clone.style.setProperty("padding-right", style.paddingRight, "important");
+    clone.style.setProperty("padding-top", style.paddingTop, "important");
+    clone.style.setProperty("padding-bottom", style.paddingBottom, "important");
+    clone.style.setProperty("border-left", style.borderLeft, "important");
+    clone.style.setProperty("border-right", style.borderRight, "important");
+    clone.style.setProperty("border-top", style.borderTop, "important");
+    clone.style.setProperty("border-bottom", style.borderBottom, "important");
+    clone.style.setProperty("width", "auto", "important");
+    (document.body || document.documentElement).append(clone);
+    const borderWidth = px(style.borderLeftWidth) + px(style.borderRightWidth);
+    const paddingWidth = px(style.paddingLeft) + px(style.paddingRight);
+    const reserve = Math.max(0, clone.getBoundingClientRect().width - borderWidth - paddingWidth - labelWidth);
+    clone.remove();
+    return reserve;
+  };
+  const nativeControlText = (el) => {
+    if (el.matches("input,textarea")) {
+      if (String(el.value || "").length > 0) return null;
+      if (el.matches("textarea") && String(el.wrap || "soft").toLowerCase() !== "off") return null;
+      const placeholder = el.getAttribute("placeholder") || "";
+      if (!placeholder) return null;
+      const style = getComputedStyle(el, "::placeholder");
+      return {
+        kind: "placeholder",
+        labelCount: 1,
+        textWidth: renderedTextWidth(placeholder, style),
+        style,
+        nativeReserve: 0,
+      };
+    }
+    if (el.matches("select")) {
+      const labels = Array.from(el.selectedOptions || []).map((option) => option.label || option.text || "");
+      if (!labels.length) return null;
+      const style = cs(el);
+      const widths = labels.map((label) => renderedTextWidth(label, style));
+      const widestIndex = widths.indexOf(Math.max(...widths));
+      return {
+        kind: "selected-option",
+        labelCount: labels.length,
+        textWidth: widths[widestIndex],
+        style,
+        nativeReserve: selectNativeReserve(el, labels[widestIndex], widths[widestIndex], style),
+      };
+    }
+    return null;
+  };
+  for (const el of candidates.filter((candidate) => candidate.matches("input,textarea,select"))) {
+    const measurement = nativeControlText(el);
+    if (!measurement) continue;
+    const style = cs(el);
+    const paddingWidth = px(style.paddingLeft) + px(style.paddingRight);
+    const textIndent = Math.max(0, px(measurement.style.textIndent || style.textIndent));
+    const availableInnerWidth = Math.max(
+      0,
+      el.clientWidth - paddingWidth - measurement.nativeReserve - textIndent,
+    );
+    const clippedBy = Math.max(0, measurement.textWidth - availableInnerWidth);
+    const evidence = {
+      controlTextKind: measurement.kind,
+      labelCount: measurement.labelCount,
+      measuredTextWidth: round(measurement.textWidth),
+      availableInnerWidth: round(availableInnerWidth),
+      nativeAffordanceWidth: round(measurement.nativeReserve),
+      clippedBy: round(clippedBy),
+    };
+    if (controlTextMeasurements.length < 200) {
+      controlTextMeasurements.push({
+        selector: selectorPath(el),
+        ...evidence,
+        clipped: clippedBy > 1,
+      });
+    }
+    if (clippedBy <= 1) continue;
+    const allowance = truncationReason(el);
+    if (allowance) {
+      add("warning", "allowed-truncation", el, "Native control text exceeds its inner content width but has an explicit truncation allowance.", {
+        redactText: true,
+        evidence: { ...evidence, reason: allowance },
+      });
+    } else {
+      add("critical", "control-text-clipped", el, "Native control text exceeds the control's real inner content width.", {
+        redactText: true,
+        evidence,
+      });
+    }
+  }
+
+  const contentInsetContracts = [];
+  for (const configured of config.contentInsets || []) {
+    try {
+      for (const el of deepQueryAll(configured.selector)) {
+        contentInsetContracts.push({ ...configured, el, source: "config" });
+      }
+    } catch {
+      findings.push({
+        severity: "warning",
+        rule: "invalid-content-inset-selector",
+        message: "A configured content-inset selector could not be evaluated.",
+        selector: configured.selector,
+        textSnippet: "",
+        rect: null,
+        area: null,
+        evidence: { name: configured.name },
+      });
+    }
+  }
+  for (const el of deepQueryAll("[data-ui-verify-min-content-inset]")) {
+    const min = Number(el.getAttribute("data-ui-verify-min-content-inset"));
+    if (!Number.isFinite(min) || min <= 0) {
+      add("warning", "invalid-content-inset-contract", el, "The content-inset attribute must contain a positive CSS-pixel value.", {
+        redactText: true,
+      });
+      continue;
+    }
+    contentInsetContracts.push({
+      el,
+      min,
+      name: el.getAttribute("data-ui-verify-area") || selectorPath(el),
+      source: "markup",
+    });
+  }
+  const composedWithin = (root, element) => {
+    let node = element;
+    while (node && node.nodeType === Node.ELEMENT_NODE) {
+      if (node === root) return true;
+      node = composedParent(node);
+    }
+    return false;
+  };
+  const directTextRects = (element) => {
+    const rects = [];
+    for (const node of element.childNodes) {
+      if (node.nodeType !== Node.TEXT_NODE || !node.textContent?.trim()) continue;
+      try {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const rect of range.getClientRects()) {
+          if (rect.width > 0.5 && rect.height > 0.5) rects.push(rect);
+        }
+        range.detach?.();
+      } catch {
+        // A transiently detached text node is not measurable evidence.
+      }
+    }
+    return rects;
+  };
+  const seenInsetContracts = new Set();
+  for (const contract of contentInsetContracts) {
+    const root = contract.el;
+    if (!visible(root) || isIgnored(root)) continue;
+    const contractKey = `${selectorPath(root)}\u0000${contract.min}`;
+    if (seenInsetContracts.has(contractKey)) continue;
+    seenInsetContracts.add(contractKey);
+    const rootRect = nowRect(root);
+    const inner = {
+      left: rootRect.left + (root.clientLeft || 0),
+      top: rootRect.top + (root.clientTop || 0),
+    };
+    inner.right = inner.left + root.clientWidth;
+    inner.bottom = inner.top + root.clientHeight;
+    const fragments = [];
+    for (const element of allElements) {
+      if (!composedWithin(root, element) || !visible(element) || isIgnored(element)) continue;
+      fragments.push(...directTextRects(element));
+      if (element !== root && isControl(element)) fragments.push(nowRect(element));
+    }
+    const observed = { left: Infinity, right: Infinity, top: Infinity, bottom: Infinity };
+    for (const fragment of fragments) {
+      observed.left = Math.min(observed.left, fragment.left - inner.left);
+      observed.right = Math.min(observed.right, inner.right - fragment.right);
+      observed.top = Math.min(observed.top, fragment.top - inner.top);
+      observed.bottom = Math.min(observed.bottom, inner.bottom - fragment.bottom);
+    }
+    const roundedObserved = Object.fromEntries(
+      Object.entries(observed).map(([side, value]) => [side, Number.isFinite(value) ? round(value) : null]),
+    );
+    const failingSides = Object.entries(observed)
+      .filter(([, value]) => Number.isFinite(value) && value < contract.min - 0.5)
+      .map(([side]) => side);
+    const entry = {
+      selector: selectorPath(root),
+      name: contract.name,
+      source: contract.source,
+      requiredInset: round(contract.min),
+      observedInset: roundedObserved,
+      measuredFragments: fragments.length,
+      status: fragments.length ? (failingSides.length ? "failed" : "passed") : "no-rendered-content",
+      failingSides,
+    };
+    contentInsetMeasurements.push(entry);
+    if (failingSides.length) {
+      add("critical", "content-inset-below-minimum", root, "Declared important content is closer to the container edge than its minimum readable inset.", {
+        redactText: true,
+        evidence: entry,
+      });
+    }
   }
 
   const iframeCount = deepQueryAll("iframe").length;
@@ -1325,10 +2809,32 @@ function pageVerifier() {
           });
         }
         add("warning", "unmeasurable-contrast", el, "Text contrast could not be measured against a solid background; review visually.", { evidence: contrast });
-      } else if (contrast.ratio !== null && contrast.ratio < 1.15) {
-        add("critical", "invisible-text", el, "Text foreground/background contrast is effectively invisible.", { evidence: contrast });
-      } else if (contrast.ratio !== null && contrast.ratio < 3) {
-        add("warning", "low-contrast-risk", el, "Text contrast is below a conservative readability threshold.", { evidence: contrast });
+      } else if (contrast.ratio !== null) {
+        const style = cs(el);
+        const fontSize = px(style.fontSize);
+        const fontWeight = Number(style.fontWeight) || (String(style.fontWeight).toLowerCase() === "bold" ? 700 : 400);
+        const largeText = fontSize >= 24 || (fontSize >= 18.66 && fontWeight >= 700);
+        const requiredRatio = largeText ? 3 : 4.5;
+        const disabled = Boolean(
+          el.matches(":disabled,[aria-disabled='true']") ||
+          el.closest(":disabled,[aria-disabled='true']")
+        );
+        const allowance = disabled ? "inactive component" : contrastReason(el);
+        if (contrast.ratio < 1.15 && !allowance) {
+          add("critical", "invisible-text", el, "Text foreground/background contrast is effectively invisible.", {
+            evidence: { ...contrast, requiredRatio, largeText, fontSize, fontWeight },
+          });
+        } else if (contrast.ratio < requiredRatio) {
+          if (allowance) {
+            add("warning", "allowed-contrast", el, "Text is below its WCAG contrast threshold under an explicit documented exception.", {
+              evidence: { ...contrast, requiredRatio, largeText, fontSize, fontWeight, reason: allowance },
+            });
+          } else {
+            add("critical", "insufficient-text-contrast", el, "Text is below the WCAG 2.2 AA contrast threshold for its rendered size and weight.", {
+              evidence: { ...contrast, requiredRatio, largeText, fontSize, fontWeight },
+            });
+          }
+        }
       }
     }
     if (isControl(el) && !complexArtifact && rect.width * rect.height < 400) {
@@ -1612,6 +3118,126 @@ function pageVerifier() {
       b: linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
     };
   }
+  function srgbToLinear(value) {
+    const channel = clamp(value / 255, 0, 1);
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  }
+  function rgbToOklab(color) {
+    const red = srgbToLinear(color.r);
+    const green = srgbToLinear(color.g);
+    const blue = srgbToLinear(color.b);
+    const l = 0.4122214708 * red + 0.5363325363 * green + 0.0514459929 * blue;
+    const m = 0.2119034982 * red + 0.6806995451 * green + 0.1073969566 * blue;
+    const s = 0.0883024619 * red + 0.2817188376 * green + 0.6299787005 * blue;
+    const lRoot = Math.cbrt(l);
+    const mRoot = Math.cbrt(m);
+    const sRoot = Math.cbrt(s);
+    return {
+      lightness: 0.2104542553 * lRoot + 0.793617785 * mRoot - 0.0040720468 * sRoot,
+      a: 1.9779984951 * lRoot - 2.428592205 * mRoot + 0.4505937099 * sRoot,
+      b: 0.0259040371 * lRoot + 0.7827717662 * mRoot - 0.808675766 * sRoot,
+    };
+  }
+  function oklabToOklch(color) {
+    const chroma = Math.sqrt(color.a ** 2 + color.b ** 2);
+    let hue = Math.atan2(color.b, color.a) * 180 / Math.PI;
+    if (hue < 0) hue += 360;
+    return { lightness: color.lightness, chroma, hue };
+  }
+  function sampleThemePalette() {
+    const grid = 24;
+    const total = grid * grid;
+    const samples = [];
+    let unmeasurable = 0;
+    let exceptions = 0;
+    const hueBins = new Map();
+    for (let row = 0; row < grid; row += 1) {
+      for (let column = 0; column < grid; column += 1) {
+        const x = (column + 0.5) * window.innerWidth / grid;
+        const y = (row + 0.5) * window.innerHeight / grid;
+        const stack = document.elementsFromPoint(x, y).filter((element) => !isIgnored(element));
+        const element = stack.find((candidate) => visible(candidate));
+        if (!element) {
+          unmeasurable += 1;
+          continue;
+        }
+        if (themeExceptionReason(element)) {
+          exceptions += 1;
+          continue;
+        }
+        if (element.closest("img,video,canvas,svg,picture")) {
+          unmeasurable += 1;
+          continue;
+        }
+        const background = backgroundFor(element);
+        if (background.unmeasurable) {
+          unmeasurable += 1;
+          continue;
+        }
+        const color = oklabToOklch(rgbToOklab(background));
+        samples.push(color);
+        if (color.chroma >= 0.12) {
+          const bin = Math.floor(((color.hue + 22.5) % 360) / 45);
+          hueBins.set(bin, (hueBins.get(bin) || 0) + 1);
+        }
+      }
+    }
+    const measurable = samples.length;
+    const opposite = samples.filter((sample) =>
+      config.theme === "dark" ? sample.lightness >= 0.85 :
+      (config.theme === "light" ? sample.lightness <= 0.25 : false)
+    ).length;
+    const highChroma = samples.filter((sample) => sample.chroma >= 0.12).length;
+    const oppositeMeasurableFraction = measurable ? opposite / measurable : 0;
+    const oppositeViewportFraction = opposite / total;
+    const highChromaFraction = measurable ? highChroma / measurable : 0;
+    const prominentHueClusters = [...hueBins.entries()]
+      .filter(([, count]) => count / total >= 0.03)
+      .map(([bin, count]) => ({
+        hueCenter: bin * 45,
+        viewportFraction: round(count / total),
+      }));
+    const metrics = {
+      declaredTheme: config.theme,
+      grid: `${grid}x${grid}`,
+      totalSamples: total,
+      measurableSamples: measurable,
+      unmeasurableSamples: unmeasurable,
+      exceptionSamples: exceptions,
+      oppositeThemeSamples: opposite,
+      oppositeMeasurableFraction: round(oppositeMeasurableFraction),
+      oppositeViewportFraction: round(oppositeViewportFraction),
+      highChromaFraction: round(highChromaFraction),
+      prominentHueClusters,
+    };
+    if (config.theme !== "mixed") {
+      if (oppositeMeasurableFraction >= 0.35 && oppositeViewportFraction >= 0.20) {
+        add("critical", "declared-theme-contradiction", null, "A large share of the viewport contradicts the target's declared light or dark theme.", {
+          evidence: metrics,
+        });
+      } else if (oppositeViewportFraction >= 0.15) {
+        add("warning", "declared-theme-balance-risk", null, "A notable share of the viewport uses opposite-theme brightness and needs visual review.", {
+          evidence: metrics,
+        });
+      }
+    }
+    if (highChromaFraction >= 0.25) {
+      add("warning", "high-chroma-surface-risk", null, "High-chroma color occupies a large share of measurable surfaces; review palette restraint and intent.", {
+        evidence: metrics,
+      });
+    }
+    if (prominentHueClusters.length >= 4) {
+      add("warning", "competing-accent-hues", null, "Four or more prominent accent-hue clusters compete in the viewport; review palette cohesion.", {
+        evidence: metrics,
+      });
+    }
+    if (unmeasurable / total >= 0.20) {
+      add("warning", "unmeasurable-theme-surface", null, "A substantial part of the viewport uses media, gradients, or compositing that requires screenshot review.", {
+        evidence: metrics,
+      });
+    }
+    return metrics;
+  }
   function blended(color, background) {
     const a = Number.isFinite(color.a) ? color.a : 1;
     return {
@@ -1633,7 +3259,7 @@ function pageVerifier() {
     const l2 = luminance(b);
     const light = Math.max(l1, l2);
     const dark = Math.min(l1, l2);
-    return round((light + 0.05) / (dark + 0.05));
+    return (light + 0.05) / (dark + 0.05);
   }
   // Walk ancestors accumulating solid background layers. Returns a resolved opaque
   // background color only when the chain up to the first opaque layer is a genuine
@@ -1747,6 +3373,7 @@ function pageVerifier() {
     return scrollbars;
   }
 
+  const themePalette = config.inspectThemePalette === false ? null : sampleThemePalette();
   return {
     title: document.title,
     url: location.href,
@@ -1758,6 +3385,9 @@ function pageVerifier() {
       unmeasurableContrast,
       notInspected,
       ellipsisTruncations,
+      controlTextMeasurements,
+      contentInsetMeasurements,
+      themePalette,
       hiddenTextLike,
       pendingMedia,
       suppressedFindings: suppressed,
@@ -1772,22 +3402,168 @@ function pageVerifier() {
   };
 }
 
-async function verifyTarget(page, target, viewport, config, screenshotDir) {
+async function observeSourceBinding(page, response, binding) {
+  if (!binding) {
+    return {
+      status: "unbound",
+      expected: null,
+      observed: null,
+      observedFrom: null,
+    };
+  }
+  let observed = null;
+  let observedFrom = null;
+  if (binding.responseHeader) {
+    const headerValue = response?.headers()?.[binding.responseHeader];
+    if (typeof headerValue === "string" && headerValue.trim()) {
+      observed = headerValue.trim().slice(0, 512);
+      observedFrom = `response-header:${binding.responseHeader}`;
+    }
+  }
+  if (!observed && binding.metaName) {
+    observed = await page.evaluate((metaName) => {
+      for (const element of document.querySelectorAll("meta[name]")) {
+        if (element.getAttribute("name") === metaName) {
+          return (element.getAttribute("content") || "").trim().slice(0, 512) || null;
+        }
+      }
+      return null;
+    }, binding.metaName).catch(() => null);
+    if (observed) observedFrom = `meta:${binding.metaName}`;
+  }
+  return {
+    status: !observed ? "missing" : (observed === binding.expected ? "matched" : "mismatched"),
+    expected: binding.expected,
+    observed,
+    observedFrom,
+  };
+}
+
+function pngDimensions(buffer) {
+  if (
+    buffer.length < 24 ||
+    buffer[0] !== 0x89 ||
+    buffer.toString("ascii", 1, 4) !== "PNG"
+  ) {
+    throw new Error("captured screenshot is not a valid PNG");
+  }
+  return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+}
+
+function screenshotActionValues(target) {
+  const values = [];
+  for (const action of target.verificationState?.actions || []) {
+    if (action.action !== "fill" || typeof action.value !== "string" || !action.value) continue;
+    values.push(action.value);
+  }
+  return [...new Set(values)];
+}
+
+async function screenshotMasks(page, target, config) {
+  const masks = [];
+  for (const entry of [...config.screenshotMasks, ...(target.screenshotMasks || [])]) {
+    const locator = page.locator(entry.selector);
+    try {
+      await locator.count();
+    } catch (error) {
+      throw new Error(`screenshot mask selector could not be evaluated (${error.name || "selector error"})`);
+    }
+    masks.push(locator);
+  }
+  for (const value of screenshotActionValues(target)) {
+    masks.push(page.getByText(value, { exact: false }));
+  }
+  return masks;
+}
+
+async function captureEvidenceScreenshot(page, target, viewport, config, cellId, kind) {
+  fs.mkdirSync(config.screenshotDir, { recursive: true, mode: 0o700 });
+  const file = path.join(
+    config.screenshotDir,
+    `${cellId}-${sanitizeFilePart(target.name || target.url)}-${sanitizeFilePart(viewport.name)}-${kind}.png`,
+  );
+  const masks = await screenshotMasks(page, target, config);
+  const buffer = await page.screenshot({
+    path: file,
+    fullPage: kind === "full-page",
+    animations: "disabled",
+    caret: "hide",
+    scale: "css",
+    style: SCREENSHOT_REDACTION_STYLE,
+    mask: masks,
+    maskColor: "#777777",
+  });
+  const dimensions = pngDimensions(buffer);
+  return {
+    kind,
+    path: file,
+    mime: "image/png",
+    sha256: sha256(buffer),
+    width: dimensions.width,
+    height: dimensions.height,
+  };
+}
+
+async function verifyTarget(page, target, viewport, config, cellId) {
+  const cellStartedMs = Date.now();
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
+  const requestedRoute = routeEvidence(target.url);
+  const reviewCellKey = sha256(stableJson({
+    target: target.name || target.url,
+    requestedOrigin: requestedRoute.origin,
+    requestedPath: requestedRoute.path,
+    stateName: target.stateName || "base",
+    viewport: { name: viewport.name, width: viewport.width, height: viewport.height },
+  }));
   const result = {
+    cellId,
     target: publicTarget(target),
     viewport: publicViewport(viewport),
     skipped: false,
     outcome: "pending",
     skipReason: null,
     url: target.url,
+    requestedPath: requestedRoute.path,
+    finalPath: null,
+    requestedOrigin: requestedRoute.origin,
+    finalOrigin: null,
+    redirected: false,
+    sourceBinding: {
+      status: "unbound",
+      expected: null,
+      observed: null,
+      observedFrom: null,
+    },
+    startedAt: new Date(cellStartedMs).toISOString(),
+    endedAt: null,
+    durationMs: null,
     status: null,
     contentType: null,
     title: "",
     metrics: {},
     findings: [],
     screenshot: null,
+    screenshots: { viewport: null, fullPage: null },
+    evidenceErrors: [],
+    continuation: { checked: false, evidence: null },
+    review: {
+      reviewCellKey,
+      sourceFingerprint: target.reviewEvidence?.fingerprint || null,
+      intentFingerprint: target.intentFingerprint || null,
+    },
   };
+  const finish = () => {
+    const endedMs = Date.now();
+    result.endedAt = new Date(endedMs).toISOString();
+    result.durationMs = Math.max(0, endedMs - cellStartedMs);
+    return result;
+  };
+  if (target.contractErrors?.length) {
+    result.skipped = true;
+    result.outcome = "journey_contract_error";
+    result.skipReason = target.contractErrors.join("; ");
+    return finish();
+  }
   let response;
   try {
     response = await page.goto(target.url, { waitUntil: "domcontentloaded", timeout: 15000 });
@@ -1796,10 +3572,19 @@ async function verifyTarget(page, target, viewport, config, screenshotDir) {
     result.skipped = true;
     result.outcome = "navigation_error";
     result.skipReason = `navigation-failed: ${error.message}`;
-    return result;
+    const finalRoute = routeEvidence(page.url());
+    result.finalPath = finalRoute.path || null;
+    result.finalOrigin = finalRoute.origin || null;
+    return finish();
   }
   result.status = response ? response.status() : null;
   result.contentType = response ? response.headers()["content-type"] || "" : "";
+  const finalRoute = routeEvidence(page.url());
+  result.finalPath = finalRoute.path;
+  result.finalOrigin = finalRoute.origin;
+  result.redirected = Boolean(response?.request()?.redirectedFrom()) ||
+    result.requestedPath !== result.finalPath ||
+    result.requestedOrigin !== result.finalOrigin;
   if (!response || result.status >= 400 || (result.contentType && !/html|xhtml/i.test(result.contentType))) {
     result.skipped = true;
     if (!response) {
@@ -1813,25 +3598,76 @@ async function verifyTarget(page, target, viewport, config, screenshotDir) {
       result.skipReason = `non-html-content-type-${result.contentType || "unknown"}`;
     }
     result.title = await page.title().catch(() => "");
-    return result;
+    return finish();
   }
+  if (result.requestedPath !== result.finalPath || result.requestedOrigin !== result.finalOrigin) {
+    result.skipped = true;
+    result.outcome = "route_mismatch";
+    result.skipReason = `unexpected-final-route-${result.finalPath || "unknown"}`;
+    result.title = await page.title().catch(() => "");
+    return finish();
+  }
+  const binding = target.sourceBinding || config.sourceBinding;
+  result.sourceBinding = await observeSourceBinding(page, response, binding);
+  if (result.sourceBinding.status === "missing" || result.sourceBinding.status === "mismatched") {
+    result.skipped = true;
+    result.outcome = result.sourceBinding.status === "missing"
+      ? "source_binding_missing"
+      : "stale_deployment";
+    result.skipReason = result.sourceBinding.status === "missing"
+      ? "deployment-did-not-report-required-source-binding"
+      : "deployment-source-binding-does-not-match-expected-source";
+    result.title = await page.title().catch(() => "");
+    return finish();
+  }
+  let stateExecution = { beforeContinuation: null };
   if (target.verificationState) {
     try {
-      await applyInteractionState(page, target.verificationState);
+      stateExecution = await applyInteractionState(page, target.verificationState);
     } catch (error) {
       result.skipped = true;
       result.outcome = "interaction_error";
       result.skipReason = `interaction-state-${target.verificationState.name}-failed: ${error.message}`;
       result.title = await page.title().catch(() => "");
-      return result;
+      return finish();
     }
+  }
+  const stateRoute = routeEvidence(page.url());
+  result.finalPath = stateRoute.path;
+  result.finalOrigin = stateRoute.origin;
+  result.redirected = result.redirected ||
+    result.requestedPath !== result.finalPath ||
+    result.requestedOrigin !== result.finalOrigin;
+  const expectedStatePath = target.continuation?.kind === "navigation"
+    ? target.continuation.expectedPath
+    : result.requestedPath;
+  if (expectedStatePath !== result.finalPath || result.requestedOrigin !== result.finalOrigin) {
+    result.skipped = true;
+    result.outcome = "route_mismatch";
+    result.skipReason = `unexpected-final-route-${result.finalPath || "unknown"}; expected-${expectedStatePath || "unknown"}`;
+    result.title = await page.title().catch(() => "");
+    return finish();
+  }
+  if (target.continuation) {
+    const continuation = await verifyContinuation(
+      page,
+      target.continuation,
+      stateExecution.beforeContinuation,
+    );
+    result.continuation = { checked: continuation.checked, evidence: continuation.evidence };
+    result.findings.push(...continuation.findings);
   }
   await page.addInitScript(() => {});
   const pageConfig = {
     areas: [...config.areas, ...(Array.isArray(target.areas) ? target.areas : [])],
+    contentInsets: [...config.contentInsets, ...(Array.isArray(target.contentInsets) ? target.contentInsets : [])],
     ignore: [...config.ignore, ...normalizeTargetList(target.ignore)],
     allowTruncation: [...config.allowTruncation, ...normalizeTargetList(target.allowTruncation)],
     allowOverlap: [...config.allowOverlap, ...normalizeTargetList(target.allowOverlap)],
+    allowContrast: [...config.allowContrast, ...normalizeTargetList(target.allowContrast)],
+    themeExceptions: [...config.themeExceptions, ...normalizeTargetList(target.themeExceptions)],
+    theme: target.theme,
+    inspectThemePalette: true,
     rules: config.rules,
     // Playwright evaluates every reachable child frame separately below. This
     // prevents the top document from claiming that reachable iframe content
@@ -1841,6 +3677,25 @@ async function verifyTarget(page, target, viewport, config, screenshotDir) {
   await page.evaluate((injected) => {
     window.__FORMAL_WEB_UI_CONFIG__ = injected;
   }, pageConfig);
+  const journeyEvaluation = await page.evaluate(journeyHierarchyVerifier, {
+    primaryJourney: target.primaryJourney,
+    regions: target.regions,
+  });
+  result.metrics.journey = journeyEvaluation;
+  result.findings.push(...journeyEvaluation.findings);
+  try {
+    result.screenshots.viewport = await captureEvidenceScreenshot(
+      page,
+      target,
+      viewport,
+      config,
+      cellId,
+      "viewport",
+    );
+    result.screenshot = result.screenshots.viewport.path;
+  } catch (error) {
+    result.evidenceErrors.push(`viewport screenshot failed: ${error.message}`);
+  }
   let scrollMetrics = { skipped: true };
   if (config.scroll) {
     scrollMetrics = await scrollThroughPage(page).catch(() => ({ skipped: true, error: true }));
@@ -1855,7 +3710,7 @@ async function verifyTarget(page, target, viewport, config, screenshotDir) {
     try {
       await frame.evaluate((injected) => {
         window.__FORMAL_WEB_UI_CONFIG__ = injected;
-      }, pageConfig);
+      }, { ...pageConfig, inspectThemePalette: false });
       const frameResult = await frame.evaluate(pageVerifier);
       frameEvaluations.push({ frameUrl, frameName, result: frameResult });
     } catch (error) {
@@ -1868,9 +3723,11 @@ async function verifyTarget(page, target, viewport, config, screenshotDir) {
   result.actualViewport = evaluated.viewport;
   const prefixSelector = (selector, frameUrl, frameName) =>
     `[frame ${frameName} ${frameUrl}] ${selector || "document"}`;
-  const mergedFindings = [...evaluated.findings];
+  const mergedFindings = [...result.findings, ...evaluated.findings];
   const mergedMetrics = {
     ...evaluated.metrics,
+    journey: journeyEvaluation,
+    continuation: result.continuation,
     scroll: scrollMetrics,
     frames: [],
     frameDocuments: [],
@@ -1912,6 +3769,22 @@ async function verifyTarget(page, target, viewport, config, screenshotDir) {
     mergedMetrics.ellipsisTruncations = [
       ...(mergedMetrics.ellipsisTruncations || []),
       ...(frameResult.metrics?.ellipsisTruncations || []).map((item) => ({
+        ...item,
+        selector: prefixSelector(item.selector, entry.frameUrl, entry.frameName),
+        frame: { url: entry.frameUrl, name: entry.frameName },
+      })),
+    ];
+    mergedMetrics.controlTextMeasurements = [
+      ...(mergedMetrics.controlTextMeasurements || []),
+      ...(frameResult.metrics?.controlTextMeasurements || []).map((item) => ({
+        ...item,
+        selector: prefixSelector(item.selector, entry.frameUrl, entry.frameName),
+        frame: { url: entry.frameUrl, name: entry.frameName },
+      })),
+    ];
+    mergedMetrics.contentInsetMeasurements = [
+      ...(mergedMetrics.contentInsetMeasurements || []),
+      ...(frameResult.metrics?.contentInsetMeasurements || []).map((item) => ({
         ...item,
         selector: prefixSelector(item.selector, entry.frameUrl, entry.frameName),
         frame: { url: entry.frameUrl, name: entry.frameName },
@@ -1961,13 +3834,24 @@ async function verifyTarget(page, target, viewport, config, screenshotDir) {
   mergedMetrics.findingCount = mergedFindings.length;
   result.metrics = mergedMetrics;
   result.findings = mergedFindings;
-  if (screenshotDir) {
-    fs.mkdirSync(screenshotDir, { recursive: true });
-    const file = path.join(screenshotDir, `${sanitizeFilePart(target.name || target.url)}-${sanitizeFilePart(viewport.name)}.png`);
-    await page.screenshot({ path: file, fullPage: true }).catch(() => {});
-    if (fs.existsSync(file)) result.screenshot = file;
+  try {
+    result.screenshots.fullPage = await captureEvidenceScreenshot(
+      page,
+      target,
+      viewport,
+      config,
+      cellId,
+      "full-page",
+    );
+  } catch (error) {
+    result.evidenceErrors.push(`full-page screenshot failed: ${error.message}`);
   }
-  return result;
+  if (result.evidenceErrors.length) {
+    result.skipped = true;
+    result.outcome = "evidence_error";
+    result.skipReason = result.evidenceErrors.join("; ");
+  }
+  return finish();
 }
 
 function normalizeTargetList(value) {
@@ -1983,14 +3867,194 @@ function summarizeFindings(pages) {
         ...finding,
         url: page.target.url,
         targetName: page.target.name || page.target.url,
+        cellId: page.cellId,
+        stateName: page.target.stateName || "base",
         viewport: page.viewport.name,
+        requestedPath: page.requestedPath,
+        finalPath: page.finalPath,
       });
     }
   }
   return findings;
 }
 
-function summarizeCoverage(pages, config) {
+function sampledWidthCoverage(cells) {
+  const groups = new Map();
+  for (const cell of cells) {
+    const key = stableJson({
+      targetName: cell.target.name || cell.target.url,
+      requestedPath: cell.requestedPath,
+      stateName: cell.target.stateName || "base",
+    });
+    if (!groups.has(key)) {
+      groups.set(key, {
+        targetName: cell.target.name || cell.target.url,
+        requestedPath: cell.requestedPath,
+        stateName: cell.target.stateName || "base",
+        mode: "sampled-only",
+        sampledWidths: [],
+      });
+    }
+    groups.get(key).sampledWidths.push({
+      viewport: cell.viewport.name,
+      width: cell.viewport.width,
+      height: cell.viewport.height,
+      sampling: cell.viewport.sampling,
+    });
+  }
+  return [...groups.values()];
+}
+
+function buildChangedReviewQueue(pages, config, runId) {
+  const priorDecisions = new Map(
+    (config.priorReview?.decisions || []).map((decision) => [decision.reviewCellKey, decision]),
+  );
+  const currentKeys = new Set();
+  const cells = [];
+  const entries = [];
+  const blockingFindings = [];
+  for (const page of pages) {
+    if (page.outcome !== "checked" || !page.screenshots?.viewport || !page.screenshots?.fullPage) continue;
+    const reviewCellKey = page.review.reviewCellKey;
+    currentKeys.add(reviewCellKey);
+    const prior = priorDecisions.get(reviewCellKey);
+    const sourceFingerprint = page.review.sourceFingerprint;
+    const intentFingerprint = page.review.intentFingerprint;
+    const sourceUnchanged = Boolean(prior && prior.sourceFingerprint === sourceFingerprint);
+    const intentUnchanged = Boolean(prior && prior.intentFingerprint === intentFingerprint);
+    const screenshots = {
+      viewport: page.screenshots.viewport,
+      fullPage: page.screenshots.fullPage,
+    };
+    const common = {
+      reviewCellKey,
+      cellId: page.cellId,
+      targetName: page.target.name || page.target.url,
+      requestedPath: page.requestedPath,
+      finalPath: page.finalPath,
+      stateName: page.target.stateName || "base",
+      viewport: page.viewport,
+      primaryJourney: page.target.primaryJourney,
+      theme: page.target.theme,
+      sourceFingerprint,
+      intentFingerprint,
+      reviewInputs: page.target.reviewEvidence || null,
+      screenshots,
+      paletteRisks: (page.findings || [])
+        .filter((finding) => [
+          "declared-theme-balance-risk",
+          "high-chroma-surface-risk",
+          "competing-accent-hues",
+          "unmeasurable-theme-surface",
+        ].includes(finding.rule))
+        .map((finding) => finding.rule),
+    };
+    if (prior && sourceUnchanged && intentUnchanged) {
+      const cell = {
+        ...common,
+        status: prior.decision === "pass" ? "carried-pass" : `carried-${prior.decision}`,
+        decision: prior.decision,
+        note: prior.note || "",
+        basis: "unchanged-ui-inputs-and-intent",
+      };
+      cells.push(cell);
+      if (prior.decision !== "pass") {
+        blockingFindings.push({
+          severity: "critical",
+          rule: "manual-review-gap-carried",
+          message: "A prior manual visual-review gap remains blocking because its UI inputs and intent are unchanged.",
+          selector: "document",
+          textSnippet: "",
+          rect: null,
+          area: null,
+          evidence: {
+            reviewCellKey,
+            priorDecision: prior.decision,
+            note: prior.note,
+            sourceFingerprint,
+            intentFingerprint,
+          },
+          url: page.target.url,
+          targetName: page.target.name || page.target.url,
+          cellId: page.cellId,
+          stateName: page.target.stateName || "base",
+          viewport: page.viewport.name,
+          requestedPath: page.requestedPath,
+          finalPath: page.finalPath,
+        });
+      }
+      continue;
+    }
+    const reasons = [];
+    if (!prior) reasons.push("new-route-state-viewport");
+    else {
+      if (!sourceUnchanged) reasons.push("declared-ui-inputs-changed");
+      if (!intentUnchanged) reasons.push("journey-or-theme-intent-changed");
+    }
+    const cell = { ...common, status: "review-required", decision: null, note: "", basis: reasons };
+    cells.push(cell);
+    entries.push({ ...common, reasons });
+  }
+  const disposed = new Map(config.reviewRemovedCells.map((item) => [item.reviewCellKey, item.reason]));
+  const removed = [...priorDecisions.keys()].filter((key) => !currentKeys.has(key)).sort();
+  const undisposedRemoved = removed.filter((key) => !disposed.has(key));
+  const invalidDispositions = [...disposed.keys()].filter((key) => !removed.includes(key)).sort();
+  const removedDispositions = removed
+    .filter((key) => disposed.has(key))
+    .map((reviewCellKey) => ({ reviewCellKey, reason: disposed.get(reviewCellKey) }));
+  const queue = {
+    schemaVersion: REVIEW_QUEUE_SCHEMA_VERSION,
+    kind: REVIEW_QUEUE_KIND,
+    runId,
+    generatedAt: new Date().toISOString(),
+    priorReviewedRunId: config.priorReview?.reviewedRunId || null,
+    trigger: "declared UI inputs, journey/theme intent, or new route/state/viewport; screenshot pixels are integrity-only",
+    entries,
+    carried: cells.filter((cell) => cell.status.startsWith("carried-")).map((cell) => ({
+      reviewCellKey: cell.reviewCellKey,
+      status: cell.status,
+      decision: cell.decision,
+      note: cell.note,
+    })),
+    removedDispositions,
+    undisposedRemoved,
+    invalidDispositions,
+  };
+  const coverageFailures = [
+    ...undisposedRemoved.map((reviewCellKey) => ({
+      reviewCellKey,
+      reason: "previously reviewed cell is absent without an explicit reviewRemovedCells disposition",
+    })),
+    ...invalidDispositions.map((reviewCellKey) => ({
+      reviewCellKey,
+      reason: "reviewRemovedCells disposition does not reference a cell removed from the prior reviewed manifest",
+    })),
+  ];
+  return {
+    queue,
+    blockingFindings,
+    report: {
+      priorReviewedRunId: config.priorReview?.reviewedRunId || null,
+      priorManifestSha256: config.priorReview?.sha256 || null,
+      pendingCount: entries.length,
+      carriedPassCount: cells.filter((cell) => cell.status === "carried-pass").length,
+      carriedGapCount: cells.filter((cell) => cell.status === "carried-gap").length,
+      carriedBlockedCount: cells.filter((cell) => cell.status === "carried-blocked").length,
+      cells,
+      removedDispositions,
+      coverageFailures,
+    },
+  };
+}
+
+function writeReviewQueueArtifact(queue, reviewQueueOut) {
+  fs.mkdirSync(path.dirname(reviewQueueOut), { recursive: true });
+  const bytes = Buffer.from(`${JSON.stringify(queue, null, 2)}\n`, "utf8");
+  fs.writeFileSync(reviewQueueOut, bytes);
+  return sha256(bytes);
+}
+
+function summarizeCoverage(pages, config, planCells, review) {
   const checkedPages = pages.filter((page) => page.outcome === "checked");
   const failures = [];
   const tolerated = [];
@@ -1998,13 +4062,21 @@ function summarizeCoverage(pages, config) {
     if (page.outcome === "checked") continue;
     const explicitReason = typeof page.target.allowFailure === "string" ? page.target.allowFailure.trim() : "";
     const discoveredAllowed = page.target.source === "coordinator" && config.allowDiscoveredTargetFailures;
+    const mandatoryContractFailure = ["journey_contract_error", "evidence_error"].includes(page.outcome);
     const row = {
+      cellId: page.cellId,
       url: page.target.url,
+      targetName: page.target.name || page.target.url,
+      stateName: page.target.stateName || "base",
+      requestedPath: page.requestedPath,
+      finalPath: page.finalPath,
       viewport: page.viewport.name,
+      viewportWidth: page.viewport.width,
+      viewportHeight: page.viewport.height,
       outcome: page.outcome,
       reason: page.skipReason,
     };
-    if (explicitReason || discoveredAllowed) {
+    if (!mandatoryContractFailure && (explicitReason || discoveredAllowed)) {
       tolerated.push({
         ...row,
         allowance: explicitReason || "coordinator-discovered target failure explicitly tolerated",
@@ -2017,12 +4089,32 @@ function summarizeCoverage(pages, config) {
     ? `checked ${checkedPages.length} page(s), below required minimum ${config.minCheckedPages}`
     : null;
   return {
-    failed: failures.length > 0 || Boolean(minimumFailure),
+    failed: failures.length > 0 || Boolean(minimumFailure) || Boolean(review?.coverageFailures?.length),
     checkedPages: checkedPages.length,
+    plannedPages: planCells.length,
     requiredCheckedPages: config.minCheckedPages,
+    pageBudget: config.maxPageCount,
+    widthCoverageMode: "sampled-only",
+    widthCoverageNote: "Only the listed viewport widths were checked; widths between samples were not inspected.",
+    widthCoverage: sampledWidthCoverage(planCells),
+    cells: pages.map((page) => ({
+      cellId: page.cellId,
+      targetName: page.target.name || page.target.url,
+      requestedPath: page.requestedPath,
+      finalPath: page.finalPath,
+      stateName: page.target.stateName || "base",
+      viewport: page.viewport,
+      outcome: page.outcome,
+      checked: page.outcome === "checked",
+      sourceBindingStatus: page.sourceBinding?.status || "unbound",
+      startedAt: page.startedAt,
+      endedAt: page.endedAt,
+      durationMs: page.durationMs,
+    })),
     failures,
     tolerated,
     minimumFailure,
+    reviewFailures: review?.coverageFailures || [],
   };
 }
 
@@ -2032,21 +4124,33 @@ function markdownReport(report) {
   const warningCount = findings.filter((item) => item.severity === "warning").length;
   const lines = [];
   lines.push("# Formal Web UI Verification Report", "");
+  lines.push(`- Report schema: ${report.schemaVersion}`);
   lines.push(`- Run ID: ${report.runId}`);
-  lines.push(`- Generated: ${report.generatedAt}`);
+  lines.push(`- Started: ${report.startedAt}`);
+  lines.push(`- Ended: ${report.endedAt}`);
+  lines.push(`- Duration: ${report.durationMs} ms`);
   lines.push(`- Browser: ${report.browser}`);
   lines.push(`- Targets: ${report.targets.length}`);
-  lines.push(`- Pages checked: ${report.pages.filter((page) => !page.skipped).length}`);
+  lines.push(`- Planned page cells: ${report.plan.plannedPageCount}/${report.plan.pageBudget}`);
+  lines.push(`- Pages checked: ${report.pages.filter((page) => page.outcome === "checked").length}`);
   lines.push(`- Pages skipped: ${report.pages.filter((page) => page.skipped).length}`);
   lines.push(`- Coverage gate: ${report.coverage.failed ? "failed" : "passed"}`);
   lines.push(`- Critical findings: ${criticalCount}`);
   lines.push(`- Warning findings: ${warningCount}`, "");
+  lines.push(`- Visual review pending: ${report.review.pendingCount}`);
+  lines.push(`- Carried visual-review gaps/blocks: ${report.review.carriedGapCount + report.review.carriedBlockedCount}`);
+  lines.push(`- Review queue: ${report.review.queuePath}`, "");
+  lines.push("## Evidence Identity", "");
+  lines.push(`- Verifier SHA-256: ${report.evidence.verifier.sha256}`);
+  lines.push(`- Config SHA-256: ${report.evidence.config.sha256}`);
+  lines.push(`- Config hash scope: ${report.evidence.config.scope}`);
+  lines.push(`- Width coverage: sampled-only — ${report.plan.widthCoverageNote}`, "");
   lines.push("## Pages", "");
-  lines.push("| Target | Viewport | Status | Result | Findings | Screenshot |");
-  lines.push("| --- | --- | --- | --- | --- | --- |");
+  lines.push("| Cell | Target | Requested path | Final path | State | Viewport | HTTP | Source binding | Result | Findings | Initial viewport | Full page |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const page of report.pages) {
     const result = page.skipped ? `${page.outcome}: ${page.skipReason}` : "checked";
-    lines.push(`| ${escapeMd(page.target.name || page.target.url)} | ${escapeMd(page.viewport.name)} ${page.viewport.width}x${page.viewport.height} | ${page.status ?? ""} | ${escapeMd(result)} | ${(page.findings || []).length} | ${page.screenshot ? escapeMd(page.screenshot) : ""} |`);
+    lines.push(`| ${escapeMd(page.cellId)} | ${escapeMd(page.target.name || page.target.url)} | ${escapeMd(page.requestedPath || "")} | ${escapeMd(page.finalPath || "")} | ${escapeMd(page.target.stateName || "base")} | ${escapeMd(page.viewport.name)} ${page.viewport.width}x${page.viewport.height} | ${page.status ?? ""} | ${escapeMd(page.sourceBinding?.status || "unbound")} | ${escapeMd(result)} | ${(page.findings || []).length} | ${page.screenshots?.viewport ? escapeMd(page.screenshots.viewport.path) : ""} | ${page.screenshots?.fullPage ? escapeMd(page.screenshots.fullPage.path) : ""} |`);
   }
   lines.push("", "## Visible Scrollbars", "");
   const scrollbarRows = [];
@@ -2100,26 +4204,41 @@ function markdownReport(report) {
     }
   }
   lines.push("", "## Target Coverage", "");
-  if (!report.coverage.failures.length && !report.coverage.minimumFailure) {
+  if (!report.coverage.failures.length && !report.coverage.minimumFailure && !report.coverage.reviewFailures.length) {
     lines.push(`Coverage passed with ${report.coverage.checkedPages} checked page(s).`);
   } else {
     if (report.coverage.minimumFailure) lines.push(`- ${report.coverage.minimumFailure}`);
     for (const failure of report.coverage.failures) {
-      lines.push(`- ${failure.url} (${failure.viewport}): ${failure.outcome} — ${failure.reason}`);
+      lines.push(`- ${failure.cellId} ${failure.requestedPath} → ${failure.finalPath || "unavailable"} [${failure.stateName}; ${failure.viewport} ${failure.viewportWidth}x${failure.viewportHeight}]: ${failure.outcome} — ${failure.reason}`);
     }
   }
   for (const item of report.coverage.tolerated) {
-    lines.push(`- Tolerated ${item.url} (${item.viewport}): ${item.outcome} — ${item.allowance}`);
+    lines.push(`- Tolerated ${item.cellId} ${item.requestedPath} [${item.stateName}; ${item.viewport}]: ${item.outcome} — ${item.allowance}`);
+  }
+  for (const item of report.coverage.reviewFailures || []) {
+    lines.push(`- Review coverage failure ${item.reviewCellKey}: ${item.reason}`);
+  }
+  lines.push("", "## Changed Visual Review", "");
+  lines.push(`- Pending changed/new cells: ${report.review.pendingCount}`);
+  lines.push(`- Carried passes: ${report.review.carriedPassCount}`);
+  lines.push(`- Carried gaps: ${report.review.carriedGapCount}`);
+  lines.push(`- Carried blocks: ${report.review.carriedBlockedCount}`);
+  lines.push(`- Queue SHA-256: ${report.review.queueSha256}`);
+  lines.push("- Screenshot hashes bind evidence integrity and never trigger review.");
+  if (report.review.pendingCount) {
+    lines.push("- Agent review is required after automated checks for the queue entries only.");
+  } else {
+    lines.push("- No changed UI inputs, intent, or new cells require image review in this run.");
   }
   lines.push("", "## Findings", "");
   if (!findings.length) {
     lines.push("No findings.");
   } else {
-    lines.push("| Severity | Rule | Target | Viewport | Selector | Evidence |");
-    lines.push("| --- | --- | --- | --- | --- | --- |");
+    lines.push("| Severity | Rule | Cell | Target | State | Viewport | Selector | Evidence |");
+    lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
     for (const finding of findings) {
       const evidence = finding.textSnippet || JSON.stringify(finding.evidence || {});
-      lines.push(`| ${finding.severity} | ${escapeMd(finding.rule)} | ${escapeMd(finding.targetName)} | ${escapeMd(finding.viewport)} | ${escapeMd(finding.selector)} | ${escapeMd(String(evidence).slice(0, 180))} |`);
+      lines.push(`| ${finding.severity} | ${escapeMd(finding.rule)} | ${escapeMd(finding.cellId)} | ${escapeMd(finding.targetName)} | ${escapeMd(finding.stateName)} | ${escapeMd(finding.viewport)} | ${escapeMd(finding.selector)} | ${escapeMd(String(evidence).slice(0, 180))} |`);
     }
   }
   return `${lines.join("\n")}\n`;
@@ -2141,9 +4260,21 @@ function ensureTargets(config) {
       includeBase: target.includeBase,
       states: target.states || [],
       areas: target.areas || [],
+      contentInsets: target.contentInsets || [],
       ignore: target.ignore || [],
       allowTruncation: target.allowTruncation || [],
       allowOverlap: target.allowOverlap || [],
+      allowContrast: target.allowContrast || [],
+      themeExceptions: target.themeExceptions || [],
+      screenshotMasks: target.screenshotMasks || [],
+      journeys: target.journeys || [],
+      primaryJourney: target.primaryJourney || null,
+      priorityOverrideReason: target.priorityOverrideReason || "",
+      regions: target.regions || [],
+      theme: target.theme || null,
+      reviewInputs: target.reviewInputs || [],
+      breakpointProfile: target.breakpointProfile || null,
+      sourceBinding: target.sourceBinding || null,
       waitFor: target.waitFor || null,
       allowFailure: target.allowFailure || "",
     });
@@ -2167,13 +4298,29 @@ function artifactReceipt(artifacts) {
   const jsonDirectory = path.dirname(artifacts.jsonOut);
   const markdownDirectory = path.dirname(artifacts.markdownOut);
   if (jsonDirectory === markdownDirectory) {
-    return {
+    const receipt = {
       directory: jsonDirectory,
       json: path.basename(artifacts.jsonOut),
       markdown: path.basename(artifacts.markdownOut),
     };
+    if (artifacts.reviewQueueOut && fs.existsSync(artifacts.reviewQueueOut)) {
+      receipt.reviewQueue = path.relative(jsonDirectory, artifacts.reviewQueueOut) || path.basename(artifacts.reviewQueueOut);
+    }
+    if (artifacts.screenshotDir && fs.existsSync(artifacts.screenshotDir)) {
+      receipt.screenshots = path.relative(jsonDirectory, artifacts.screenshotDir) || path.basename(artifacts.screenshotDir);
+    }
+    return receipt;
   }
-  return { json: artifacts.jsonOut, markdown: artifacts.markdownOut };
+  return {
+    json: artifacts.jsonOut,
+    markdown: artifacts.markdownOut,
+    ...(artifacts.reviewQueueOut && fs.existsSync(artifacts.reviewQueueOut)
+      ? { reviewQueue: artifacts.reviewQueueOut }
+      : {}),
+    ...(artifacts.screenshotDir && fs.existsSync(artifacts.screenshotDir)
+      ? { screenshots: artifacts.screenshotDir }
+      : {}),
+  };
 }
 
 function emitReceipt(receipt) {
@@ -2183,6 +4330,8 @@ function emitReceipt(receipt) {
       ? {
           json: path.basename(receipt.artifacts.json || "report.json"),
           markdown: path.basename(receipt.artifacts.markdown || "report.md"),
+          reviewQueue: path.basename(receipt.artifacts.reviewQueue || "review-queue.json"),
+          screenshots: path.basename(receipt.artifacts.screenshots || "screenshots"),
           pathOmittedForBound: true,
         }
       : undefined;
@@ -2210,6 +4359,8 @@ function resultReceipt(report, exitCode, config, blocking) {
       warning: report.findings.filter((finding) => finding.severity === "warning").length,
       checkedPages: report.coverage.checkedPages,
       skippedPages: report.pages.filter((page) => page.skipped).length,
+      reviewPending: report.review.pendingCount,
+      carriedReviewGaps: report.review.carriedGapCount + report.review.carriedBlockedCount,
     },
     coverage: report.coverage.failed ? "failed" : "passed",
     artifacts: artifactReceipt(activeArtifacts),
@@ -2228,12 +4379,27 @@ function errorEvidence(error) {
 
 function setupFailureArtifacts(error, preferred, fallback) {
   const evidence = errorEvidence(error);
+  const endedAt = new Date().toISOString();
   const report = {
+    schemaVersion: REPORT_SCHEMA_VERSION,
     runId: `formal-web-ui-${Date.now().toString(36)}-setup`,
-    generatedAt: new Date().toISOString(),
+    generatedAt: endedAt,
+    startedAt: runStartedAt,
+    endedAt,
+    durationMs: Math.max(0, Date.parse(endedAt) - Date.parse(runStartedAt)),
     status: "setup-failure",
     exitCode: 2,
     error: evidence,
+    evidence: {
+      verifier: { algorithm: "sha256", sha256: verifierSha256 },
+      config: activeConfigSha256
+        ? {
+            algorithm: "sha256",
+            sha256: activeConfigSha256,
+            scope: "privacy-safe normalized effective config; action and cookie values redacted",
+          }
+        : null,
+    },
     targets: [],
     pages: [],
     findings: [],
@@ -2249,6 +4415,10 @@ function setupFailureArtifacts(error, preferred, fallback) {
     "# Formal Web UI Verification Setup Failure",
     "",
     `- Run: ${report.runId}`,
+    `- Started: ${report.startedAt}`,
+    `- Ended: ${report.endedAt}`,
+    `- Verifier SHA-256: ${verifierSha256}`,
+    `- Config SHA-256: ${activeConfigSha256 || "unavailable before configuration normalized"}`,
     "- Exit code: 2",
     `- Error: ${evidence.message.replace(/\r?\n/g, " ")}`,
     "",
@@ -2289,49 +4459,80 @@ async function main() {
   const rawConfig = loadConfig(cli.configPath);
   activeArtifacts = resolveArtifactPaths(rawConfig, cli, fallbackArtifacts);
   const config = normalizeConfig(rawConfig, cli, activeArtifacts);
-  const targets = expandTargetStates(ensureTargets(config));
-  const { chromium, devices } = resolvePlaywright();
+  activeConfigSha256 = sha256(stableJson(privacySafeConfigContract(config)));
+  const targets = prepareTargetContracts(expandTargetStates(ensureTargets(config)), config);
+  const { chromium, devices } = resolvePlaywright(config.playwrightModuleDir);
   config.viewports = resolveViewports(config.viewports, devices);
+  const planCells = buildExecutionPlan(targets, config.viewports, config.maxPageCount);
   const { browser, browserLabel } = await launchBrowser(chromium, config.browserExecutable);
   const report = {
+    schemaVersion: REPORT_SCHEMA_VERSION,
     runId: `formal-web-ui-${Date.now().toString(36)}`,
-    generatedAt: new Date().toISOString(),
+    generatedAt: null,
+    startedAt: runStartedAt,
+    endedAt: null,
+    durationMs: null,
     browser: browserLabel,
     targets: targets.map(publicTarget),
+    plan: publicExecutionPlan(planCells, config.maxPageCount),
+    evidence: {
+      verifier: { algorithm: "sha256", sha256: verifierSha256 },
+      config: {
+        algorithm: "sha256",
+        sha256: activeConfigSha256,
+        scope: "privacy-safe normalized effective config; action and cookie values redacted",
+      },
+    },
     pages: [],
     findings: [],
+    review: null,
   };
   try {
-    for (const target of targets) {
-      for (const viewport of config.viewports) {
-        const context = await browser.newContext({
-          ...viewport.contextOptions,
+    for (const cell of planCells) {
+      const context = await browser.newContext({
+          ...cell.viewport.contextOptions,
           ...(config.ignoreHttpsErrors ? { ignoreHTTPSErrors: true } : {}),
         });
-        const page = await context.newPage();
-        try {
-          if (config.cookies.length) {
-            await page.context().addCookies(
-              config.cookies.map((cookie) => ({
-                name: cookie.name,
-                value: cookie.value,
-                ...(cookie.domain
-                  ? { domain: cookie.domain, path: cookie.path || "/" }
-                  : { url: cookie.url || target.url }),
-              })),
-            );
-          }
-          report.pages.push(await verifyTarget(page, target, viewport, config, config.screenshotDir));
-        } finally {
-          await context.close().catch(() => {});
+      const page = await context.newPage();
+      try {
+        if (config.cookies.length) {
+          await page.context().addCookies(
+            config.cookies.map((cookie) => ({
+              name: cookie.name,
+              value: cookie.value,
+              ...(cookie.domain
+                ? { domain: cookie.domain, path: cookie.path || "/" }
+                : { url: cookie.url || cell.target.url }),
+            })),
+          );
         }
+        report.pages.push(await verifyTarget(
+          page,
+          cell.target,
+          cell.viewport,
+          config,
+          cell.cellId,
+        ));
+      } finally {
+        await context.close().catch(() => {});
       }
     }
   } finally {
     await browser.close().catch(() => {});
   }
-  report.findings = summarizeFindings(report.pages);
-  report.coverage = summarizeCoverage(report.pages, config);
+  const changedReview = buildChangedReviewQueue(report.pages, config, report.runId);
+  const queueSha256 = writeReviewQueueArtifact(changedReview.queue, config.reviewQueueOut);
+  report.review = {
+    ...changedReview.report,
+    queuePath: config.reviewQueueOut,
+    queueSha256,
+    trigger: changedReview.queue.trigger,
+  };
+  report.findings = [...summarizeFindings(report.pages), ...changedReview.blockingFindings];
+  report.coverage = summarizeCoverage(report.pages, config, planCells, report.review);
+  report.endedAt = new Date().toISOString();
+  report.generatedAt = report.endedAt;
+  report.durationMs = Math.max(0, Date.parse(report.endedAt) - Date.parse(report.startedAt));
   const markdown = markdownReport(report);
   writeReportArtifacts(report, markdown, activeArtifacts);
   const failThreshold = SEVERITY_ORDER[config.rules.failOn];

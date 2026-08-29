@@ -79,3 +79,40 @@ Confirmed by the user on 2026-08-20:
 - Monitoring is not armed until schedule creation and an immediate first run
   are verified. Missing automation capability or a failed run is reported as a
   blocker and never represented as ongoing supervision.
+
+## Formal UI verification evidence
+
+Confirmed by the user on 2026-08-25:
+
+- Formal UI verification may inspect rendered native controls to determine
+  whether placeholder text or selected option labels fit, but its artifacts
+  must not retain entered control values, declarative action payloads,
+  placeholder text, or selected option labels.
+- Privacy-safe control findings may retain the control kind, selector,
+  measured text width, available inner content width, and clipping amount.
+- A source/deployment binding is evidence only when the expected source value
+  is compared with a value observed from the rendered deployment. Missing or
+  mismatched observed values are coverage failures, not successful checks.
+
+Additional evidence handling confirmed by the user on 2026-08-29:
+
+- Formal verification runs only against an in-scope safe local, fixture,
+  preview, or explicitly authorized target. Each checked route, state, and
+  viewport may retain an initial-viewport screenshot and a full-page screenshot
+  as review evidence. Callers must mask sensitive regions explicitly; the
+  verifier continues to omit entered control values, placeholder text,
+  selected labels, and declarative action payloads from reports.
+- A target's review fingerprint may retain repository-relative paths plus
+  SHA-256 digests for the explicitly declared UI code, style, design-token,
+  font, and asset inputs. It must not read outside the declared repository root,
+  follow symlinked input paths, or retain source contents in the report.
+- Manual visual-review state is caller-retained and opt-in. The verifier never
+  discovers or updates a hidden latest baseline: a later run compares only
+  with the explicitly supplied prior reviewed manifest.
+- Screenshot SHA-256 values bind reports and review decisions to the captured
+  files and detect replacement or corruption. Pixel or screenshot-hash changes
+  never decide whether manual review repeats; only changed declared UI inputs,
+  changed journey/theme intent, or a newly covered cell can do so.
+- An unchanged prior manual-review gap remains blocking without reopening the
+  same screenshots. A new manual-review decision must bind to the current
+  report, review queue, and screenshot integrity values.

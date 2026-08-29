@@ -194,6 +194,7 @@ JOURNEY_REPORT_SECTIONS = {
         "worker",
         "visual tooling",
         "visual journey checks",
+        "changed visual review",
         "findings",
         "open questions",
     ),
@@ -231,6 +232,14 @@ VISUAL_JOURNEY_TABLE_HEADERS = {
     "interaction and metadata checklist",
     "visual quality",
     "result",
+}
+CHANGED_VISUAL_REVIEW_HEADERS = {
+    "review cell",
+    "trigger/status",
+    "initial viewport evidence",
+    "full-page evidence",
+    "decision",
+    "note",
 }
 ALLOWED_RELEVANCE_VALUES = {
     "critical-always",
@@ -1318,6 +1327,7 @@ def validate_journey_report(
         tooling_body = normalized_text(bodies.get("visual tooling", ""))
         checks_body_raw = bodies.get("visual journey checks", "")
         checks_body = normalized_text(checks_body_raw)
+        changed_review_body = bodies.get("changed visual review", "")
         danger_failure = False
         require_mobile = any(Path(rel_path).suffix.lower() in WEB_UI_EXTENSIONS for rel_path in interface_files)
         if not any(term in tooling_body for term in ("test mode", "fixture", "playwright", "cypress", "storybook", "browser", "not applicable", "no visual")):
@@ -1383,7 +1393,7 @@ def validate_journey_report(
             if rendered_rows:
                 required_kinds = {"screenshot"}
                 if any(Path(rel_path).suffix.lower() in WEB_UI_EXTENSIONS for rel_path in interface_files):
-                    required_kinds.add("formal-web-verifier")
+                    required_kinds.update({"formal-web-verifier", "review-queue", "manual-review"})
                 for issue in audit_evidence.validate_references(text, evidence_records, required_kinds=required_kinds):
                     issues.append({"path": str(report_path), "section": "visual evidence", **issue})
                 for index, row in enumerate(rendered_rows, start=1):
@@ -1413,6 +1423,48 @@ def validate_journey_report(
                         for item in screenshots
                     ):
                         issues.append({"path": str(report_path), "section": "visual evidence", "row": index, "reason": "screenshot viewport metadata does not match the report row"})
+            changed_rows = parse_markdown_table_dicts(changed_review_body)
+            if require_mobile and not changed_rows:
+                issues.append({"path": str(report_path), "section": "changed visual review", "reason": "rendered web UI requires a changed visual-review table"})
+            if changed_rows and set(changed_rows[0]) != CHANGED_VISUAL_REVIEW_HEADERS:
+                issues.append({
+                    "path": str(report_path),
+                    "section": "changed visual review",
+                    "reason": "changed visual-review table headers must exactly match the required columns",
+                    "expected": sorted(CHANGED_VISUAL_REVIEW_HEADERS),
+                    "actual": sorted(changed_rows[0]),
+                })
+            allowed_review_decisions = {
+                "pass", "gap", "blocked", "carried-pass", "carried-gap", "carried-blocked", "not applicable",
+            }
+            for index, row in enumerate(changed_rows, start=1):
+                decision = normalized_text(row.get("decision", ""))
+                if decision not in allowed_review_decisions:
+                    issues.append({"path": str(report_path), "section": "changed visual review", "row": index, "field": "decision", "actual": decision})
+                    continue
+                initial = row.get("initial viewport evidence", "")
+                full_page = row.get("full-page evidence", "")
+                if decision.startswith("carried-"):
+                    if "not reopened" not in normalized_text(initial) or "not reopened" not in normalized_text(full_page):
+                        issues.append({"path": str(report_path), "section": "changed visual review", "row": index, "reason": "carried unchanged screenshots must explicitly remain unopened"})
+                elif decision != "not applicable":
+                    initial_refs = audit_evidence.evidence_references(initial)
+                    full_refs = audit_evidence.evidence_references(full_page)
+                    if not any(evidence_records.get(item, {}).get("kind") in {"screenshot", "native-snapshot"} for item in initial_refs):
+                        issues.append({"path": str(report_path), "section": "changed visual review", "row": index, "reason": "queued cell requires initial-viewport screenshot evidence"})
+                    if not any(evidence_records.get(item, {}).get("kind") in {"screenshot", "native-snapshot"} for item in full_refs):
+                        issues.append({"path": str(report_path), "section": "changed visual review", "row": index, "reason": "queued cell requires full-page screenshot evidence"})
+                if decision in {"gap", "blocked", "carried-gap", "carried-blocked"} and normalized_text(bodies.get("findings", "")) in {"", "no findings."}:
+                    issues.append({"path": str(report_path), "section": "changed visual review", "row": index, "reason": "review gap/blocked status requires a finding"})
+            if require_mobile and changed_rows:
+                changed_kinds = {
+                    evidence_records[item].get("kind")
+                    for item in audit_evidence.evidence_references(changed_review_body)
+                    if item in evidence_records
+                }
+                missing_review_kinds = sorted({"formal-web-verifier", "review-queue", "manual-review"} - changed_kinds)
+                if missing_review_kinds:
+                    issues.append({"path": str(report_path), "section": "changed visual review", "reason": "web UI review must cite the complete formal review chain", "missing_kinds": missing_review_kinds})
             viewports_by_journey: dict[str, set[str]] = defaultdict(set)
             for row in visual_rows:
                 journey = normalized_text(row.get("journey", ""))

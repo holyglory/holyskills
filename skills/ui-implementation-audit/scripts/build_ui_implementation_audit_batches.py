@@ -655,12 +655,14 @@ Worker: `visual_comparison_audit`
 {queue.isolated_light_worker_contract()}
 
 Authorized visual evidence manifest: `{(report_path.parent.parent / 'visual_evidence.json').resolve()}`.
-Screenshot and formal-verifier artifacts may be written only beneath the same
+Screenshot, formal-verifier, changed-review queue, decision, and manual-review artifacts may be written only beneath the same
 audit-output directory and must be registered in that manifest.
 
 Do not edit the audited repository; write only the exact audit artifacts authorized above. Use available screenshot-capable tooling to compare the implemented UI against mockups/assets, required UI elements, feature behavior, tests, and user journey requirements. Prefer safe test/fixture/preview mode. If the UI cannot be rendered, create desktop and mobile `BLOCKED` rows with concrete tool/route evidence and report the missing visual harness as a finding.
 
-For every produced screenshot/native capture/formal-verifier JSON, add a record to `visual_evidence.json` with stable id, confined relative path, SHA-256, detected MIME, actual image dimensions when applicable, route, state, viewport width/height/label, and capture tool. Cite it as `evidence:<id>` in every applicable row. A filename or the word screenshot is not evidence. For rendered web UI, bind the formal-verifier JSON and preserve each checked page's visible scrollbar inventory.
+For every produced screenshot/native capture/formal-verifier JSON/review queue/manual-review manifest, add a record to `visual_evidence.json` with stable id, confined relative path, SHA-256, detected MIME, actual image dimensions when applicable, route/state/viewport metadata when applicable, and capture tool. Use evidence kinds `screenshot`, `formal-web-verifier`, `review-queue`, and `manual-review`, and cite each as `evidence:<id>` in every applicable row. A filename or the word screenshot is not evidence. For rendered web UI, bind the formal-verifier JSON, its first-viewport/full-page screenshot pairs, the changed-review queue, the final manual-review manifest, and each checked page's visible scrollbar inventory.
+
+Run all deterministic checks and other automatic tests before manual image review. Then read the formal verifier's `review-queue.json`: open only each queued cell's initial-viewport and full-page images, never carried unchanged images. Record `pass`, `gap`, or `blocked` decisions, finalize them with `formal_web_ui_review.py`, and preserve carried prior gaps as findings without reopening their screenshots. Pixel/hash drift is integrity evidence only; review is triggered by declared UI inputs, journey/theme intent, or a new route/state/viewport.
 
 Before visual comparison, define the journey decision model and required UI element set. A visual check is not clear merely because it matches a mockup, has correct data, or avoids overflow. Each rendered viewport must support the primary journey decision unless the surface is itself primarily a data-entry form. If settings, filters, menus, target/configuration blocks, raw/debug detail, explanatory copy, or other low-relevance content dominates the visible surface while the primary decision is unclear or buried, report a journey-usability finding. Also run the interaction checklist for every rendered/source-inferred viewport that contains badges, flags, expandable rows, scrollable details, message streams, tool/result blocks, copy controls, navigation rows, or icon-only controls: badge-detail, row-hit-target, navigation-cursor, transient-disclosure, disclosure-scrollbar, icon-meaning, stable-expansion-width, hover-copy, status-summary, and message-metadata.
 
@@ -702,6 +704,13 @@ For relevant rows, include these exact checklist labels in `Detail access patter
 | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
 | --- | --- | --- | --- | --- | --- | --- |
 | journey or screen | desktop/mobile | route/screen/story | asset or requirement | tool command plus `evidence:<id>`, or concrete blocker | visual/responsive differences | MATCHED/GAP/BLOCKED/NOT_APPLICABLE |
+
+## Changed Visual Review
+| Review cell | Trigger/status | Initial viewport evidence | Full-page evidence | Decision | Note |
+| --- | --- | --- | --- | --- | --- |
+| reviewCellKey | new/inputs changed/intent changed/carried-pass/carried-gap/carried-blocked | `evidence:<id>` or `not reopened — carried unchanged` | `evidence:<id>` or `not reopened — carried unchanged` | pass/gap/blocked/carried-pass/carried-gap/carried-blocked | concrete review result or carried prior note |
+
+Cite the formal report, review queue, and manual-review manifest evidence ids in this section. Every queued cell must have both screenshot evidence ids and a decision. A carried cell must say `not reopened — carried unchanged`; carried gaps/blocks remain findings.
 
 ## Findings
 Use `No findings.` or finding blocks with Priority, Files, Mockup/requirement evidence, Interface evidence, Expected behavior/standard, Gap, Suggested implementation direction. Start with `Interaction checklist: badge-detail=<pass/gap/blocked/not-applicable>; row-hit-target=<...>; navigation-cursor=<...>; transient-disclosure=<...>; disclosure-scrollbar=<...>; icon-meaning=<...>; stable-expansion-width=<...>; hover-copy=<...>; status-summary=<...>; message-metadata=<...>.` If screenshot production is blocked, include a finding that names the missing safe visual path. If a required element/state is absent, content is overloaded/crowded/unreadable, low-relevance detail dominates while the primary decision is unclear or buried, or any interaction checklist item is gap/blocked, include a finding.

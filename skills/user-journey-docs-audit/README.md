@@ -27,6 +27,11 @@ a documentation audit.
 - Per-journey decision model: primary decision, required facts, warning/flag conditions, frequent actions, secondary/rare actions, and unresolved assumptions.
 - Information relevance inventory for UI implementation: critical-always, primary-frequent, secondary-occasional, rare-under-5-percent, conditional, destructive, and expert-only information/actions.
 - UI handoff constraints for the implementation audit: screens/routes/states to verify, evidence expected from screenshots or rendered surfaces, and assumptions that remain unconfirmed.
+- Formal web verification handoff per route/state: primary journey and
+  frequency/risk, initial-viewport region roles, visible/focused continuation,
+  light/dark/mixed theme intent, implementation-input ownership, and
+  initial/full-page screenshots reviewed only after mapped UI inputs or intent
+  changes.
 - Mobile and desktop fit for critical information and actions.
 - Accessibility, states, acceptance criteria, QA hooks, analytics/support clues, and implementation readiness.
 
@@ -35,6 +40,11 @@ a documentation audit.
 The skill must actively interview the user when journey information is missing or ambiguous. It should not silently infer journeys and call the docs complete. If the user cannot answer during the run, the report must label those journeys as `journey assumptions unconfirmed`.
 
 For UI handoff, the skill should flag a P1 when docs use terms such as `dense`, `dashboard`, `command center`, `overview`, or `compact` without defining the decisions, information relevance, action frequency, and assumptions behind those terms.
+
+Product docs should remain semantic: they identify primary content, secondary
+workflows, compact support, justified blocking alerts, and implementation-input
+ownership. The implemented formal verifier configuration supplies exact CSS
+selectors and repository-relative input paths.
 
 ## Helper Command
 

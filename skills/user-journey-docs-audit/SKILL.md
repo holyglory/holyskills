@@ -9,6 +9,13 @@ description: Audit an existing repository or supplied product/journey documentat
 
 Audit whether a repo's docs are sufficient to drive excellent product and UI work. This skill is not a source-code feature audit and must not prescribe layout on its own. It checks whether Markdown/product/development docs explain the app idea, users, contexts, complete journey set, complete feature set, UI elements, decisions users make, information needed for those decisions, action frequency, edge cases, implementation expectations, test expectations, and acceptance criteria well enough that designers, engineers, QA, support, and agents can build a rich, easy-to-use app without guessing.
 
+For web UI handoff, it also checks whether every route/state can be mapped to
+one primary journey with frequency and risk context, semantic initial-viewport
+regions, visible/focused activation continuation, light/dark/mixed theme
+intent, implementation-input ownership, and initial/full-page changed-review
+evidence. Product docs define intent and ownership; the implemented formal
+verifier config owns exact selectors and repository-relative paths.
+
 ## Applicability Gate
 
 Run this audit only when both conditions are true:
@@ -102,6 +109,20 @@ material ambiguity. Possible topics are:
    - Require docs to define access expectations for lower-importance information. Secondary, rare, expert, debug, destructive, or conditional information should say whether it belongs inline, in a hover/focus hint, behind row selection, in an expansion, drawer, modal, or deep detail view. The docs do not need to pick exact widgets unless product intent truly depends on that widget.
    - Require docs to define interaction affordance expectations for decision signals and disclosure surfaces when those interactions matter to the journey: whether a whole row/card is the activation target or only a control, whether hover/focus/click feedback is expected, whether badges open a popover/detail, which elements navigate to another surface, what destination they open, and whether pointer/focus affordance is required.
    - Require docs to define the lifecycle of transient disclosure surfaces when they can obscure or distract from the journey: explicit close, outside click, focus loss, idle leave timer, persistence while hovered/focused, or a documented reason to stay open.
+   - For every web route/state, require a formal-verification handoff: stable
+     primary journey, usage percentage or best frequency estimate, risk if
+     broken, explicit override reason when a lower-frequency journey is
+     primary, and semantic region roles (`primary-content`, secondary
+     `workflow-surface`, compact supporting region, justified
+     `blocking-alert`).
+   - Require every activating journey to define whether it continues in-page
+     through a visible focused anchor without document scrolling, or navigates
+     to an expected route whose primary anchor is immediately visible.
+   - Require light/dark/mixed theme intent per state, implementation-input
+     ownership for the UI code/styles/tokens/fonts/assets that affect the
+     surface, and initial-viewport plus full-page screenshot evidence. Manual
+     re-review is triggered by changed mapped inputs/intent or a new cell, not
+     by screenshot pixel drift.
    - Require docs to classify message metadata separately from message content. Sender labels, timestamps, tool/runtime labels, copy controls, concise status indicators, and raw execution details should each be marked by decision relevance and access path; docs should say when metadata should be visible, hidden until hover/focus, unselectable, or moved to detail to avoid polluting the readable content stream.
    - If the docs mention badges, flags, expandable rows, result/tool blocks, message streams, scrollable lists, evidence rows, or icon-only controls, file a distinct interaction/metadata readiness finding when the docs do not define activation target, hover/focus/click feedback, navigational destination/cursor behavior, transient disclosure lifecycle, detail access, stable expanded/collapsed dimensions, scrollbar/control separation, hover-copy reachability, concise status summary rules, icon meaning, and passive metadata rules. Do not bury this under a broad documentation-completeness finding.
    - Flag handoff docs that turn evidence into always-visible layout requirements. Phrases such as "must show", "must display", "required visible evidence", or long default visible lists are acceptable only when they are explicitly tied to critical/primary decision information, separated from secondary/rare/debug detail access, or directly confirmed by the user for that exact default layout.
@@ -132,6 +153,10 @@ Score each dimension as `0 missing`, `1 weak`, `2 usable`, or `3 excellent`.
 - Feature inventory, UI element inventory, implementation expectations, and test expectations.
 - Task and decision model: what users decide, what information they need, which information is critical, primary, secondary, rare, expert-only, debug, or conditional, and what can be ignored in the current decision state.
 - UI implementation readiness: journey decision model, information relevance inventory, UI handoff constraints, and clear evidence inputs for `ui-implementation-audit`.
+- Formal Web UI verification handoff: per-target/state primary journey,
+  frequency/risk and override rationale, initial-viewport roles, continuation,
+  theme intent, implementation-input ownership, screenshot pair, and
+  changed-review expectation without prescribing selectors or widgets.
 - Route and navigation priority: most likely paths first, escape/back paths clear.
 - Information hierarchy: critical-always, primary-frequent, secondary-occasional, rare-under-5-percent, conditional, debug, and expert-only information are separated and justified by journey decisions.
 - Detail relevance and access: secondary, rare, destructive, debug, expert-only, or conditional details are identified separately from facts needed for the user's current decision, with enough access guidance for implementation to decide inline placement versus hint, row selection, expansion, drawer, modal, or deep detail view.
@@ -175,6 +200,14 @@ explicitly say whether the docs define:
 
 If any of those checks are absent for a documented surface that mentions badges, flags, message streams, tool/result blocks, expandable rows, evidence rows, scrollable lists, or icons, include at least one `P1` finding in this section with file evidence. A result that only reports generic "UI handoff" or "documentation completeness" gaps is incomplete.
 
+Across `Decision And Information Gaps`, `Documentation Findings`, and
+`Readiness And Open Questions`, explicitly state whether the docs define all
+formal Web UI handoff checks: primary journey, usage percentage, risk if
+broken, initial viewport, continuation anchor, theme intent, review inputs,
+initial-viewport screenshot, full-page screenshot, and changed visual review.
+When the product has no web UI, use the exact sentence `Formal Web UI
+verification handoff not applicable: no web UI surfaces documented.`
+
 For each finding include:
 
 - Priority: `P0`, `P1`, `P2`, or `P3`
@@ -199,6 +232,8 @@ Use this priority scale:
 - Do not claim `excellent` or `complete` unless the user has confirmed app idea, users, and prioritized journeys, or the repo docs already do so explicitly.
 - If journey assumptions are unconfirmed, include `journey assumptions unconfirmed` in `Coverage` and `Readiness And Open Questions`.
 - Do not omit the `Interaction Affordance And Metadata Gaps` heading. If the docs contain no relevant interactive or metadata-bearing surfaces, write `No relevant interaction or message-metadata surfaces documented.`
+- Do not call web documentation UI-ready while any formal-verification handoff
+  element is missing or inferred only from rendered/source order.
 - Before finalizing, check the generated report text for the literal string `## Interaction Affordance And Metadata Gaps`. If absent, rewrite the report instead of returning it.
 - Distinguish documented truth from source-code inference.
 - Prefer a practical documentation plan over broad UX advice. Name the exact files or sections to create.

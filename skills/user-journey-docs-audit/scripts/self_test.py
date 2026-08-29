@@ -23,6 +23,7 @@ REQUIRED_REFERENCES = {
         "## Information Relevance Inventory",
         "## Interaction And Metadata Model",
         "## UI Handoff Constraints",
+        "## Formal Web UI Verification Handoff",
         "## Screen Requirements",
     ],
 }
@@ -85,6 +86,9 @@ def main() -> int:
             "design a database for part numbering, serial numbers, and document identification",
             "Help me brainstorm users and workflows for a new product.",
             "Review this numbering scheme and propose a better domain model.",
+            "Formal Web UI verification handoff",
+            "continuation anchor",
+            "changed visual review",
         ]:
             check(needle in skill_contract, f"applicability contract should contain {needle!r}")
 
@@ -288,6 +292,15 @@ Use the UI implementation audit with a mobile screenshot, mockup, and DOM/native
 | --- | --- | --- | --- | --- | --- |
 | Metrics Dashboard | threshold warning badge | decide whether status needs action | badge and keyboard focus | hover/focus hint and click popover detail | stable position, accessible name, no scrollbar collision, popover closes on outside click or focus loss after idle timeout |
 | Metrics Dashboard | latest update timestamp | know data freshness | not interactive | passive visible metadata | timestamp is not selectable message content |
+
+## Formal Web UI Verification Handoff
+
+- Primary journey: Review live metrics; usage percentage: 95%; risk if broken: high. A lower-frequency journey needs a priority override reason.
+- Initial viewport: the metrics list is the `primary-content`; compact filters are a supporting region; settings are a secondary `workflow-surface`; a connectivity message may be a justified `blocking-alert`.
+- Continuation anchor: after Inspect metric, its detail heading is visible without scrolling, focus enters the detail surface, and document scroll does not jump. A dedicated flow declares its expected destination route, predictable pointer cursor, and keyboard focus affordance.
+- Theme intent: light, dark, or mixed is declared for each state; this surface is light.
+- Implementation-input ownership: the verifier maps review inputs for UI code, styles, tokens, fonts, and assets without putting CSS selectors in product intent.
+- Evidence: retain an initial-viewport screenshot and full-page screenshot pair; changed visual review opens only cells whose mapped inputs or intent changed.
 """,
         )
         complete = run_inventory(complete_repo)
@@ -299,6 +312,7 @@ Use the UI implementation audit with a mobile screenshot, mockup, and DOM/native
         check(complete["has_ui_element_inventory"], "complete docs should include UI element inventory")
         check(complete["has_implementation_expectations"], "complete docs should include implementation expectations")
         check(complete["has_test_expectations"], "complete docs should include test expectations")
+        check(complete["has_formal_verification_handoff"], "complete docs should include the formal verifier handoff")
         check(complete["ui_audit_handoff_ready"], "complete docs should be UI-audit handoff ready")
         check(not complete["ui_implementation_risk_signals"], "complete docs should clear UI implementation risk signals")
 
@@ -540,6 +554,11 @@ This is a local curation repository for Codex skills.
                 body = "Confirmed from the user and repository documentation."
             elif heading == "Journey Findings":
                 body = "| Journey | Status | Evidence |\n| --- | --- | --- |\n| Review health | confirmed | user interview |"
+            elif heading == "Decision And Information Gaps":
+                body = (
+                    "Confirmed handoff checks: primary journey, usage percentage, risk if broken, initial viewport region roles, "
+                    "continuation anchor, theme intent, review inputs, initial-viewport screenshot, full-page screenshot, and changed visual review."
+                )
             elif heading == "Interaction Affordance And Metadata Gaps":
                 body = "No gaps: activation targets, focus feedback, destination, disclosure lifecycle, detail access, scrollbar separation, stable dimensions, hover-copy, concise status, icon meaning, and passive metadata are explicitly documented."
             elif heading == "Readiness And Open Questions":
@@ -557,6 +576,13 @@ This is a local curation repository for Codex skills.
             ),
         )
         run_report_verify(no_interaction, expect=0)
+
+        missing_formal_handoff = tmp / "missing-formal-handoff.md"
+        write(
+            missing_formal_handoff,
+            good_report.read_text(encoding="utf-8").replace("changed visual review", "ordinary visual inspection"),
+        )
+        run_report_verify(missing_formal_handoff, expect=1)
 
         missing_interaction = tmp / "missing-interaction.md"
         write(missing_interaction, good_report.read_text(encoding="utf-8").replace("## Interaction Affordance And Metadata Gaps", "## Generic UI Gaps"))

@@ -1,6 +1,6 @@
 ---
 name: formal-web-ui-verification
-description: Run deterministic browser-side heuristic verification of rendered web UI geometry, visibility, text fit, overlap, media health, target coverage, and area-of-interest boundaries. Use when a coding agent (Codex, Claude Code) implements, changes, audits, or validates frontend/web UI and needs software-detectable evidence for cropped text, hidden content, off-canvas controls, unintended overlap, broken media, invisible text, document overflow, unchecked routes, or noisy visual-test misses across desktop and mobile viewports.
+description: Run journey-aware browser verification of rendered web UI hierarchy, immediate interaction continuation, WCAG text contrast, declared-theme balance, palette risks, geometry, responsive samples, and truthful route/state/viewport evidence. Use when frontend work needs deterministic checks plus initial/full-page screenshots and changed-input-only agent review for displaced primary content, offscreen forms, unreadable colors, contradictory themes, clipping, overlap, broken media, stale deployments, or incomplete coverage.
 ---
 
 # Formal Web UI Verification
@@ -27,6 +27,28 @@ background, traverses discoverable open shadow roots, evaluates every
 Playwright-reachable iframe, records any reachable context it could not inspect, and lists
 allowed ellipsis/line-clamp truncations, hidden text-like elements, and
 still-loading media, even when the page has no critical layout findings.
+Native input placeholders and selected option labels are measured against the
+control's rendered inner content width, including the native select affordance,
+without retaining the measured text or any entered value. Pages may opt
+important cards/forms into a minimum readable-content inset contract. Targets
+may also opt into exact breakpoint-minus-one/at/plus-one samples under a hard
+page-cell budget.
+
+Every target and interaction state also carries an explicit user-journey
+contract: one primary journey with frequency/risk context, semantic rendered
+regions, light/dark/mixed theme intent, and repository-relative UI
+implementation inputs. The verifier measures hierarchy in the initial
+viewport before scrolling and checks that an activated in-page journey reveals
+a visible focused continuation without a document jump. Bare URL targets fail
+coverage because geometry without product intent cannot prove that the right
+content owns the page.
+
+Each checked cell automatically emits a redacted initial-viewport screenshot
+and full-page screenshot plus a changed visual-review queue. Screenshot hashes
+prove integrity only. Manual review repeats only for new cells or changed
+declared UI inputs or journey/theme intent, never because dynamic pixels differ.
+Read [references/journey_review_contract.md](references/journey_review_contract.md)
+when preparing this contract or finalizing agent review.
 
 This deterministic verification layer is not a replacement for human visual
 judgment. Use it before reporting changed web UI as done, and include its
@@ -45,22 +67,30 @@ FORMAL_WEB_UI_SKILL_DIR="${FORMAL_WEB_UI_SKILL_DIR:-$HOME/.codex/skills/formal-w
 python3 "$FORMAL_WEB_UI_SKILL_DIR/scripts/self_test.py"
 ```
 
-Verify explicit routes:
+The self-test resolves Playwright from an explicit module directory derived
+from the canonical repository's locked `ci/playwright/node_modules`
+installation, `FORMAL_WEB_UI_PLAYWRIGHT_NODE_MODULES`, or an existing
+dependency environment, then passes `--playwright-module-dir` to every
+verifier subprocess. It never relies on the temporary audited working
+directory. In a source checkout where the locked dependency is absent, run
+`npm ci --ignore-scripts --prefix ci/playwright` once; the self-test reports
+this exact recovery instead of requiring callers to guess a `NODE_PATH`.
+
+Verify explicit routes through a complete config (the linked contract reference
+contains a full example):
 
 ```bash
 node "$FORMAL_WEB_UI_SKILL_DIR/scripts/formal_web_ui_verify.mjs" \
-  --url "http://127.0.0.1:3000/" \
-  --viewport mobile=390x844 \
-  --viewport desktop=1440x900 \
+  --config formal-web-ui.json \
   --fail-on critical
 ```
 
 Artifact-first output is the software-owned default. With no output paths, the
 verifier creates a unique directory under a safe external runtime root
 (normally the system temporary directory) outside the current audited worktree,
-writes complete `report.json` and `report.md`
-artifacts, and emits one bounded JSON receipt naming that directory and both
-filenames. Exit codes `0`/`1`/`2`/`3` are preserved. `--json-out` and
+writes complete `report.json`, `report.md`, `review-queue.json`, and redacted
+initial/full-page screenshot artifacts, and emits one bounded JSON receipt
+naming them. Exit codes `0`/`1`/`2`/`3` are preserved. `--json-out` and
 `--markdown-out` override those paths when a caller needs a known cold artifact
 location; if only one is supplied, the verifier derives its companion path.
 Store verbose wrapper, browser, or self-test output under the task's cold log
@@ -95,7 +125,7 @@ Verify healthy coordinator-managed web URLs without starting duplicate servers:
 COORDINATOR_SKILL_DIR="${COORDINATOR_SKILL_DIR:-$HOME/.codex/skills/codex-dev-coordinator}"
 [ -d "$COORDINATOR_SKILL_DIR" ] || COORDINATOR_SKILL_DIR="$HOME/.claude/skills/codex-dev-coordinator"
 node "$FORMAL_WEB_UI_SKILL_DIR/scripts/formal_web_ui_verify.mjs" \
-  --from-coordinator \
+  --config formal-web-ui.json \
   --coordinator-script "$COORDINATOR_SKILL_DIR/scripts/dev_coordinator.py" \
   --only-current \
   --fail-on critical
@@ -116,6 +146,10 @@ skill; callers can always provide explicit `--url` targets instead.
      asked for them and the route is safe to inspect.
 
 2. **Run the formal verifier**
+   - Read the product/journey sources first. Build the target contract described
+     in `references/journey_review_contract.md`; do not infer priority from DOM
+     order or feature names. Every effective target/state must declare journeys,
+     primary journey, regions, theme, and review inputs.
    - Check at least one narrow/mobile viewport and one desktop viewport for web
      UI changes.
    - When the journey depends on touch, mobile user-agent behavior, device pixel
@@ -128,6 +162,15 @@ skill; callers can always provide explicit `--url` targets instead.
      Action failures fail the target-coverage gate; arbitrary injected JavaScript
      is deliberately unsupported. Values used by actions are omitted from the
      public report.
+   - A target may declare `breakpointProfile` with `breakpoints`, `height`, and
+     optional `name`/`baseViewport`. Each breakpoint adds exactly width−1,
+     width, and width+1 for that target. Equivalent configured/profile cells
+     are de-duplicated. The complete target × state × viewport expansion must
+     fit `maxPageCount` (default `60`); exceeding it is a setup failure, never a
+     silently reduced sample.
+   - Treat every viewport result as sampled-only evidence. The JSON and
+     Markdown reports list the exact widths checked and explicitly state that
+     widths between samples were not inspected.
    - The verifier scrolls the full page top-to-bottom before measuring so
      below-the-fold and lazy-loaded content is exercised; how far it scrolled is
      reported in `metrics.scroll`. Pass `--no-scroll` (or `"scroll": false` in a
@@ -140,6 +183,14 @@ skill; callers can always provide explicit `--url` targets instead.
      The exemption remains in the report. `minCheckedPages` defaults to `1`, so
      a run cannot pass solely through exemptions unless the config deliberately
      sets the minimum to `0`.
+   - When source currency matters, declare `sourceBinding.expected`. The
+     verifier compares it with the final deployment's
+     `X-UI-Source-Revision` response header by default, falling back to
+     `<meta name="ui-source-revision">`; `responseHeader` and `metaName` are
+     configurable or nullable. A missing or mismatched observed value fails
+     coverage. A final origin/path different from the requested origin/path
+     (including a redirect to sign-in) also fails coverage and is not counted
+     as checked.
    - Keep `--fail-on critical` as the default for low-noise delivery gates.
      Use stricter settings only when the project asks for warning-level gates.
 
@@ -162,23 +213,57 @@ skill; callers can always provide explicit `--url` targets instead.
      allowances must name a selector and a reason.
 
 4. **Report evidence**
-   - Keep the complete JSON and Markdown results at the receipt-named artifact
-     paths. Do not paste either full report into chat or a parent-agent result.
+   - Keep the complete JSON, Markdown, review queue, and screenshot pairs at the
+     receipt-named artifact paths. Do not paste full artifacts into chat or a
+     parent-agent result.
      Return only the outcome, exit code, checked/skipped page counts, critical
      and warning counts, coverage status, and artifact paths.
+   - The complete reports bind evidence to run/per-cell start and end times,
+     verifier SHA-256, a privacy-safe normalized effective-config SHA-256,
+     requested/final paths, every exact route/state/viewport cell, sampled-only
+     widths, and deployment/source binding status. Cookie values, declarative
+     action values, typed values, placeholders, and selected labels are never
+     included in the config hash input or control findings.
    - Read only the specific finding rows or metrics needed for diagnosis; keep
      raw command output in a cold log file.
    - If no safe render path exists, report that formal verification is blocked
      and add the missing Playwright, Storybook, fixture route, or preview path
      to the implementation plan.
 
+5. **Review changed visual evidence after automation**
+   - Finish the formal verifier and every other applicable automatic test first.
+   - Read `review-queue.json`, open only each queued cell's initial-viewport and
+     full-page screenshots, and record `pass`, `gap`, or `blocked`. Never reopen
+     carried unchanged screenshots; carried gaps remain blocking.
+   - Finalize and validate `manual-review.json` with
+     `scripts/formal_web_ui_review.py` as shown in the contract reference. A
+     formal exit `0` with pending review is not visual completion.
+
 ## Default Rule Set
 
 Critical findings by default:
 
+- Missing or displaced primary-journey content in the initial viewport, a
+  lower-priority workflow before it, or oversized supporting content before it
+  (`primary-journey-content-missing`,
+  `primary-journey-outside-initial-viewport`,
+  `secondary-workflow-precedes-primary`,
+  `supporting-content-dominates-primary`). Missing target intent is a coverage
+  failure rather than a finding.
+- Activated in-page work whose continuation is missing, offscreen, unfocused,
+  or reached through an unexpected document jump
+  (`continuation-anchor-missing`, `continuation-anchor-offscreen`,
+  `continuation-anchor-not-recognizable`, `continuation-focus-missing`,
+  `continuation-document-jump`).
 - Document horizontal overflow (`document-horizontal-overflow`).
 - Text/controls clipped by their own `overflow: hidden`/`clip`
   (`clipped-x`/`clipped-y`) without a scroll path or explicit allowance.
+- Rendered native input placeholders or selected option labels wider than the
+  control's real inner content width (`control-text-clipped`). Evidence contains
+  only control kind and geometry; no control text or entered value is retained.
+- Rendered text/control content closer to a container edge than an explicitly
+  declared minimum readable inset (`content-inset-below-minimum`). There is no
+  universal spacing heuristic.
 - Text/controls partially cut by an ancestor's `overflow: hidden`/`clip`
   (`clipped-by-ancestor`): absolute children sticking out of cropped
   containers, negative-margin cuts, nowrap text spilling into a clipping
@@ -199,11 +284,16 @@ Critical findings by default:
 - Controls or text outside a configured area of interest (`outside-area`).
 - Broken images/videos (`broken-image`/`broken-video`), including broken
   images that collapsed to ~0x0 because their source failed.
-- Text with effectively invisible foreground/background contrast against a
+- Text below WCAG 2.2 AA against a measurable solid background: 4.5:1 for
+  normal text and 3:1 for large text (`insufficient-text-contrast`), plus text
+  with effectively invisible foreground/background contrast against a
   genuine solid background (`invisible-text`). When the effective background is
   a gradient, image, or translucent stack, contrast is not computed against
   white; the element is recorded in `metrics.unmeasurableContrast` and reported
   only as a warning.
+- A large opposite-brightness surface that contradicts a declared light or dark
+  target (`declared-theme-contradiction`). Mixed themes and selector-specific
+  reasoned exceptions retain measurements without this failure.
 
 Warnings by default:
 
@@ -225,8 +315,13 @@ Warnings by default:
   sample points).
 - Small interactive targets (`tiny-interactive-target`).
 - Explicitly allowed truncation (`allowed-truncation`).
-- Low contrast that is risky but not effectively invisible
-  (`low-contrast-risk`).
+- Explicitly allowed WCAG contrast exceptions (`allowed-contrast`).
+- Less-severe declared-theme imbalance, high-chroma surface dominance, four or
+  more prominent accent-hue clusters, or theme surfaces made unmeasurable by
+  gradients/media (`declared-theme-balance-risk`,
+  `high-chroma-surface-risk`, `competing-accent-hues`,
+  `unmeasurable-theme-surface`). These are evidence for agent judgment, not
+  automatic claims that a palette is unattractive.
 - Broad container overflow that belongs to charts, maps, canvases, or other
   complex artifacts (`complex-artifact-overflow`). Artifact detection is
   token-bounded: an ancestor must be a real `svg`/`canvas`, match a known
@@ -238,7 +333,7 @@ Warnings by default:
   with per-rule suppressed counts is emitted when the cap is hit, so mass
   breakage cannot silently vanish from the report.
 
-## Areas, Ignores, And Allowances
+## Areas, Insets, Ignores, And Allowances
 
 Prefer attributes in source or fixture markup when the policy should travel
 with the component:
@@ -248,7 +343,13 @@ with the component:
   <button>Save</button>
 </section>
 
+<section class="items-card" data-ui-verify-min-content-inset="12">
+  <span>Items</span>
+</section>
+
 <span data-ui-allow-truncation="filename may ellipsize">very-long-file-name.pdf</span>
+<span data-ui-allow-contrast="inactive watermark">Draft</span>
+<figure data-ui-theme-exception="intentional document preview">...</figure>
 <div data-ui-allow-overlap="intentional floating toolbar">...</div>
 <div data-ui-verify-ignore="third-party map internals">...</div>
 ```
@@ -257,12 +358,36 @@ Use a config file when allowances are route-specific:
 
 ```json
 {
+  "repoRoot": "/absolute/path/to/repository",
+  "targetDefaults": {
+    "journeys": [{"id": "review-dashboard", "frequencyPercent": 100, "risk": "normal"}],
+    "primaryJourney": "review-dashboard",
+    "regions": [{"selector": "[data-ui-region='dashboard-primary']", "role": "primary-content", "journey": "review-dashboard"}],
+    "theme": "light",
+    "reviewInputs": [
+      {"path": "src/dashboard", "kind": "ui-code"},
+      {"path": "src/styles/dashboard.css", "kind": "style"}
+    ]
+  },
   "targets": [{
     "url": "http://127.0.0.1:3000/dashboard",
+    "breakpointProfile": {
+      "name": "dashboard-layout",
+      "breakpoints": [768, 1024],
+      "height": 900,
+      "baseViewport": "desktop"
+    },
+    "contentInsets": [{"selector": ".important-card", "min": 12}],
+    "sourceBinding": {
+      "expected": "git:abc123",
+      "responseHeader": "x-ui-source-revision",
+      "metaName": "ui-source-revision"
+    },
     "states": [{
       "name": "account-menu-open",
       "actions": [{"action": "click", "selector": "[aria-label='Account']"}],
-      "waitFor": {"selector": "[role='menu']"}
+      "waitFor": {"selector": "[role='menu']"},
+      "continuation": {"kind": "in-page", "anchor": "[role='menu']", "focusWithin": "[role='menu']"}
     }]
   }],
   "viewports": [
@@ -273,6 +398,10 @@ Use a config file when allowances are route-specific:
   "ignore": [{"selector": ".third-party-map", "reason": "vendor map internals"}],
   "allowTruncation": [{"selector": ".filename", "reason": "intentional ellipsis"}],
   "allowOverlap": [{"selector": ".floating-toolbar", "reason": "intentional overlay"}],
+  "allowContrast": [{"selector": ".inactive-watermark", "reason": "incidental decorative text"}],
+  "themeExceptions": [{"selector": ".document-preview", "reason": "preview preserves source colors"}],
+  "screenshotMasks": [{"selector": ".customer-email", "reason": "sensitive fixture data"}],
+  "maxPageCount": 18,
   "scroll": true,
   "rules": {"failOn": "critical", "strictTruncation": false}
 }
@@ -281,14 +410,34 @@ Use a config file when allowances are route-specific:
 Set `"scroll": false` (or pass `--no-scroll`) to disable the full-page scroll
 pass when a page must not scroll during inspection.
 
+`contentInsets` may be global or target-specific and is deliberately opt-in.
+The verifier measures rendered direct-text ranges and descendant control boxes
+against each declared container's inner border box. Do not declare the
+contract on fieldsets or attached-control groups whose content is intentionally
+edge-aligned. `data-ui-allow-truncation` and `allowTruncation` also apply to
+native control text; an overflowing declared exception becomes an
+`allowed-truncation` warning with redacted text.
+
 ## Completion Rules
 
 - Do not report changed web UI as verified if the formal verifier found
   unresolved critical findings on the relevant desktop or mobile route.
+- Do not claim formal journey coverage for a bare URL or a target/state missing
+  journeys, primary region, theme, review inputs, or an applicable continuation
+  checkpoint.
 - Do not report a run as verified when it exits `3`, checks fewer than the
-  configured minimum pages, or leaves a required explicit target unchecked.
+  configured minimum pages, leaves a required explicit target unchecked,
+  follows an unexpected final route, or has a missing/mismatched declared
+  deployment/source binding.
+- Do not describe responsive width coverage as exhaustive. Report the exact
+  sampled widths and retain the hard `maxPageCount` plan evidence.
 - Do not treat screenshots alone as formal evidence for clipped text, overlap,
   off-canvas controls, or invisible text when this verifier can run.
+- Do not claim visual completion while `review.pendingCount` is nonzero, a
+  current/manual or carried review decision is `gap`/`blocked`, or the supplied
+  prior manifest/removed-cell disposition fails validation. Review only queued
+  images after automatic tests; screenshot pixel drift never justifies opening
+  an unchanged cell.
 - Keep generated reports outside the product repo unless the user asks to save
   them there.
 - For agent-driven runs, keep the default bounded receipt output. A full

@@ -947,24 +947,135 @@ None.
 def write_visual_evidence(out: Path, manifest: dict, *, route: str = "/dashboard") -> None:
     artifacts = out / "artifacts"
     desktop = artifacts / "desktop.png"
+    desktop_full = artifacts / "desktop-full.png"
     mobile = artifacts / "mobile.png"
+    mobile_full = artifacts / "mobile-full.png"
     formal = artifacts / "formal-web.json"
+    review_queue = artifacts / "review-queue.json"
+    manual_review = artifacts / "manual-review.json"
     write_bytes(desktop, PNG_1X1)
+    write_bytes(desktop_full, PNG_1X1)
     write_bytes(mobile, PNG_1X1)
+    write_bytes(mobile_full, PNG_1X1)
+    desktop_sha = hashlib.sha256(desktop.read_bytes()).hexdigest()
+    desktop_full_sha = hashlib.sha256(desktop_full.read_bytes()).hexdigest()
+    mobile_sha = hashlib.sha256(mobile.read_bytes()).hexdigest()
+    mobile_full_sha = hashlib.sha256(mobile_full.read_bytes()).hexdigest()
+    source_fingerprint = "a" * 64
+    intent_fingerprint = "b" * 64
+    queue_payload = {
+        "schemaVersion": 1,
+        "kind": "formal-web-ui-review-queue",
+        "runId": "formal-self-test",
+        "generatedAt": "2026-07-10T00:00:00Z",
+        "trigger": "declared UI inputs, journey/theme intent, or new route/state/viewport; screenshot pixels are integrity-only",
+        "entries": [
+            {
+                "reviewCellKey": "desktop-cell",
+                "sourceFingerprint": source_fingerprint,
+                "intentFingerprint": intent_fingerprint,
+                "screenshots": {"viewport": {"sha256": desktop_sha}, "fullPage": {"sha256": desktop_full_sha}},
+            },
+            {
+                "reviewCellKey": "mobile-cell",
+                "sourceFingerprint": source_fingerprint,
+                "intentFingerprint": intent_fingerprint,
+                "screenshots": {"viewport": {"sha256": mobile_sha}, "fullPage": {"sha256": mobile_full_sha}},
+            },
+        ],
+        "carried": [],
+        "removedDispositions": [],
+        "undisposedRemoved": [],
+        "invalidDispositions": [],
+    }
+    write(review_queue, json.dumps(queue_payload, indent=2))
+    queue_sha = hashlib.sha256(review_queue.read_bytes()).hexdigest()
+    pages = []
+    for cell_id, viewport, viewport_path, viewport_sha, full_path, full_sha in (
+        ("desktop-cell", {"name": "desktop", "width": 1440, "height": 900}, desktop, desktop_sha, desktop_full, desktop_full_sha),
+        ("mobile-cell", {"name": "mobile", "width": 390, "height": 844}, mobile, mobile_sha, mobile_full, mobile_full_sha),
+    ):
+        pages.append(
+            {
+                "cellId": cell_id,
+                "outcome": "checked",
+                "metrics": {"visibleScrollbars": []},
+                "findings": [],
+                "screenshots": {
+                    "viewport": {"path": str(viewport_path), "mime": "image/png", "sha256": viewport_sha, "width": 1, "height": 1},
+                    "fullPage": {"path": str(full_path), "mime": "image/png", "sha256": full_sha, "width": 1, "height": 1},
+                },
+                "review": {
+                    "reviewCellKey": cell_id,
+                    "sourceFingerprint": source_fingerprint,
+                    "intentFingerprint": intent_fingerprint,
+                },
+                "viewport": viewport,
+            }
+        )
     write(
         formal,
         json.dumps(
             {
+                "schemaVersion": 2,
                 "runId": "formal-self-test",
                 "generatedAt": "2026-07-10T00:00:00Z",
                 "browser": "chromium",
                 "targets": [{"url": "http://127.0.0.1/dashboard"}],
-                "pages": [
-                    {"outcome": "checked", "metrics": {"visibleScrollbars": []}, "findings": []},
-                    {"outcome": "checked", "metrics": {"visibleScrollbars": []}, "findings": []},
-                ],
+                "pages": pages,
                 "findings": [],
                 "coverage": {"failed": False, "checkedPages": 2, "requiredCheckedPages": 1, "failures": [], "tolerated": []},
+                "review": {
+                    "queueSha256": queue_sha,
+                    "pendingCount": 2,
+                    "cells": [
+                        {
+                            "reviewCellKey": "desktop-cell",
+                            "sourceFingerprint": source_fingerprint,
+                            "intentFingerprint": intent_fingerprint,
+                            "screenshots": pages[0]["screenshots"],
+                        },
+                        {
+                            "reviewCellKey": "mobile-cell",
+                            "sourceFingerprint": source_fingerprint,
+                            "intentFingerprint": intent_fingerprint,
+                            "screenshots": pages[1]["screenshots"],
+                        },
+                    ],
+                },
+            },
+            indent=2,
+        ),
+    )
+    formal_sha = hashlib.sha256(formal.read_bytes()).hexdigest()
+    write(
+        manual_review,
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "kind": "formal-web-ui-manual-review",
+                "reviewedRunId": "formal-self-test",
+                "reviewedAt": "2026-07-10T00:01:00Z",
+                "reportSha256": formal_sha,
+                "reviewQueueSha256": queue_sha,
+                "decisions": [
+                    {
+                        "reviewCellKey": "desktop-cell",
+                        "decision": "pass",
+                        "note": "",
+                        "sourceFingerprint": source_fingerprint,
+                        "intentFingerprint": intent_fingerprint,
+                        "screenshots": {"viewportSha256": desktop_sha, "fullPageSha256": desktop_full_sha},
+                    },
+                    {
+                        "reviewCellKey": "mobile-cell",
+                        "decision": "pass",
+                        "note": "",
+                        "sourceFingerprint": source_fingerprint,
+                        "intentFingerprint": intent_fingerprint,
+                        "screenshots": {"viewportSha256": mobile_sha, "fullPageSha256": mobile_full_sha},
+                    },
+                ],
             },
             indent=2,
         ),
@@ -977,11 +1088,10 @@ def write_visual_evidence(out: Path, manifest: dict, *, route: str = "/dashboard
             "path": path.relative_to(out).as_posix(),
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "mime": "image/png" if kind == "screenshot" else "application/json",
-            "route": route,
-            "state": "default fixture state",
-            "viewport": viewport,
             "captured_by": "self-test fixture",
         }
+        if kind not in {"review-queue", "manual-review"}:
+            value.update({"route": route, "state": "default fixture state", "viewport": viewport})
         if dimensions:
             value.update({"width": 1, "height": 1})
         return value
@@ -994,13 +1104,28 @@ def write_visual_evidence(out: Path, manifest: dict, *, route: str = "/dashboard
                 "run_id": manifest["run_id"],
                 "artifacts": [
                     record("shot-desktop", desktop, "screenshot", {"width": 1440, "height": 900, "label": "desktop"}, dimensions=True),
+                    record("shot-desktop-full", desktop_full, "screenshot", {"width": 1440, "height": 900, "label": "desktop full page"}, dimensions=True),
                     record("shot-mobile", mobile, "screenshot", {"width": 390, "height": 844, "label": "mobile"}, dimensions=True),
+                    record("shot-mobile-full", mobile_full, "screenshot", {"width": 390, "height": 844, "label": "mobile full page"}, dimensions=True),
                     record("formal-web", formal, "formal-web-verifier", {"width": 1440, "height": 900, "label": "desktop and mobile"}),
+                    record("review-queue", review_queue, "review-queue", {}),
+                    record("manual-review", manual_review, "manual-review", {}),
                 ],
             },
             indent=2,
         ),
     )
+
+
+def changed_visual_review_section() -> str:
+    return """## Changed Visual Review
+| Review cell | Trigger/status | Initial viewport evidence | Full-page evidence | Decision | Note |
+| --- | --- | --- | --- | --- | --- |
+| desktop-cell | new route/state/viewport | evidence:shot-desktop | evidence:shot-desktop-full | pass | Desktop composition reviewed after automation. |
+| mobile-cell | new route/state/viewport | evidence:shot-mobile | evidence:shot-mobile-full | pass | Mobile composition reviewed after automation. |
+
+Formal chain: evidence:formal-web, evidence:review-queue, evidence:manual-review.
+"""
 
 
 def write_complete_reports(
@@ -1102,6 +1227,8 @@ Playwright captures desktop 1440px and mobile 390px views; formal browser verifi
 
 {INTERACTION_CHECKLIST_LINE}
 
+{changed_visual_review_section()}
+
 ## Findings
 No findings.
 
@@ -1161,6 +1288,8 @@ Playwright desktop and mobile captures with formal geometry evidence.
 
 {INTERACTION_CHECKLIST_LINE}
 
+{changed_visual_review_section()}
+
 ## Findings
 {findings}
 
@@ -1218,6 +1347,8 @@ Playwright desktop and mobile captures with formal geometry evidence.
 | Review workspace | mobile | /review | docs/journeys.md | playwright screenshot evidence:shot-mobile | weak grid, badge no hover/click popover detail, low-importance detail dominates, sender labels and selectable timestamps add noise, and message alignment problems hide the decision hierarchy | {result} |
 
 {INTERACTION_CHECKLIST_LINE}
+
+{changed_visual_review_section()}
 
 ## Findings
 {findings}
@@ -1284,6 +1415,16 @@ def main() -> int:
             )
         visual_prompt_text = (out / audit_meta["visual_comparison_prompt"]).read_text(encoding="utf-8")
         check(str((out / "visual_evidence.json").resolve()) in visual_prompt_text, "visual worker should receive exact evidence-manifest path")
+        for token in (
+            "review-queue.json",
+            "formal_web_ui_review.py",
+            "open only each queued cell",
+            "initial-viewport and full-page",
+            "review-queue",
+            "manual-review",
+            "Changed Visual Review",
+        ):
+            check(token in visual_prompt_text, f"visual worker prompt should enforce changed-review behavior: {token}")
         skill_contract = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         folded_skill_contract = " ".join(skill_contract.split()).casefold()
         skill_frontmatter = skill_contract.split("---", 2)[1]
@@ -1308,6 +1449,8 @@ def main() -> int:
             "final-report.md" in skill_contract and "filename-bearing `REPORT_SAVED`" in skill_contract,
             "skill must keep complete results in cold artifacts with filename-bearing receipts",
         )
+        for token in ("review-queue.json", "formal_web_ui_review.py", "Changed Visual Review", "not reopened — carried unchanged"):
+            check(token in skill_contract, f"skill contract should preserve changed-review rule: {token}")
         agent_metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
         check(
             "\npolicy:\n  allow_implicit_invocation: false\n" in f"\n{agent_metadata}",
@@ -1466,6 +1609,43 @@ def main() -> int:
         write(weak_formal_manifest_path, json.dumps(weak_formal_manifest, indent=2))
         weak_formal_result = verify(weak_formal_out, expect=1)
         check("visibleScrollbars" in weak_formal_result.stdout, "formal verifier JSON must preserve visible scrollbar inventory")
+
+        missing_review_chain_out = tmp / "missing-review-chain-out"
+        shutil.copytree(out, missing_review_chain_out)
+        missing_review_manifest_path = missing_review_chain_out / "visual_evidence.json"
+        missing_review_manifest = json.loads(missing_review_manifest_path.read_text(encoding="utf-8"))
+        missing_review_manifest["artifacts"] = [
+            item for item in missing_review_manifest["artifacts"] if item["id"] != "manual-review"
+        ]
+        write(missing_review_manifest_path, json.dumps(missing_review_manifest, indent=2))
+        missing_review_chain_result = verify(missing_review_chain_out, expect=1)
+        check("manual-review" in missing_review_chain_result.stdout, "rendered web UI must bind finalized manual-review evidence")
+
+        forged_review_chain_out = tmp / "forged-review-chain-out"
+        shutil.copytree(out, forged_review_chain_out)
+        forged_review_path = forged_review_chain_out / "artifacts" / "manual-review.json"
+        forged_review = json.loads(forged_review_path.read_text(encoding="utf-8"))
+        forged_review["reportSha256"] = "f" * 64
+        write(forged_review_path, json.dumps(forged_review, indent=2))
+        forged_review_manifest_path = forged_review_chain_out / "visual_evidence.json"
+        forged_review_manifest = json.loads(forged_review_manifest_path.read_text(encoding="utf-8"))
+        next(item for item in forged_review_manifest["artifacts"] if item["id"] == "manual-review")["sha256"] = hashlib.sha256(forged_review_path.read_bytes()).hexdigest()
+        write(forged_review_manifest_path, json.dumps(forged_review_manifest, indent=2))
+        forged_review_chain_result = verify(forged_review_chain_out, expect=1)
+        check("does not bind a registered formal report" in forged_review_chain_result.stdout, "manual review must bind the registered formal report bytes")
+
+        reopened_carried_out = tmp / "reopened-carried-out"
+        shutil.copytree(out, reopened_carried_out)
+        reopened_report = reopened_carried_out / "reports" / "visual_comparison_audit.md"
+        reopened_report.write_text(
+            reopened_report.read_text(encoding="utf-8").replace(
+                "| desktop-cell | new route/state/viewport | evidence:shot-desktop | evidence:shot-desktop-full | pass |",
+                "| desktop-cell | carried-pass | evidence:shot-desktop | evidence:shot-desktop-full | carried-pass |",
+            ),
+            encoding="utf-8",
+        )
+        reopened_carried_result = verify(reopened_carried_out, expect=1)
+        check("must explicitly state that neither screenshot was reopened" in reopened_carried_result.stdout, "carried unchanged cells must not reopen screenshots")
 
         invented_action_trace_out = tmp / "invented-action-trace-out"
         shutil.copytree(out, invented_action_trace_out)

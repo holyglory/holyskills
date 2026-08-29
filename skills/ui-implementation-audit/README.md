@@ -11,7 +11,12 @@ Codex or `/ui-implementation-audit` in Claude Code. Ordinary UI implementation,
 review, testing, visual checking, or gap-finding requests must not activate it
 implicitly.
 
-Rendered evidence is real and bound: `visual_evidence.json` records confined artifact paths, hashes, MIME, dimensions, route, state, viewport, capture tool, and formal-verifier JSON. UI action rows also bind handlers, backend/API, permissions, persistence, and tests through real `path#symbol` references or report them missing.
+Rendered evidence is real and bound: `visual_evidence.json` records confined
+artifact paths, hashes, MIME, dimensions, route, state, viewport, capture tool,
+formal-verifier JSON, initial/full-page screenshot pairs, changed-review queue,
+and finalized manual-review manifest. UI action rows also bind handlers,
+backend/API, permissions, persistence, and tests through real `path#symbol`
+references or report them missing.
 
 This skill has a hard applicability gate. At least one substantive, repo-owned
 product screen, component, or native view must already exist in executable UI
@@ -43,6 +48,12 @@ Use this skill when you want to audit:
   fit.
 - Rendered journey usability: visible content must help the user make the
   current journey decision, not merely avoid overflow or resemble the mockup.
+- Journey-aware formal verification: primary content owns the initial viewport,
+  activated work continues visibly and with focus, text/theme colors are
+  measurable, and palette risks remain explicit visual-review evidence.
+- Changed-input-only image review after all automatic checks: queued screenshot
+  pairs are opened, carried unchanged pairs are not, and prior gaps remain
+  blocking.
 - Interface source files that define pages, screens, components, templates,
   styles, visible copy, native UI markup, and UI message catalogs.
 - Missing visual tooling or safe fixture paths that prevent real screenshot
@@ -92,7 +103,8 @@ The harness creates an audit output directory containing:
 - `visual_tooling_audit.md`: prompt for finding runnable screenshot paths.
 - `visual_comparison_audit.md`: prompt for desktop/mobile screenshot
   comparison.
-- `visual_evidence.json`: real screenshot/native/formal-verifier artifact records referenced as `evidence:<id>`.
+- `visual_evidence.json`: real screenshot/native/formal-verifier, review-queue,
+  and manual-review artifact records referenced as `evidence:<id>`.
 - `effort_ledger.json`: lead-recorded worker/effort/fallback ledger.
 - `excluded_files.json`: skipped files and scope-warning reasons.
 - `reports/`: required returned worker reports.
@@ -153,7 +165,9 @@ A run is complete only after:
 
 1. The manifest contains a passed, hash-bound implemented-UI gate.
 2. Every generated source batch has a saved report in `reports/batch_###.md`.
-3. Mockup/assets, visual tooling, and visual comparison reports exist.
+3. Mockup/assets, visual tooling, visual comparison, formal report, changed
+   visual-review queue, screenshot pairs, and manual-review evidence exist when
+   rendered web UI is applicable.
 4. `effort_ledger.json` records completed lead, worker, and fallback status.
 5. `verify_ui_implementation_audit_results.py` returns `ok: true`.
 
@@ -161,7 +175,9 @@ The verifier checks structure, hashes, report coverage, current source drift,
 scope warnings, visual comparison evidence shape, first-viewport journey
 coverage, and ledger completion. It cannot prove the semantic truth of each
 visual judgment; the lead agent remains responsible for reviewing screenshot
-evidence before final synthesis.
+evidence before final synthesis. That review happens only after automatic tests
+and only for queue entries selected by changed declared UI inputs/intent or new
+coverage; screenshot pixels and hashes never select review work.
 
 Codex workers use `fork_turns="none"` and Light/runtime `low` effort; another
 runtime uses the equivalent fresh worker context or disclosed manual fallback

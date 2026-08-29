@@ -1049,6 +1049,11 @@ visual_journey
 | Fixture audit | desktop | CLI fixture | self-test fixture mode | not applicable | source-only | badge-detail: not applicable; row-hit-target: not applicable; navigation-cursor: not applicable; transient-disclosure: not applicable; disclosure-scrollbar: not applicable; icon-meaning: not applicable; stable-expansion-width: not applicable; hover-copy: not applicable; status-summary: not applicable; message-metadata: not applicable | not applicable | pass |
 | Fixture audit | narrow mobile | CLI fixture | self-test fixture mode | not applicable | source-only | badge-detail: not applicable; row-hit-target: not applicable; navigation-cursor: not applicable; transient-disclosure: not applicable; disclosure-scrollbar: not applicable; icon-meaning: not applicable; stable-expansion-width: not applicable; hover-copy: not applicable; status-summary: not applicable; message-metadata: not applicable | not applicable | pass |
 
+## Changed Visual Review
+| Review cell | Trigger/status | Initial viewport evidence | Full-page evidence | Decision | Note |
+| --- | --- | --- | --- | --- | --- |
+| not-applicable | no repo-owned rendered UI | not applicable | not applicable | not applicable | Host-owned rendering is outside this audit. |
+
 ## Findings
 No findings.
 
@@ -1079,24 +1084,95 @@ None.
 def write_visual_evidence(output_dir: Path, run_id: str) -> None:
     artifacts = output_dir / "artifacts"
     desktop = artifacts / "fixture-desktop.png"
+    desktop_full = artifacts / "fixture-desktop-full.png"
     mobile = artifacts / "fixture-mobile.png"
+    mobile_full = artifacts / "fixture-mobile-full.png"
     formal = artifacts / "formal-web.json"
+    review_queue = artifacts / "review-queue.json"
+    manual_review = artifacts / "manual-review.json"
     write_bytes(desktop, PNG_1X1)
+    write_bytes(desktop_full, PNG_1X1)
     write_bytes(mobile, PNG_1X1)
+    write_bytes(mobile_full, PNG_1X1)
+    desktop_sha = hashlib.sha256(desktop.read_bytes()).hexdigest()
+    desktop_full_sha = hashlib.sha256(desktop_full.read_bytes()).hexdigest()
+    mobile_sha = hashlib.sha256(mobile.read_bytes()).hexdigest()
+    mobile_full_sha = hashlib.sha256(mobile_full.read_bytes()).hexdigest()
+    source_fingerprint = "a" * 64
+    intent_fingerprint = "b" * 64
+    queue_payload = {
+        "schemaVersion": 1,
+        "kind": "formal-web-ui-review-queue",
+        "runId": "formal-self-test",
+        "generatedAt": "2026-07-10T00:00:00Z",
+        "trigger": "declared UI inputs, journey/theme intent, or new route/state/viewport; screenshot pixels are integrity-only",
+        "entries": [
+            {"reviewCellKey": "desktop-cell", "sourceFingerprint": source_fingerprint, "intentFingerprint": intent_fingerprint, "screenshots": {"viewport": {"sha256": desktop_sha}, "fullPage": {"sha256": desktop_full_sha}}},
+            {"reviewCellKey": "mobile-cell", "sourceFingerprint": source_fingerprint, "intentFingerprint": intent_fingerprint, "screenshots": {"viewport": {"sha256": mobile_sha}, "fullPage": {"sha256": mobile_full_sha}}},
+        ],
+        "carried": [],
+        "removedDispositions": [],
+        "undisposedRemoved": [],
+        "invalidDispositions": [],
+    }
+    write(review_queue, json.dumps(queue_payload, indent=2))
+    queue_sha = hashlib.sha256(review_queue.read_bytes()).hexdigest()
+    pages = []
+    for cell_id, viewport, viewport_path, viewport_sha, full_path, full_sha in (
+        ("desktop-cell", {"name": "desktop", "width": 1440, "height": 900}, desktop, desktop_sha, desktop_full, desktop_full_sha),
+        ("mobile-cell", {"name": "narrow mobile", "width": 390, "height": 844}, mobile, mobile_sha, mobile_full, mobile_full_sha),
+    ):
+        pages.append({
+            "cellId": cell_id,
+            "outcome": "checked",
+            "metrics": {"visibleScrollbars": []},
+            "findings": [],
+            "screenshots": {
+                "viewport": {"path": str(viewport_path), "mime": "image/png", "sha256": viewport_sha, "width": 1, "height": 1},
+                "fullPage": {"path": str(full_path), "mime": "image/png", "sha256": full_sha, "width": 1, "height": 1},
+            },
+            "review": {"reviewCellKey": cell_id, "sourceFingerprint": source_fingerprint, "intentFingerprint": intent_fingerprint},
+            "viewport": viewport,
+        })
     write(
         formal,
         json.dumps(
             {
+                "schemaVersion": 2,
                 "runId": "formal-self-test",
                 "generatedAt": "2026-07-10T00:00:00Z",
                 "browser": "chromium",
                 "targets": [{"url": "http://127.0.0.1/fixture"}],
-                "pages": [
-                    {"outcome": "checked", "metrics": {"visibleScrollbars": []}, "findings": []},
-                    {"outcome": "checked", "metrics": {"visibleScrollbars": []}, "findings": []},
-                ],
+                "pages": pages,
                 "findings": [],
                 "coverage": {"failed": False, "checkedPages": 2, "requiredCheckedPages": 1, "failures": [], "tolerated": []},
+                "review": {
+                    "queueSha256": queue_sha,
+                    "pendingCount": 2,
+                    "cells": [
+                        {"reviewCellKey": "desktop-cell", "sourceFingerprint": source_fingerprint, "intentFingerprint": intent_fingerprint, "screenshots": pages[0]["screenshots"]},
+                        {"reviewCellKey": "mobile-cell", "sourceFingerprint": source_fingerprint, "intentFingerprint": intent_fingerprint, "screenshots": pages[1]["screenshots"]},
+                    ],
+                },
+            },
+            indent=2,
+        ),
+    )
+    formal_sha = hashlib.sha256(formal.read_bytes()).hexdigest()
+    write(
+        manual_review,
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "kind": "formal-web-ui-manual-review",
+                "reviewedRunId": "formal-self-test",
+                "reviewedAt": "2026-07-10T00:01:00Z",
+                "reportSha256": formal_sha,
+                "reviewQueueSha256": queue_sha,
+                "decisions": [
+                    {"reviewCellKey": "desktop-cell", "decision": "pass", "note": "", "sourceFingerprint": source_fingerprint, "intentFingerprint": intent_fingerprint, "screenshots": {"viewportSha256": desktop_sha, "fullPageSha256": desktop_full_sha}},
+                    {"reviewCellKey": "mobile-cell", "decision": "pass", "note": "", "sourceFingerprint": source_fingerprint, "intentFingerprint": intent_fingerprint, "screenshots": {"viewportSha256": mobile_sha, "fullPageSha256": mobile_full_sha}},
+                ],
             },
             indent=2,
         ),
@@ -1109,11 +1185,10 @@ def write_visual_evidence(output_dir: Path, run_id: str) -> None:
             "path": path.relative_to(output_dir).as_posix(),
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             "mime": "image/png" if kind == "screenshot" else "application/json",
-            "route": "Fixture UI",
-            "state": "default fixture state",
-            "viewport": viewport,
             "captured_by": "self-test fixture",
         }
+        if kind not in {"review-queue", "manual-review"}:
+            value.update({"route": "Fixture UI", "state": "default fixture state", "viewport": viewport})
         if dimensions:
             value.update({"width": 1, "height": 1})
         return value
@@ -1126,8 +1201,12 @@ def write_visual_evidence(output_dir: Path, run_id: str) -> None:
                 "run_id": run_id,
                 "artifacts": [
                     record("shot-desktop", desktop, "screenshot", {"width": 1440, "height": 900, "label": "desktop"}, dimensions=True),
+                    record("shot-desktop-full", desktop_full, "screenshot", {"width": 1440, "height": 900, "label": "desktop full page"}, dimensions=True),
                     record("shot-mobile", mobile, "screenshot", {"width": 390, "height": 844, "label": "narrow mobile"}, dimensions=True),
+                    record("shot-mobile-full", mobile_full, "screenshot", {"width": 390, "height": 844, "label": "narrow mobile full page"}, dimensions=True),
                     record("formal-web", formal, "formal-web-verifier", {"width": 1440, "height": 900, "label": "desktop and narrow mobile"}),
+                    record("review-queue", review_queue, "review-queue", {}),
+                    record("manual-review", manual_review, "manual-review", {}),
                 ],
             },
             indent=2,
@@ -1349,6 +1428,15 @@ def assert_manifest(manifest_path: Path) -> None:
             "visual_evidence.json" in visual_prompt_text and "evidence:<id>" in visual_prompt_text and "formal-verifier JSON" in visual_prompt_text,
             "visual journey prompt should require hashed artifact ids and bound formal-verifier evidence when applicable",
         )
+        for token in (
+            "| Review cell | Trigger/status | Initial viewport evidence | Full-page evidence | Decision | Note |",
+            "review-queue.json",
+            "formal_web_ui_review.py",
+            "open only the queued cell",
+            "manual-review",
+            "not reopened — carried unchanged",
+        ):
+            check(token in visual_prompt_text, f"visual journey prompt should require changed-review behavior: {token}")
         check(
             "UI assumption status" in journey_prompt_text and "source-inferred" in journey_prompt_text,
             "journey source prompt should require explicit UI assumption status",
@@ -1362,6 +1450,8 @@ def assert_manifest(manifest_path: Path) -> None:
     check('fork_turns="none"' in skill_contract, "skill must require context-light Codex forks")
     check("Light" in skill_contract and 'reasoning_effort="low"' in skill_contract, "skill must map the visible Light label to runtime low")
     check("final-report.md" in skill_contract and "`REPORT_SAVED` receipt" in skill_contract, "skill must keep complete results in cold artifacts")
+    for token in ("review-queue", "formal_web_ui_review.py", "Changed Visual Review", "not reopened"):
+        check(token in skill_contract, f"full audit skill should preserve changed-review rule: {token}")
     agent_metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
     check(
         "\npolicy:\n  allow_implicit_invocation: false\n" in f"\n{agent_metadata}",
@@ -4177,6 +4267,14 @@ visual_journey
 | Fixture audit | narrow mobile | Fixture UI | Playwright screenshot evidence:shot-mobile for {interface_mentions} | primary actions visible | decision labels visible | badge-detail=pass; row-hit-target=pass; navigation-cursor=pass; transient-disclosure=pass; disclosure-scrollbar=pass; icon-meaning=pass; stable-expansion-width=pass; hover-copy=pass; status-summary=pass; message-metadata=pass | readable contrast and no horizontal scroll | pass |
 
 Interaction checklist: badge-detail=pass; row-hit-target=pass; navigation-cursor=pass; transient-disclosure=pass; disclosure-scrollbar=pass; icon-meaning=pass; stable-expansion-width=pass; hover-copy=pass; status-summary=pass; message-metadata=pass.
+
+## Changed Visual Review
+| Review cell | Trigger/status | Initial viewport evidence | Full-page evidence | Decision | Note |
+| --- | --- | --- | --- | --- | --- |
+| desktop-cell | new route/state/viewport | evidence:shot-desktop | evidence:shot-desktop-full | pass | Desktop screenshot pair reviewed after automation. |
+| mobile-cell | new route/state/viewport | evidence:shot-mobile | evidence:shot-mobile-full | pass | Mobile screenshot pair reviewed after automation. |
+
+Formal chain: evidence:formal-web, evidence:review-queue, evidence:manual-review.
 
 ## Findings
 No findings.

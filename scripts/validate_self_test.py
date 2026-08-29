@@ -43,6 +43,47 @@ def main() -> int:
             check(marker.read_text(encoding="utf-8") == "ran", "later command did not run")
             check(len(MODULE.FAILURES) == 2, "both command failures must be collected")
 
+            explicit_environment = MODULE.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import os; raise SystemExit(0 if os.environ.get('HOLYSKILLS_VALIDATE_TEST_DEPENDENCY') == 'explicit' else 9)",
+                ],
+                extra_env={"HOLYSKILLS_VALIDATE_TEST_DEPENDENCY": "explicit"},
+            )
+            check(explicit_environment, "explicit validation dependency environment was not forwarded")
+
+            parity_root = Path(raw) / "parity"
+            parity_files = {
+                "skills/formal-web-ui-verification/SKILL.md": "review-queue.json formal_web_ui_review.py secondary-workflow-precedes-primary declared-theme-contradiction",
+                "skills/user-journey-docs-audit/SKILL.md": "Formal Web UI verification handoff continuation anchor changed visual review",
+                "skills/ui-implementation-audit/SKILL.md": "Changed Visual Review not reopened — carried unchanged manual-review",
+                "skills/full-repo-audit/SKILL.md": "Changed Visual Review formal_web_ui_review.py manual-review",
+                "full_repo_harness/evidence.py": '"review-queue" "manual-review" formal-web-ui-manual-review',
+                "full_repo_harness/queue.py": "Changed Visual Review review-queue.json formal_web_ui_review.py",
+            }
+            for relative, content in parity_files.items():
+                target = parity_root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+            original_root = MODULE.ROOT
+            original_harness = MODULE.HARNESS
+            MODULE.ROOT = parity_root
+            MODULE.HARNESS = parity_root / "full_repo_harness"
+            try:
+                MODULE.check_changed_visual_review_parity()
+                broken = parity_root / "skills" / "ui-implementation-audit" / "SKILL.md"
+                broken.write_text("Changed Visual Review manual-review", encoding="utf-8")
+                try:
+                    MODULE.check_changed_visual_review_parity()
+                except SystemExit as error:
+                    check("not reopened" in str(error), "parity failure should identify the missing changed-review rule")
+                else:
+                    raise AssertionError("changed visual-review parity accepted a missing carried-image rule")
+            finally:
+                MODULE.ROOT = original_root
+                MODULE.HARNESS = original_harness
+
             MODULE.attempt("first in-process check", lambda: (_ for _ in ()).throw(ValueError("gap")))
             in_process_marker: list[str] = []
             MODULE.attempt("later in-process check", lambda: in_process_marker.append("ran"))
