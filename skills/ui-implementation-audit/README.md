@@ -11,12 +11,12 @@ Codex or `/ui-implementation-audit` in Claude Code. Ordinary UI implementation,
 review, testing, visual checking, or gap-finding requests must not activate it
 implicitly.
 
-Rendered evidence is real and bound: `visual_evidence.json` records confined
-artifact paths, hashes, MIME, dimensions, route, state, viewport, capture tool,
-formal-verifier JSON, initial/full-page screenshot pairs, changed-review queue,
-and finalized manual-review manifest. UI action rows also bind handlers,
-backend/API, permissions, persistence, and tests through real `path#symbol`
-references or report them missing.
+Rendered evidence is real and bound. Web audits import the formal verifier
+report, initial/full-page screenshots, changed-review queue, and manual-review
+manifest deterministically into `visual_evidence.json`; native audits bind
+native snapshots. Source rows record handler/backend/permission/persistence/test
+`path#symbol` wiring references or report them missing. These references prove
+source anchors exist, not that the observable behavior succeeded.
 
 This skill has a hard applicability gate. At least one substantive, repo-owned
 product screen, component, or native view must already exist in executable UI
@@ -54,6 +54,8 @@ Use this skill when you want to audit:
 - Changed-input-only image review after all automatic checks: queued screenshot
   pairs are opened, carried unchanged pairs are not, and prior gaps remain
   blocking.
+- Explicit `web`, `native`, or `hybrid` platform scope, avoiding extension-only
+  classification such as treating React Native TSX as browser UI.
 - Interface source files that define pages, screens, components, templates,
   styles, visible copy, native UI markup, and UI message catalogs.
 - Missing visual tooling or safe fixture paths that prevent real screenshot
@@ -85,6 +87,8 @@ You can force known design or requirement inputs:
 python3 skills/ui-implementation-audit/scripts/build_ui_implementation_audit_batches.py \
   --repo /path/to/repo \
   --implemented-ui-file src/App.tsx \
+  --ui-platform web \
+  --formal-config formal-web-ui.json \
   --mockup docs/mockups/dashboard.png \
   --journey-file docs/product-journeys.md
 ```
@@ -105,7 +109,8 @@ The harness creates an audit output directory containing:
   comparison.
 - `visual_evidence.json`: real screenshot/native/formal-verifier, review-queue,
   and manual-review artifact records referenced as `evidence:<id>`.
-- `effort_ledger.json`: lead-recorded worker/effort/fallback ledger.
+- `execution_ledger.json`: lead-recorded worker status/provenance/fallback ledger;
+  it contains no required reasoning-effort setting.
 - `excluded_files.json`: skipped files and scope-warning reasons.
 - `reports/`: required returned worker reports.
 - `logs/`: verbose command output kept outside routine model context.
@@ -127,6 +132,8 @@ Generate an audit queue:
 python3 skills/ui-implementation-audit/scripts/build_ui_implementation_audit_batches.py \
   --repo /path/to/repo \
   --implemented-ui-file src/App.tsx \
+  --ui-platform web \
+  --formal-config formal-web-ui.json \
   --out /tmp/ui-implementation-audit-run
 ```
 
@@ -154,10 +161,22 @@ Verify saved reports:
 python3 skills/ui-implementation-audit/scripts/verify_ui_implementation_audit_results.py --manifest /tmp/ui-implementation-audit-run/manifest.json --reports /tmp/ui-implementation-audit-run/reports
 ```
 
+Import a completed formal Web UI evidence bundle before verification:
+
+```bash
+python3 skills/ui-implementation-audit/scripts/import_formal_web_evidence.py \
+  --audit-root /tmp/ui-implementation-audit-run \
+  --run-id <audit-run-id> \
+  --formal-report /tmp/ui-implementation-audit-run/artifacts/report.json \
+  --review-queue /tmp/ui-implementation-audit-run/artifacts/review-queue.json \
+  --manual-review /tmp/ui-implementation-audit-run/artifacts/manual-review.json
+```
+
 Useful builder options include `--out`, `--mockup`, `--journey-file`,
 `--include-generated`, `--include-vendor`, `--include-env`, `--include-file`,
 `--include-glob`, `--implemented-ui-file`, `--implemented-ui-override`,
-`--eligibility-only`, `--batch-size`, and `--max-batch-bytes`.
+`--ui-platform`, `--formal-config`, `--eligibility-only`, `--batch-size`, and
+`--max-batch-bytes`.
 
 ## Coverage Rules
 
@@ -165,11 +184,14 @@ A run is complete only after:
 
 1. The manifest contains a passed, hash-bound implemented-UI gate.
 2. Every generated source batch has a saved report in `reports/batch_###.md`.
-3. Mockup/assets, visual tooling, visual comparison, formal report, changed
-   visual-review queue, screenshot pairs, and manual-review evidence exist when
-   rendered web UI is applicable.
-4. `effort_ledger.json` records completed lead, worker, and fallback status.
-5. `verify_ui_implementation_audit_results.py` returns `ok: true`.
+3. Mockup/assets, visual tooling, and visual comparison reports exist. Web and
+   hybrid audits import the formal report, changed-review queue, screenshot
+   pairs, and manual-review evidence; native and hybrid audits bind native
+   snapshots.
+4. `execution_ledger.json` records completed lead, worker, and fallback status.
+5. `final-report.md` contains the required non-empty synthesis and interaction
+   checklist.
+6. `verify_ui_implementation_audit_results.py` returns `ok: true`.
 
 The verifier checks structure, hashes, report coverage, current source drift,
 scope warnings, visual comparison evidence shape, first-viewport journey
@@ -179,9 +201,10 @@ evidence before final synthesis. That review happens only after automatic tests
 and only for queue entries selected by changed declared UI inputs/intent or new
 coverage; screenshot pixels and hashes never select review work.
 
-Codex workers use `fork_turns="none"` and Light/runtime `low` effort; another
-runtime uses the equivalent fresh worker context or disclosed manual fallback
-when runtime `low` is unavailable. Workers write complete reports directly to
-their declared artifact paths and return only compact filename/hash/byte/count
-receipts. The final chat response is a short outcome, counts, caveats, verifier
-status, and artifact index.
+Codex workers use `fork_turns="none"` and the runtime/user-selected worker
+defaults; the skill does not prescribe or validate reasoning effort. Another
+runtime uses an equivalent fresh context. When workers cannot be spawned, use
+the disclosed manual fallback. Workers write complete reports directly to their
+declared artifact paths and return only compact filename-bearing receipts. The
+final chat response is a short outcome, counts, caveats, verifier status, and
+artifact index.

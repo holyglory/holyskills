@@ -248,8 +248,8 @@ def check_changed_visual_review_parity() -> None:
             "changed visual review",
         ),
         ROOT / "skills" / "ui-implementation-audit" / "SKILL.md": (
-            "Changed Visual Review",
-            "not reopened — carried unchanged",
+            "import_formal_web_evidence.py",
+            "runtime/user-selected default",
             "manual-review",
         ),
         ROOT / "skills" / "full-repo-audit" / "SKILL.md": (

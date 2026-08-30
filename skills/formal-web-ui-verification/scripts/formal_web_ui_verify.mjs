@@ -2208,11 +2208,15 @@ function pageVerifier() {
       severity,
       rule,
       message,
-      selector: el ? selectorPath(el) : "document",
+      selector: Object.hasOwn(extra, "selector")
+        ? String(extra.selector || "document")
+        : (el ? selectorPath(el) : "document"),
       textSnippet: extra.redactText
         ? ""
         : (Object.hasOwn(extra, "textSnippet") ? String(extra.textSnippet || "") : (el ? snippet(el) : "")),
-      rect: el ? rectObj(nowRect(el)) : null,
+      rect: Object.hasOwn(extra, "rect")
+        ? extra.rect
+        : (el ? rectObj(nowRect(el)) : null),
       area: extra.area || null,
       evidence: extra.evidence || {},
     });
@@ -3003,20 +3007,6 @@ function pageVerifier() {
   }
   window.scrollTo(originalScroll.x, originalScroll.y);
 
-  const suppressedTotal = Object.values(suppressed).reduce((total, count) => total + count, 0);
-  if (suppressedTotal > 0) {
-    findings.push({
-      severity: "warning",
-      rule: "findings-truncated",
-      message: `${suppressedTotal} additional findings were suppressed after the per-rule cap of ${MAX_PER_RULE}; fix the reported instances and re-run.`,
-      selector: "document",
-      textSnippet: "",
-      rect: null,
-      area: null,
-      evidence: { suppressed },
-    });
-  }
-
   function parseCssColor(value) {
     const raw = String(value || "").trim();
     if (!raw || raw === "transparent") return { r: 0, g: 0, b: 0, a: 0, raw };
@@ -3318,46 +3308,82 @@ function pageVerifier() {
   function scrollbarVisibleForAxis(el, axis, style) {
     const overflow = axis === "x" ? style.overflowX : style.overflowY;
     const canScroll = axis === "x" ? el.scrollWidth > el.clientWidth + 2 : el.scrollHeight > el.clientHeight + 2;
-    return canScroll && ["auto", "scroll", "overlay"].includes(overflow);
+    return overflow === "scroll" || (canScroll && ["auto", "overlay"].includes(overflow));
+  }
+  function documentScrollbarVisibleForAxis(el, axis, style) {
+    const overflow = axis === "x" ? style.overflowX : style.overflowY;
+    const canScroll = axis === "x" ? el.scrollWidth > el.clientWidth + 2 : el.scrollHeight > el.clientHeight + 2;
+    if (["hidden", "clip"].includes(overflow)) return false;
+    return overflow === "scroll" || canScroll;
   }
   function collectVisibleScrollbars() {
     const scrollbars = [];
     const scrolling = document.scrollingElement || document.documentElement;
     const scrollingStyle = getComputedStyle(scrolling);
     const docRect = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight, right: window.innerWidth, bottom: window.innerHeight };
-    if (scrolling.scrollWidth > scrolling.clientWidth + 2) {
-      scrollbars.push({
-        selector: "document.scrollingElement",
-        axis: "x",
-        rect: docRect,
-        scrollWidth: scrolling.scrollWidth,
-        clientWidth: scrolling.clientWidth,
-        scrollHeight: scrolling.scrollHeight,
-        clientHeight: scrolling.clientHeight,
-        overflowX: scrollingStyle.overflowX,
-        overflowY: scrollingStyle.overflowY,
-      });
-    }
-    if (scrolling.scrollHeight > scrolling.clientHeight + 2) {
-      scrollbars.push({
-        selector: "document.scrollingElement",
-        axis: "y",
-        rect: docRect,
-        scrollWidth: scrolling.scrollWidth,
-        clientWidth: scrolling.clientWidth,
-        scrollHeight: scrolling.scrollHeight,
-        clientHeight: scrolling.clientHeight,
-        overflowX: scrollingStyle.overflowX,
-        overflowY: scrollingStyle.overflowY,
-      });
-    }
+    const documentActive = {
+      x: documentScrollbarVisibleForAxis(scrolling, "x", scrollingStyle),
+      y: documentScrollbarVisibleForAxis(scrolling, "y", scrollingStyle),
+    };
+    const activeByAxis = { x: new WeakSet(), y: new WeakSet() };
+    const elementEntries = [];
     for (const el of allElements) {
-      if (isIgnored(el) || !visible(el)) continue;
+      if (el === scrolling || isIgnored(el) || !visible(el)) continue;
       const style = getComputedStyle(el);
       const hasX = scrollbarVisibleForAxis(el, "x", style);
       const hasY = scrollbarVisibleForAxis(el, "y", style);
       if (!hasX && !hasY) continue;
+      if (hasX) activeByAxis.x.add(el);
+      if (hasY) activeByAxis.y.add(el);
+      elementEntries.push({ el, style, hasX, hasY });
+    }
+    const sameAxisChain = (el, axis) => {
+      const ancestors = [];
+      let ancestor = composedParent(el);
+      while (ancestor) {
+        if (ancestor !== scrolling && activeByAxis[axis].has(ancestor)) {
+          ancestors.unshift(selectorPath(ancestor));
+        }
+        ancestor = composedParent(ancestor);
+      }
+      if (documentActive[axis]) ancestors.unshift("document.scrollingElement");
+      return [...ancestors, selectorPath(el)];
+    };
+    if (documentActive.x) {
+      scrollbars.push({
+        element: scrolling,
+        selector: "document.scrollingElement",
+        axis: "x",
+        sameAxisDepth: 1,
+        scrollChain: ["document.scrollingElement"],
+        rect: docRect,
+        scrollWidth: scrolling.scrollWidth,
+        clientWidth: scrolling.clientWidth,
+        scrollHeight: scrolling.scrollHeight,
+        clientHeight: scrolling.clientHeight,
+        overflowX: scrollingStyle.overflowX,
+        overflowY: scrollingStyle.overflowY,
+      });
+    }
+    if (documentActive.y) {
+      scrollbars.push({
+        element: scrolling,
+        selector: "document.scrollingElement",
+        axis: "y",
+        sameAxisDepth: 1,
+        scrollChain: ["document.scrollingElement"],
+        rect: docRect,
+        scrollWidth: scrolling.scrollWidth,
+        clientWidth: scrolling.clientWidth,
+        scrollHeight: scrolling.scrollHeight,
+        clientHeight: scrolling.clientHeight,
+        overflowX: scrollingStyle.overflowX,
+        overflowY: scrollingStyle.overflowY,
+      });
+    }
+    for (const { el, style, hasX, hasY } of elementEntries) {
       const base = {
+        element: el,
         selector: selectorPath(el),
         rect: rectObj(nowRect(el)),
         scrollWidth: el.scrollWidth,
@@ -3367,13 +3393,53 @@ function pageVerifier() {
         overflowX: style.overflowX,
         overflowY: style.overflowY,
       };
-      if (hasX) scrollbars.push({ ...base, axis: "x" });
-      if (hasY) scrollbars.push({ ...base, axis: "y" });
+      if (hasX) {
+        const scrollChain = sameAxisChain(el, "x");
+        scrollbars.push({ ...base, axis: "x", sameAxisDepth: scrollChain.length, scrollChain });
+      }
+      if (hasY) {
+        const scrollChain = sameAxisChain(el, "y");
+        scrollbars.push({ ...base, axis: "y", sameAxisDepth: scrollChain.length, scrollChain });
+      }
     }
     return scrollbars;
   }
 
   const themePalette = config.inspectThemePalette === false ? null : sampleThemePalette();
+  const visibleScrollbars = [];
+  for (const scrollbar of collectVisibleScrollbars()) {
+    const { element, ...evidence } = scrollbar;
+    visibleScrollbars.push(evidence);
+    const findingContext = {
+      selector: evidence.selector,
+      rect: evidence.rect,
+      redactText: true,
+      evidence,
+    };
+    if (evidence.axis === "x") {
+      add("warning", "horizontal-scrollbar", element, "An active horizontal scrollbar is exceptional and requires review.", findingContext);
+      if (evidence.sameAxisDepth >= 2) {
+        add("critical", "nested-horizontal-scrollbars", element, "This horizontal scrollbar is nested inside another active horizontal scroll path.", findingContext);
+      }
+    } else if (evidence.sameAxisDepth === 2) {
+      add("warning", "double-nested-vertical-scrollbars", element, "This vertical scrollbar creates a second same-axis scroll layer and requires review.", findingContext);
+    } else if (evidence.sameAxisDepth >= 3) {
+      add("critical", "triple-nested-vertical-scrollbars", element, "This vertical scrollbar creates a third or deeper same-axis scroll layer.", findingContext);
+    }
+  }
+  const suppressedTotal = Object.values(suppressed).reduce((total, count) => total + count, 0);
+  if (suppressedTotal > 0) {
+    findings.push({
+      severity: "warning",
+      rule: "findings-truncated",
+      message: `${suppressedTotal} additional findings were suppressed after the per-rule cap of ${MAX_PER_RULE}; fix the reported instances and re-run.`,
+      selector: "document",
+      textSnippet: "",
+      rect: null,
+      area: null,
+      evidence: { suppressed },
+    });
+  }
   return {
     title: document.title,
     url: location.href,
@@ -3381,7 +3447,7 @@ function pageVerifier() {
     metrics: {
       candidateCount: candidates.length,
       findingCount: findings.length,
-      visibleScrollbars: collectVisibleScrollbars(),
+      visibleScrollbars,
       unmeasurableContrast,
       notInspected,
       ellipsisTruncations,
@@ -3723,6 +3789,15 @@ async function verifyTarget(page, target, viewport, config, cellId) {
   result.actualViewport = evaluated.viewport;
   const prefixSelector = (selector, frameUrl, frameName) =>
     `[frame ${frameName} ${frameUrl}] ${selector || "document"}`;
+  const prefixScrollEvidence = (evidence, frameUrl, frameName) => ({
+    ...(evidence || {}),
+    ...(typeof evidence?.selector === "string"
+      ? { selector: prefixSelector(evidence.selector, frameUrl, frameName) }
+      : {}),
+    ...(Array.isArray(evidence?.scrollChain)
+      ? { scrollChain: evidence.scrollChain.map((selector) => prefixSelector(selector, frameUrl, frameName)) }
+      : {}),
+  });
   const mergedFindings = [...result.findings, ...evaluated.findings];
   const mergedMetrics = {
     ...evaluated.metrics,
@@ -3745,7 +3820,7 @@ async function verifyTarget(page, target, viewport, config, cellId) {
       ...finding,
       selector: prefixSelector(finding.selector, entry.frameUrl, entry.frameName),
       evidence: {
-        ...(finding.evidence || {}),
+        ...prefixScrollEvidence(finding.evidence, entry.frameUrl, entry.frameName),
         frame: { url: entry.frameUrl, name: entry.frameName },
       },
     })));
@@ -3755,6 +3830,9 @@ async function verifyTarget(page, target, viewport, config, cellId) {
       ...(frameResult.metrics?.visibleScrollbars || []).map((scrollbar) => ({
         ...scrollbar,
         selector: prefixSelector(scrollbar.selector, entry.frameUrl, entry.frameName),
+        scrollChain: (scrollbar.scrollChain || []).map((selector) =>
+          prefixSelector(selector, entry.frameUrl, entry.frameName)
+        ),
         frame: { url: entry.frameUrl, name: entry.frameName },
       })),
     ];
@@ -4162,13 +4240,14 @@ function markdownReport(report) {
   if (!scrollbarRows.length) {
     lines.push("No visible/active scrollbars detected.");
   } else {
-    lines.push("| Target | Viewport | Axis | Selector | Rect | Scroll Metrics |");
-    lines.push("| --- | --- | --- | --- | --- | --- |");
+    lines.push("| Target | Viewport | Axis | Same-axis depth | Scroll chain | Selector | Rect | Scroll Metrics |");
+    lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
     for (const row of scrollbarRows) {
       const sb = row.scrollbar;
       const rect = sb.rect ? `${Math.round(sb.rect.width)}x${Math.round(sb.rect.height)} at ${Math.round(sb.rect.x)},${Math.round(sb.rect.y)}` : "";
       const metrics = `scroll ${sb.scrollWidth}x${sb.scrollHeight}; client ${sb.clientWidth}x${sb.clientHeight}; overflow ${sb.overflowX}/${sb.overflowY}`;
-      lines.push(`| ${escapeMd(row.page.target.name || row.page.target.url)} | ${escapeMd(row.page.viewport.name)} | ${escapeMd(sb.axis)} | ${escapeMd(sb.selector)} | ${escapeMd(rect)} | ${escapeMd(metrics)} |`);
+      const chain = Array.isArray(sb.scrollChain) ? sb.scrollChain.join(" -> ") : "";
+      lines.push(`| ${escapeMd(row.page.target.name || row.page.target.url)} | ${escapeMd(row.page.viewport.name)} | ${escapeMd(sb.axis)} | ${sb.sameAxisDepth ?? ""} | ${escapeMd(chain)} | ${escapeMd(sb.selector)} | ${escapeMd(rect)} | ${escapeMd(metrics)} |`);
     }
   }
   lines.push("", "## Coverage & Unmeasurable", "");

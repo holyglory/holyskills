@@ -10,10 +10,9 @@ does not import, clone, pin, build, or test their source repository.
 
 ## Canonical skills
 
-- `formal-web-ui-verification`: a deterministic Playwright/Chromium heuristic
-  for rendered geometry, visibility, clipping, overlap, media health, target
-  coverage, declared areas, and visible scrollbars. It can optionally consume
-  URLs from a separately installed coordinator script supplied by the caller.
+- `formal-web-ui-verification`: the deterministic web engine for declared
+  journeys, rendered geometry, continuation, contrast/theme checks, responsive
+  coverage, screenshot pairs, and changed-review evidence.
 - `full-repo-audit`: a manifest-verified semantic implementation review with
   deterministic responsibility-level `Contract ID`s (`batch_###:C###` and
   lead-reconciliation `lead:C###`), cross-file reconciliation, evidence binding,
@@ -24,8 +23,9 @@ does not import, clone, pin, build, or test their source repository.
   ingestion.
 - `ui-implementation-audit`: an explicit-invocation-only, source- and
   evidence-bound audit used once a substantive product UI surface exists,
-  covering rendered behavior, journeys, handlers, backend paths, permissions,
-  persistence, and tests.
+  covering missing screens/states, mockup and journey alignment, source wiring,
+  native and web visual judgment, and tests. It imports formal web evidence
+  instead of recreating it and leaves worker effort to the runtime/user.
 - `user-journey-docs-audit`: a lexical and structural documentation audit for
   product intent, users, journeys, feature/UI inventories, edge cases,
   implementation expectations, tests, and usability acceptance criteria.

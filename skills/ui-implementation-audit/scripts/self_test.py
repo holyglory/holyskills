@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "scripts" / "build_ui_implementation_audit_batches.py"
 VERIFY = ROOT / "scripts" / "verify_ui_implementation_audit_results.py"
+IMPORT_FORMAL = ROOT / "scripts" / "import_formal_web_evidence.py"
 TIMEOUT_SECONDS = int(os.environ.get("UI_IMPLEMENTATION_AUDIT_SELF_TEST_TIMEOUT", "30"))
 KEEP_TEMP_ON_FAILURE = os.environ.get("UI_IMPLEMENTATION_AUDIT_SELF_TEST_KEEP_TEMP", "").lower() in {"1", "true", "yes", "on"}
 PNG_1X1 = bytes.fromhex(
@@ -773,6 +774,7 @@ def build(
     *extra: str,
     evidence: str | None = None,
     override: tuple[str, str, str] | None = None,
+    platform: str | None = None,
 ) -> dict:
     candidates = ("src/App.tsx", "src/CurrencyRatesPage.tsx", "Sources/ContactsView.swift")
     check(not (evidence and override), "build helper accepts one implementation evidence mode")
@@ -783,6 +785,14 @@ def build(
         if override is not None
         else ["--implemented-ui-file", evidence]
     )
+    evidence_path = override[0] if override is not None else str(evidence)
+    platform = platform or ("native" if Path(evidence_path).suffix.lower() in {".swift", ".java", ".dart", ".xaml", ".axaml"} else "web")
+    platform_args = ["--ui-platform", platform]
+    if platform in {"web", "hybrid"}:
+        formal_config = repo / "formal-web-ui.json"
+        if not formal_config.exists():
+            write(formal_config, json.dumps({"targetDefaults": {"journeys": [], "regions": []}, "targets": []}, indent=2))
+        platform_args.extend(["--formal-config", "formal-web-ui.json"])
     run(
         [
             sys.executable,
@@ -794,6 +804,7 @@ def build(
             "--run-id",
             "selftest-run",
             *evidence_args,
+            *platform_args,
             *extra,
         ]
     )
@@ -814,23 +825,20 @@ def verify(out: Path, *, expect: int = 0) -> subprocess.CompletedProcess[str]:
 
 
 def complete_ledger(out: Path, manifest: dict) -> None:
-    path = out / "effort_ledger.json"
+    path = out / "execution_ledger.json"
     ledger = json.loads(path.read_text(encoding="utf-8"))
-    ledger["subagent_capability_check"].update(
+    ledger["worker_capability_check"].update(
         {
             "status": "completed",
             "spawn_tool": "self-test",
-            "can_set_reasoning_effort": True,
             "notes": "self-test fixture",
         }
     )
-    ledger["lead_effort"].update(
+    ledger["lead"].update(
         {
-            "actual_reasoning_effort": "default",
             "status": "completed",
             "agent_id": "self-test-lead",
             "runtime_provenance": "self-test",
-            "evidence": "fixture-generated reports",
         }
     )
     ledger["fallback"].update({"status": "not-used", "reason": ""})
@@ -839,7 +847,6 @@ def complete_ledger(out: Path, manifest: dict) -> None:
             {
                 "status": "completed",
                 "agent_id": f"self-test-{row['batch_id']}",
-                "actual_reasoning_effort": "low",
                 "runtime_provenance": "self-test",
                 "fallback": False,
             }
@@ -852,7 +859,6 @@ def complete_ledger(out: Path, manifest: dict) -> None:
                 {
                     "status": "completed",
                     "agent_id": f"self-test-{key}",
-                    "actual_reasoning_effort": "low",
                     "runtime_provenance": "self-test",
                 }
             )
@@ -914,20 +920,9 @@ Dashboard UI source and styles for visual comparison.
 {chr(10).join(rows)}
 
 ## UI Source Inventory
-| Unit | File | Surface | Visible Element | Source Evidence | Expected Behavior | Actual Implementation | Handler Evidence | Backend/API Evidence | Permission Evidence | Persistence Evidence | Test Evidence | Responsive/State Notes |
+| Unit | File | Surface | Visible Element | Source Evidence | Expected Behavior | Actual Implementation | Handler Reference | Backend/API Reference | Permission Reference | Persistence Reference | Test Reference | Responsive/State Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 {chr(10).join(inventory)}
-
-## Journey Decision Model
-| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| dashboard | review urgent incidents first | decide which incident to resolve | active incident summary and severity | urgent severity and stale status | resolve incident | navigation to reports and archive export details | none |
-
-## Rendered Journey Usability
-| Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop | decide which incident to resolve | navigation and active incident hero | archive detail | inline secondary aside | source order and CSS grid evidence | PASS | source order and CSS grid evidence |
-| mobile | decide which incident to resolve | active incident summary and Resolve incident action | archive detail | secondary content after primary action | source order and responsive CSS evidence | PASS | source order and responsive CSS evidence |
 
 ## Mockup And Journey Alignment
 Source exposes the dashboard screen, primary action, navigation, and rare archive detail referenced by the journey docs.
@@ -1011,6 +1006,9 @@ def write_visual_evidence(out: Path, manifest: dict, *, route: str = "/dashboard
                     "intentFingerprint": intent_fingerprint,
                 },
                 "viewport": viewport,
+                "requestedPath": route,
+                "finalPath": route,
+                "target": {"stateName": "base"},
             }
         )
     write(
@@ -1081,51 +1079,225 @@ def write_visual_evidence(out: Path, manifest: dict, *, route: str = "/dashboard
         ),
     )
 
-    def record(record_id: str, path: Path, kind: str, viewport: dict, *, dimensions: bool = False) -> dict:
-        value = {
-            "id": record_id,
-            "kind": kind,
-            "path": path.relative_to(out).as_posix(),
-            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-            "mime": "image/png" if kind == "screenshot" else "application/json",
-            "captured_by": "self-test fixture",
-        }
-        if kind not in {"review-queue", "manual-review"}:
-            value.update({"route": route, "state": "default fixture state", "viewport": viewport})
-        if dimensions:
-            value.update({"width": 1, "height": 1})
-        return value
-
     write(
         out / "visual_evidence.json",
-        json.dumps(
-            {
-                "schema_version": 1,
-                "run_id": manifest["run_id"],
-                "artifacts": [
-                    record("shot-desktop", desktop, "screenshot", {"width": 1440, "height": 900, "label": "desktop"}, dimensions=True),
-                    record("shot-desktop-full", desktop_full, "screenshot", {"width": 1440, "height": 900, "label": "desktop full page"}, dimensions=True),
-                    record("shot-mobile", mobile, "screenshot", {"width": 390, "height": 844, "label": "mobile"}, dimensions=True),
-                    record("shot-mobile-full", mobile_full, "screenshot", {"width": 390, "height": 844, "label": "mobile full page"}, dimensions=True),
-                    record("formal-web", formal, "formal-web-verifier", {"width": 1440, "height": 900, "label": "desktop and mobile"}),
-                    record("review-queue", review_queue, "review-queue", {}),
-                    record("manual-review", manual_review, "manual-review", {}),
-                ],
-            },
-            indent=2,
-        ),
+        json.dumps({"schema_version": 1, "run_id": manifest["run_id"], "artifacts": []}, indent=2),
+    )
+    run(
+        [
+            sys.executable,
+            str(IMPORT_FORMAL),
+            "--audit-root",
+            str(out),
+            "--run-id",
+            manifest["run_id"],
+            "--formal-report",
+            str(formal),
+            "--review-queue",
+            str(review_queue),
+            "--manual-review",
+            str(manual_review),
+        ]
     )
 
 
-def changed_visual_review_section() -> str:
-    return """## Changed Visual Review
-| Review cell | Trigger/status | Initial viewport evidence | Full-page evidence | Decision | Note |
-| --- | --- | --- | --- | --- | --- |
-| desktop-cell | new route/state/viewport | evidence:shot-desktop | evidence:shot-desktop-full | pass | Desktop composition reviewed after automation. |
-| mobile-cell | new route/state/viewport | evidence:shot-mobile | evidence:shot-mobile-full | pass | Mobile composition reviewed after automation. |
-
-Formal chain: evidence:formal-web, evidence:review-queue, evidence:manual-review.
+def formal_evidence_section() -> str:
+    return """## Formal Evidence
+Imported formal evidence: evidence:formal-web, evidence:formal-review-queue, and evidence:formal-manual-review. Coverage checked desktop and mobile states with no critical findings, no carried gaps, no visible scrollbars, and no palette risks.
 """
+
+
+def write_native_visual_evidence(out: Path, manifest: dict) -> None:
+    image = out / "artifacts" / "native-main.png"
+    write_bytes(image, PNG_1X1)
+    evidence_path = out / "visual_evidence.json"
+    payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    payload["artifacts"].append(
+        {
+            "id": "native-main",
+            "kind": "native-snapshot",
+            "path": image.relative_to(out).as_posix(),
+            "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
+            "mime": "image/png",
+            "route": "Contacts",
+            "state": "default native state",
+            "viewport": {"width": 390, "height": 844, "label": "native mobile"},
+            "captured_by": "native self-test fixture",
+            "width": 1,
+            "height": 1,
+        }
+    )
+    evidence_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def native_visual_report(run_id: str) -> str:
+    return f"""## Run ID
+{run_id}
+
+## Worker
+visual_comparison_audit
+
+## Mockup And Asset Inventory
+The native contact journey is the visual target; no separate mockup is available.
+
+## Visual Tooling
+Native preview fixture captured evidence:native-main.
+
+## Journey Decision Model
+| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Contacts | inspect contacts | choose a contact | names and status | unavailable contact | open contact | settings | none |
+
+## Rendered Journey Usability
+| Platform | Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| native | native mobile | choose a contact | contact list | settings | native detail navigation; badge-detail=not applicable; row-hit-target=pass; navigation-cursor=not applicable; transient-disclosure=not applicable; disclosure-scrollbar=pass; icon-meaning=pass; stable-expansion-width=not applicable; hover-copy=not applicable; status-summary=pass; message-metadata=not applicable | native snapshot evidence:native-main | PASS | native snapshot evidence:native-main |
+
+## Visual Comparison Checks
+| Platform | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| native | Contact review | native mobile | Contacts | journey requirement | native preview evidence:native-main | No material mismatch in fixture | MATCHED |
+
+## Formal Evidence
+Formal Web UI verification not applicable to declared native platform.
+
+## Findings
+No findings.
+
+## Open Questions
+None.
+"""
+
+
+def write_blocked_formal_reports(out: Path) -> None:
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    complete_ledger(out, manifest)
+    for batch in manifest["batches"]:
+        write_batch_report(out, manifest, batch)
+    source_file = manifest["source_files"][0]["rel_path"]
+    write(
+        out / "reports" / "visual_comparison_audit.md",
+        f"""## Run ID
+{manifest['run_id']}
+
+## Worker
+visual_comparison_audit
+
+## Mockup And Asset Inventory
+Journey requirements were found; formal config is missing.
+
+## Visual Tooling
+Browser verification is blocked by the missing manifest-bound formal config.
+
+## Journey Decision Model
+| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| dashboard | review incidents | choose incident | incident list | urgent status | inspect | settings | formal selectors unresolved |
+
+## Rendered Journey Usability
+| Platform | Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| web | desktop | blocked | blocked | blocked | badge-detail=blocked; row-hit-target=blocked; navigation-cursor=blocked; transient-disclosure=blocked; disclosure-scrollbar=blocked; icon-meaning=blocked; stable-expansion-width=blocked; hover-copy=blocked; status-summary=blocked; message-metadata=blocked | blocked by missing formal config | BLOCKED | formal verification blocked |
+| web | mobile | blocked | blocked | blocked | interaction checks blocked by missing formal config | blocked by missing formal config | BLOCKED | formal verification blocked |
+
+## Visual Comparison Checks
+| Platform | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| web | incident review | desktop | /dashboard | journey requirement | blocked by missing formal config | not inspected | BLOCKED |
+| web | incident review | mobile | /dashboard | journey requirement | blocked by missing formal config | not inspected | BLOCKED |
+
+## Formal Evidence
+BLOCKED: manifest-bound formal config is missing.
+
+## Findings
+- Priority: P1
+- Files: {source_file}
+- Mockup/requirement evidence: dashboard journey requires rendered web verification
+- Interface evidence: executable dashboard UI exists but has no bound formal config
+- Expected behavior/standard: web audit uses a manifest-bound formal verification config
+- Gap: rendered journey usability and readability evidence are blocked because formal browser verification cannot run
+- Suggested implementation direction: add the project formal config and rerun the audit
+
+## Open Questions
+None.
+""",
+    )
+    write(
+        out / "final-report.md",
+        f"""## Coverage
+Run {manifest['run_id']} audited declared web UI platform source; formal visual coverage is blocked.
+
+## Mockup And Requirement Inputs
+Journey requirements were inventoried.
+
+## Journey Decision Model
+The dashboard incident-review decision is documented.
+
+## Rendered Journey Usability Findings
+Formal rendering is blocked by the missing config.
+
+## Visual Audit Findings
+Formal Web UI verification is blocked by the missing manifest-bound config.
+
+## Source Implementation Findings
+Source wiring references remain separately audited.
+
+## Journey And Responsive Findings
+Desktop and mobile evidence remain blocked.
+
+## Accessibility And Interaction Findings
+badge-detail=blocked; row-hit-target=blocked; navigation-cursor=blocked; transient-disclosure=blocked; disclosure-scrollbar=blocked; icon-meaning=blocked; stable-expansion-width=blocked; hover-copy=blocked; status-summary=blocked; message-metadata=blocked.
+
+## Implementation Plan
+Add the project formal config and rerun formal browser evidence.
+
+## Verification Plan
+Blocked until runtime formal verification and tests can run.
+""",
+    )
+
+
+def write_final_report(out: Path, manifest: dict) -> None:
+    platform = manifest["ui_implementation_audit"]["ui_platform"]
+    if platform == "hybrid":
+        visual_evidence = "evidence:formal-web, evidence:formal-review-queue, evidence:formal-manual-review, evidence:formal-desktop-cell-viewport, evidence:formal-mobile-cell-viewport, and evidence:native-main"
+    elif platform == "web":
+        visual_evidence = "evidence:formal-web, evidence:formal-review-queue, evidence:formal-manual-review, evidence:formal-desktop-cell-viewport, and evidence:formal-mobile-cell-viewport"
+    else:
+        visual_evidence = "evidence:native-main"
+    write(
+        out / "final-report.md",
+        f"""## Coverage
+Run {manifest['run_id']} audited declared {platform} UI platform source, requirements, visual evidence, and implementation wiring references.
+
+## Mockup And Requirement Inputs
+The manifest-bound mockup and journey sources were reviewed.
+
+## Journey Decision Model
+The primary journey is to review urgent incidents and decide which incident to resolve.
+
+## Rendered Journey Usability Findings
+Rendered evidence is bound through {visual_evidence}.
+
+## Visual Audit Findings
+The visual worker compared hierarchy, responsive behavior, and palette against the requirements using {visual_evidence}.
+
+## Source Implementation Findings
+Source wiring references identify missing handler, backend, persistence, and test anchors without claiming source-only outcome proof.
+
+## Journey And Responsive Findings
+Desktop, mobile, or native constraints are represented for the declared {platform} platform.
+
+## Accessibility And Interaction Findings
+badge-detail=pass; row-hit-target=pass; navigation-cursor=pass; transient-disclosure=pass; disclosure-scrollbar=pass; icon-meaning=pass; stable-expansion-width=pass; hover-copy=pass; status-summary=pass; message-metadata=pass. Evidence: {visual_evidence}.
+
+## Implementation Plan
+Implement every reported missing wiring or rendered behavior and retain formal or native evidence.
+
+## Verification Plan
+Use runtime interaction evidence and focused tests for observable outcomes; source wiring references alone are not outcome proof.
+""",
+    )
 
 
 def write_complete_reports(
@@ -1140,8 +1312,12 @@ def write_complete_reports(
     for batch in manifest["batches"]:
         write_batch_report(out, manifest, batch, out_of_scope=out_of_scope)
     if manifest.get("ui_implementation_audit", {}).get("visual_required"):
+        platform = manifest["ui_implementation_audit"]["ui_platform"]
         if real_visual_evidence:
-            write_visual_evidence(out, manifest)
+            if platform in {"web", "hybrid"}:
+                write_visual_evidence(out, manifest)
+            if platform in {"native", "hybrid"}:
+                write_native_visual_evidence(out, manifest)
         source_file = manifest["source_files"][0]["rel_path"]
         if manifest["ui_implementation_audit"].get("mockup_asset_report"):
             write(
@@ -1193,6 +1369,20 @@ No findings.
 None.
 """,
             )
+        if platform == "native":
+            write(out / "reports" / "visual_comparison_audit.md", native_visual_report(manifest["run_id"]))
+            write_final_report(out, manifest)
+            return manifest
+        native_usability = (
+            "| native | native mobile | choose a contact | contact list | settings | native detail navigation | native snapshot evidence:native-main | PASS | native snapshot evidence:native-main |"
+            if platform == "hybrid"
+            else ""
+        )
+        native_comparison = (
+            "| native | Contact review | native mobile | Contacts | journey requirement | native preview evidence:native-main | No material mismatch in fixture | MATCHED |"
+            if platform == "hybrid"
+            else ""
+        )
         evidence = "looked fine" if weak_visual_evidence else "playwright capture with formal verifier evidence:formal-web"
         write(
             out / "reports" / "visual_comparison_audit.md",
@@ -1214,20 +1404,22 @@ Playwright captures desktop 1440px and mobile 390px views; formal browser verifi
 | dashboard | review urgent incidents first | decide which incident to resolve | active incident summary and severity | urgent severity and stale status | resolve incident | navigation to reports and archive export details | none |
 
 ## Rendered Journey Usability
-| Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop | decide which incident to resolve | navigation and active incident hero | archive detail | inline secondary aside | playwright screenshot evidence:shot-desktop and DOM viewport measurement | PASS | playwright screenshot evidence:shot-desktop and DOM viewport measurement 12% controls |
-| mobile | decide which incident to resolve | active incident summary and Resolve incident action | archive detail | secondary content after primary action | playwright screenshot evidence:shot-mobile and DOM viewport measurement | PASS | playwright screenshot evidence:shot-mobile and DOM viewport measurement 10% controls |
+| Platform | Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| web | desktop | decide which incident to resolve | navigation and active incident hero | archive detail | inline secondary aside | playwright screenshot evidence:formal-desktop-cell-viewport and DOM viewport measurement | PASS | playwright screenshot evidence:formal-desktop-cell-viewport and DOM viewport measurement 12% controls |
+| web | mobile | decide which incident to resolve | active incident summary and Resolve incident action | archive detail | secondary content after primary action | playwright screenshot evidence:formal-mobile-cell-viewport and DOM viewport measurement | PASS | playwright screenshot evidence:formal-mobile-cell-viewport and DOM viewport measurement 10% controls |
+{native_usability}
 
 ## Visual Comparison Checks
-| Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
-| --- | --- | --- | --- | --- | --- | --- |
-| Dashboard review | desktop | /dashboard | design/mockups/dashboard-mobile.png and docs/journeys.md | {evidence} evidence:shot-desktop | No material desktop mismatch in fixture report | MATCHED |
-| Dashboard review | mobile | /dashboard | design/mockups/dashboard-mobile.png and docs/journeys.md | {evidence} evidence:shot-mobile | No material mobile mismatch in fixture report | MATCHED |
+| Platform | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| web | Dashboard review | desktop | /dashboard | design/mockups/dashboard-mobile.png and docs/journeys.md | {evidence} evidence:formal-desktop-cell-viewport | No material desktop mismatch in fixture report | MATCHED |
+| web | Dashboard review | mobile | /dashboard | design/mockups/dashboard-mobile.png and docs/journeys.md | {evidence} evidence:formal-mobile-cell-viewport | No material mobile mismatch in fixture report | MATCHED |
+{native_comparison}
 
 {INTERACTION_CHECKLIST_LINE}
 
-{changed_visual_review_section()}
+{formal_evidence_section()}
 
 ## Findings
 No findings.
@@ -1236,6 +1428,7 @@ No findings.
 None.
 """,
         )
+    write_final_report(out, manifest)
     return manifest
 
 
@@ -1275,20 +1468,20 @@ Playwright desktop and mobile captures with formal geometry evidence.
 | currency rates | decide current most-used live rates quickly | decide current exchange rates | most-used live rates list | stale rate warning | inspect rates | target currency adjustment and target/settings configuration | none |
 
 ## Rendered Journey Usability
-| Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop | decide current rates | rates chart and most-used rates | target settings | inline secondary panel | playwright screenshot evidence:shot-desktop and DOM viewport measurement | PASS | playwright screenshot evidence:shot-desktop and DOM viewport measurement 18% secondary controls |
-| mobile | only target currency configuration is supported; rate decision is buried | Target Currency settings form and Apply settings button | target/settings controls dominate while most-used rates are buried under duplicate summaries and vague labels | secondary controls dominate visible surface | playwright screenshot evidence:shot-mobile and DOM viewport measurement | {first_viewport_result} | playwright screenshot evidence:shot-mobile and DOM viewport measurement 82% controls before rates |
+| Platform | Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| web | desktop | decide current rates | rates chart and most-used rates | target settings | inline secondary panel | playwright screenshot evidence:formal-desktop-cell-viewport and DOM viewport measurement | PASS | playwright screenshot evidence:formal-desktop-cell-viewport and DOM viewport measurement 18% secondary controls |
+| web | mobile | only target currency configuration is supported; rate decision is buried | Target Currency settings form and Apply settings button | target/settings controls dominate while most-used rates are buried under duplicate summaries and vague labels | secondary controls dominate visible surface | playwright screenshot evidence:formal-mobile-cell-viewport and DOM viewport measurement | {first_viewport_result} | playwright screenshot evidence:formal-mobile-cell-viewport and DOM viewport measurement 82% controls before rates |
 
 ## Visual Comparison Checks
-| Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
-| --- | --- | --- | --- | --- | --- | --- |
-| Currency rates decision | desktop | /currency-rates | docs/currency-rates-journey.md | playwright screenshot evidence:shot-desktop and formal evidence:formal-web | Desktop still exposes primary rates | MATCHED |
-| Currency rates decision | mobile | /currency-rates | docs/currency-rates-journey.md | playwright screenshot evidence:shot-mobile and DOM viewport measurement | Target Currency block dominates the visible surface and buries most-used rates | {visual_result} |
+| Platform | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| web | Currency rates decision | desktop | /currency-rates | docs/currency-rates-journey.md | playwright screenshot evidence:formal-desktop-cell-viewport and formal evidence:formal-web | Desktop still exposes primary rates | MATCHED |
+| web | Currency rates decision | mobile | /currency-rates | docs/currency-rates-journey.md | playwright screenshot evidence:formal-mobile-cell-viewport and DOM viewport measurement | Target Currency block dominates the visible surface and buries most-used rates | {visual_result} |
 
 {INTERACTION_CHECKLIST_LINE}
 
-{changed_visual_review_section()}
+{formal_evidence_section()}
 
 ## Findings
 {findings}
@@ -1335,20 +1528,20 @@ Playwright desktop and mobile captures with formal geometry evidence.
 | review workspace | choose the next case to resolve | decide which case needs action now | case status, urgency, and owner summary | blocked or stale case state | open case | raw metadata and diagnostic history | none |
 
 ## Rendered Journey Usability
-| Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop | next-case decision is hard to scan | decision-critical facts are weakly placed inside nested blocks inside blocks | low-importance raw metadata, sender labels, selectable timestamps, permanent instruction noise, avatar clutter, and helper text dominate | unstable expander jumps horizontally, width changes, row is not clickable except a tiny icon-only target, and the disclosure icon interferes with the scrollbar | playwright screenshot evidence:shot-desktop and DOM viewport measurement | {usability_result} | playwright screenshot evidence:shot-desktop and DOM viewport measurement |
-| mobile | next-case decision is hard to scan | decision-critical facts are buried below noisy surfaces | secondary detail and decorative clutter dominate | flags have no hover feedback and no popover detail, while expanded and collapsed result blocks have different widths | playwright screenshot evidence:shot-mobile and DOM viewport measurement | {usability_result} | playwright screenshot evidence:shot-mobile and DOM viewport measurement |
+| Platform | Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| web | desktop | next-case decision is hard to scan | decision-critical facts are weakly placed inside nested blocks inside blocks | low-importance raw metadata, sender labels, selectable timestamps, permanent instruction noise, avatar clutter, and helper text dominate | unstable expander jumps horizontally, width changes, row is not clickable except a tiny icon-only target, and the disclosure icon interferes with the scrollbar | playwright screenshot evidence:formal-desktop-cell-viewport and DOM viewport measurement | {usability_result} | playwright screenshot evidence:formal-desktop-cell-viewport and DOM viewport measurement |
+| web | mobile | next-case decision is hard to scan | decision-critical facts are buried below noisy surfaces | secondary detail and decorative clutter dominate | flags have no hover feedback and no popover detail, while expanded and collapsed result blocks have different widths | playwright screenshot evidence:formal-mobile-cell-viewport and DOM viewport measurement | {usability_result} | playwright screenshot evidence:formal-mobile-cell-viewport and DOM viewport measurement |
 
 ## Visual Comparison Checks
-| Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
-| --- | --- | --- | --- | --- | --- | --- |
-| Review workspace | desktop | /review | docs/journeys.md | playwright screenshot evidence:shot-desktop and formal evidence:formal-web | nested cards, border stacks, visual noise, misalignment, unintuitive icons, permanent instruction helper text, avatar clutter, icon-only row activation, expander/scrollbar collision, and unstable disclosure width changes | {result} |
-| Review workspace | mobile | /review | docs/journeys.md | playwright screenshot evidence:shot-mobile | weak grid, badge no hover/click popover detail, low-importance detail dominates, sender labels and selectable timestamps add noise, and message alignment problems hide the decision hierarchy | {result} |
+| Platform | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| web | Review workspace | desktop | /review | docs/journeys.md | playwright screenshot evidence:formal-desktop-cell-viewport and formal evidence:formal-web | nested cards, border stacks, visual noise, misalignment, unintuitive icons, permanent instruction helper text, avatar clutter, icon-only row activation, expander/scrollbar collision, and unstable disclosure width changes | {result} |
+| web | Review workspace | mobile | /review | docs/journeys.md | playwright screenshot evidence:formal-mobile-cell-viewport | weak grid, badge no hover/click popover detail, low-importance detail dominates, sender labels and selectable timestamps add noise, and message alignment problems hide the decision hierarchy | {result} |
 
 {INTERACTION_CHECKLIST_LINE}
 
-{changed_visual_review_section()}
+{formal_evidence_section()}
 
 ## Findings
 {findings}
@@ -1362,12 +1555,12 @@ None.
 def assert_ledger_mutation_fails(out: Path, tmp: Path, name: str, mutate) -> None:
     mutated = tmp / name
     shutil.copytree(out, mutated)
-    ledger_path = mutated / "effort_ledger.json"
+    ledger_path = mutated / "execution_ledger.json"
     ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
     mutate(ledger)
     ledger_path.write_text(json.dumps(ledger, indent=2, sort_keys=True), encoding="utf-8")
     result = verify(mutated, expect=1)
-    check("effort_ledger_issues" in result.stdout, f"{name} should fail effort ledger verification")
+    check("execution_ledger_issues" in result.stdout, f"{name} should fail execution ledger verification")
 
 
 def main() -> int:
@@ -1388,15 +1581,19 @@ def main() -> int:
             check(str((out / batch["report"]).resolve()) in prompt_text, "batch prompt should contain exact report path")
             for token in (
                 'fork_turns="none"',
-                'reasoning_effort="low"',
-                "Light",
+                "runtime/user-selected worker default",
                 "REPORT_SAVED",
                 f"filename={Path(batch['report']).name};",
                 "REPORT_NOT_SAVED path=<exact-report-path>; reason=<short-reason>",
                 "at or below 80 tokens",
             ):
                 check(token in prompt_text, f"batch prompt should enforce context-light artifact delivery: {token}")
+            check("## Journey Decision Model" not in prompt_text, "source workers must not duplicate the lead-owned journey model")
+            check("## Rendered Journey Usability" not in prompt_text, "source workers must not duplicate rendered visual judgment")
+            check("Interaction checklist:" not in prompt_text, "source workers must not duplicate the visual interaction checklist")
         audit_meta = manifest["ui_implementation_audit"]
+        check(audit_meta["ui_platform"] == "web", "default fixture should declare web platform")
+        check(audit_meta["formal_config"]["rel_path"] == "formal-web-ui.json", "web fixture should bind its formal config")
         check(audit_meta["visual_worker_mode"] == "combined", "default visual audit should use one combined worker")
         check(not audit_meta["mockup_asset_prompt"] and not audit_meta["visual_tooling_prompt"], "default visual audit should not create redundant discovery workers")
         for prompt_key, report_key in (
@@ -1415,6 +1612,11 @@ def main() -> int:
             )
         visual_prompt_text = (out / audit_meta["visual_comparison_prompt"]).read_text(encoding="utf-8")
         check(str((out / "visual_evidence.json").resolve()) in visual_prompt_text, "visual worker should receive exact evidence-manifest path")
+        check(
+            audit_meta["formal_config"]["rel_path"] in visual_prompt_text
+            and audit_meta["formal_config"]["sha256"] in visual_prompt_text,
+            "visual worker should receive the manifest-bound formal config path and hash",
+        )
         for token in (
             "review-queue.json",
             "formal_web_ui_review.py",
@@ -1422,20 +1624,22 @@ def main() -> int:
             "initial-viewport and full-page",
             "review-queue",
             "manual-review",
-            "Changed Visual Review",
+            "Formal Evidence",
+            "import_formal_web_evidence.py",
         ):
             check(token in visual_prompt_text, f"visual worker prompt should enforce changed-review behavior: {token}")
+        check("## Journey Decision Model" in visual_prompt_text and "## Rendered Journey Usability" in visual_prompt_text, "visual worker must own journey and rendered analysis")
         skill_contract = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         folded_skill_contract = " ".join(skill_contract.split()).casefold()
         skill_frontmatter = skill_contract.split("---", 2)[1]
         check(
-            "this exhaustive workflow is explicit-only" in folded_skill_contract
+            "this is an explicit-only" in folded_skill_contract
             and "`$ui-implementation-audit` in codex" in folded_skill_contract
             and "`/ui-implementation-audit` in claude code" in folded_skill_contract,
             "ui-implementation-audit contract must name each runtime's explicit invocation",
         )
         check(
-            "ordinary ui implementation, review, testing, visual checking, or gap-finding requests must not activate it implicitly"
+            "do not use for ordinary implementation or review"
             in folded_skill_contract,
             "ordinary UI work must not trigger ui-implementation-audit implicitly",
         )
@@ -1444,12 +1648,21 @@ def main() -> int:
             "ui-implementation-audit frontmatter must disable Claude Code model invocation",
         )
         check('fork_turns="none"' in skill_contract, "skill must require context-light Codex forks")
-        check("Light" in skill_contract and 'reasoning_effort="low"' in skill_contract, "skill must map visible Light to runtime low")
+        check('reasoning_effort="low"' not in skill_contract and "Light-effort" not in skill_contract, "skill must not prescribe worker effort")
+        for active_path in (
+            ROOT / "SKILL.md",
+            ROOT / "README.md",
+            ROOT / "agents" / "openai.yaml",
+            ROOT / "scripts" / "build_ui_implementation_audit_batches.py",
+        ):
+            active_text = active_path.read_text(encoding="utf-8")
+            for forbidden in ('reasoning_effort="low"', "Light-effort", "required_reasoning_effort", "actual_reasoning_effort", "can_set_reasoning_effort"):
+                check(forbidden not in active_text, f"active UI-audit contract must not prescribe worker effort: {active_path} contains {forbidden}")
         check(
             "final-report.md" in skill_contract and "filename-bearing `REPORT_SAVED`" in skill_contract,
             "skill must keep complete results in cold artifacts with filename-bearing receipts",
         )
-        for token in ("review-queue.json", "formal_web_ui_review.py", "Changed Visual Review", "not reopened — carried unchanged"):
+        for token in ("review-queue.json", "formal_web_ui_review.py", "formal-evidence chain", "import_formal_web_evidence.py"):
             check(token in skill_contract, f"skill contract should preserve changed-review rule: {token}")
         agent_metadata = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
         check(
@@ -1506,6 +1719,70 @@ def main() -> int:
         eligibility_payload = json.loads(eligibility.stdout)
         check(eligibility_payload["status"] == "passed", "eligibility-only preflight should pass real UI")
         check(not eligibility_out.exists(), "eligibility-only preflight must not create audit artifacts")
+
+        missing_platform_out = tmp / "missing-platform-out"
+        missing_platform = run(
+            [
+                sys.executable,
+                str(BUILD),
+                "--repo",
+                str(ui_fixture),
+                "--out",
+                str(missing_platform_out),
+                "--implemented-ui-file",
+                "src/App.tsx",
+            ],
+            expect=2,
+        )
+        check("--ui-platform is required" in missing_platform.stderr, "full audits must declare platform explicitly")
+
+        missing_formal_out = tmp / "missing-formal-config-out"
+        run(
+            [
+                sys.executable,
+                str(BUILD),
+                "--repo",
+                str(ui_fixture),
+                "--out",
+                str(missing_formal_out),
+                "--implemented-ui-file",
+                "src/App.tsx",
+                "--ui-platform",
+                "web",
+            ]
+        )
+        missing_formal_manifest = json.loads((missing_formal_out / "manifest.json").read_text(encoding="utf-8"))
+        check(missing_formal_manifest["ui_implementation_audit"]["formal_config"] is None, "missing formal config should remain explicit in the manifest")
+        check("missing" in (missing_formal_out / "visual_comparison_audit.md").read_text(encoding="utf-8"), "visual prompt should preserve missing formal config blocker")
+        write_blocked_formal_reports(missing_formal_out)
+        check("ok: true" in verify(missing_formal_out).stdout, "a complete blocked audit should verify without fabricating formal evidence")
+
+        native_fixture = tmp / "native-ui-fixture"
+        make_native_ui_fixture(native_fixture)
+        native_out = tmp / "native-out"
+        native_manifest = build(native_fixture, native_out, platform="native")
+        check(native_manifest["ui_implementation_audit"]["ui_platform"] == "native", "native platform should be explicit")
+        check(native_manifest["ui_implementation_audit"]["formal_config"] is None, "native audit must not bind formal web config")
+        write_complete_reports(native_out)
+        check("ok: true" in verify(native_out).stdout, "native audit should verify with native snapshot and no formal web evidence")
+
+        hybrid_out = tmp / "hybrid-out"
+        hybrid_manifest = build(ui_fixture, hybrid_out, platform="hybrid")
+        check(hybrid_manifest["ui_implementation_audit"]["ui_platform"] == "hybrid", "hybrid platform should be explicit")
+        write_complete_reports(hybrid_out)
+        check("ok: true" in verify(hybrid_out).stdout, "hybrid audit should require and accept both formal web and native evidence")
+
+        precision_fixture = tmp / "react-native-platform-fixture"
+        make_gate_precision_fixture(precision_fixture)
+        react_native_out = tmp / "react-native-platform-out"
+        react_native_manifest = build(
+            precision_fixture,
+            react_native_out,
+            evidence="src/NativeContacts.tsx",
+            platform="native",
+        )
+        check(react_native_manifest["ui_implementation_audit"]["ui_platform"] == "native", "React Native TSX must not be classified as browser UI by extension")
+        check(react_native_manifest["ui_implementation_audit"]["formal_config"] is None, "React Native audit must not require formal web evidence")
         missing_visual_artifacts_out = tmp / "missing-visual-artifacts-out"
         build(ui_fixture, missing_visual_artifacts_out)
         write_complete_reports(missing_visual_artifacts_out, real_visual_evidence=False)
@@ -1514,6 +1791,89 @@ def main() -> int:
         write_complete_reports(out)
         result = verify(out)
         check("ok: true" in result.stdout, "complete report should verify")
+        importer_repeat = run(
+            [
+                sys.executable,
+                str(IMPORT_FORMAL),
+                "--audit-root",
+                str(out),
+                "--run-id",
+                manifest["run_id"],
+                "--formal-report",
+                str(out / "artifacts" / "formal-web.json"),
+                "--review-queue",
+                str(out / "artifacts" / "review-queue.json"),
+                "--manual-review",
+                str(out / "artifacts" / "manual-review.json"),
+            ]
+        )
+        check(json.loads(importer_repeat.stdout)["ok"], "formal evidence importer should be idempotent for identical evidence")
+
+        importer_tamper_out = tmp / "importer-tamper-out"
+        shutil.copytree(out, importer_tamper_out)
+        tampered_manifest_path = importer_tamper_out / "visual_evidence.json"
+        tampered_manifest = json.loads(tampered_manifest_path.read_text(encoding="utf-8"))
+        tampered_manifest["artifacts"] = []
+        write(tampered_manifest_path, json.dumps(tampered_manifest, indent=2))
+        copied_formal_path = importer_tamper_out / "artifacts" / "formal-web.json"
+        copied_formal = json.loads(copied_formal_path.read_text(encoding="utf-8"))
+        for page in copied_formal["pages"]:
+            for role in ("viewport", "fullPage"):
+                original_name = Path(page["screenshots"][role]["path"]).name
+                page["screenshots"][role]["path"] = str(importer_tamper_out / "artifacts" / original_name)
+        write(copied_formal_path, json.dumps(copied_formal, indent=2))
+        copied_review_path = importer_tamper_out / "artifacts" / "manual-review.json"
+        copied_review = json.loads(copied_review_path.read_text(encoding="utf-8"))
+        copied_review["reportSha256"] = hashlib.sha256(copied_formal_path.read_bytes()).hexdigest()
+        write(copied_review_path, json.dumps(copied_review, indent=2))
+        write_bytes(importer_tamper_out / "artifacts" / "desktop.png", PNG_1X1 + b"tampered")
+        importer_tamper = run(
+            [
+                sys.executable,
+                str(IMPORT_FORMAL),
+                "--audit-root",
+                str(importer_tamper_out),
+                "--run-id",
+                manifest["run_id"],
+                "--formal-report",
+                str(importer_tamper_out / "artifacts" / "formal-web.json"),
+                "--review-queue",
+                str(importer_tamper_out / "artifacts" / "review-queue.json"),
+                "--manual-review",
+                str(importer_tamper_out / "artifacts" / "manual-review.json"),
+            ],
+            expect=2,
+        )
+        check("hash does not match" in json.loads(importer_tamper.stdout)["error"], "formal evidence importer must reject tampered screenshots")
+
+        missing_final_out = tmp / "missing-final-report-out"
+        shutil.copytree(out, missing_final_out)
+        (missing_final_out / "final-report.md").unlink()
+        missing_final_result = verify(missing_final_out, expect=1)
+        check("final_report_issues" in missing_final_result.stdout and "missing" in missing_final_result.stdout, "missing final report must fail completion")
+
+        malformed_final_out = tmp / "malformed-final-report-out"
+        shutil.copytree(out, malformed_final_out)
+        malformed_final_path = malformed_final_out / "final-report.md"
+        malformed_final_path.write_text(
+            malformed_final_path.read_text(encoding="utf-8").replace("## Verification Plan", "## Unverified Plan"),
+            encoding="utf-8",
+        )
+        malformed_final_result = verify(malformed_final_out, expect=1)
+        check("final report sections must match required order" in malformed_final_result.stdout, "malformed final report headings must fail completion")
+
+        overclaimed_final_out = tmp / "overclaimed-final-report-out"
+        shutil.copytree(out, overclaimed_final_out)
+        overclaimed_final_path = overclaimed_final_out / "final-report.md"
+        overclaimed_final_path.write_text(
+            overclaimed_final_path.read_text(encoding="utf-8").replace(
+                "source wiring references alone are not outcome proof",
+                "path#symbol proves observable success",
+            ),
+            encoding="utf-8",
+        )
+        overclaimed_final_result = verify(overclaimed_final_out, expect=1)
+        check("source wiring references must not be represented as observable outcome proof" in overclaimed_final_result.stdout, "source-only wiring must not be overclaimed as outcome proof")
 
         legacy_gate_out = tmp / "legacy-recognized-gate-out"
         shutil.copytree(out, legacy_gate_out)
@@ -1592,7 +1952,7 @@ def main() -> int:
         shutil.copytree(out, wrong_metadata_out)
         wrong_metadata_path = wrong_metadata_out / "visual_evidence.json"
         wrong_metadata = json.loads(wrong_metadata_path.read_text(encoding="utf-8"))
-        next(item for item in wrong_metadata["artifacts"] if item["id"] == "shot-desktop")["route"] = "/invented-route"
+        next(item for item in wrong_metadata["artifacts"] if item["id"] == "formal-desktop-cell-viewport")["route"] = "/invented-route"
         write(wrong_metadata_path, json.dumps(wrong_metadata, indent=2))
         wrong_metadata_result = verify(wrong_metadata_out, expect=1)
         check("route metadata does not match" in wrong_metadata_result.stdout, "screenshot route metadata must bind to the report row")
@@ -1615,7 +1975,7 @@ def main() -> int:
         missing_review_manifest_path = missing_review_chain_out / "visual_evidence.json"
         missing_review_manifest = json.loads(missing_review_manifest_path.read_text(encoding="utf-8"))
         missing_review_manifest["artifacts"] = [
-            item for item in missing_review_manifest["artifacts"] if item["id"] != "manual-review"
+            item for item in missing_review_manifest["artifacts"] if item["id"] != "formal-manual-review"
         ]
         write(missing_review_manifest_path, json.dumps(missing_review_manifest, indent=2))
         missing_review_chain_result = verify(missing_review_chain_out, expect=1)
@@ -1629,27 +1989,14 @@ def main() -> int:
         write(forged_review_path, json.dumps(forged_review, indent=2))
         forged_review_manifest_path = forged_review_chain_out / "visual_evidence.json"
         forged_review_manifest = json.loads(forged_review_manifest_path.read_text(encoding="utf-8"))
-        next(item for item in forged_review_manifest["artifacts"] if item["id"] == "manual-review")["sha256"] = hashlib.sha256(forged_review_path.read_bytes()).hexdigest()
+        next(item for item in forged_review_manifest["artifacts"] if item["id"] == "formal-manual-review")["sha256"] = hashlib.sha256(forged_review_path.read_bytes()).hexdigest()
         write(forged_review_manifest_path, json.dumps(forged_review_manifest, indent=2))
         forged_review_chain_result = verify(forged_review_chain_out, expect=1)
         check("does not bind a registered formal report" in forged_review_chain_result.stdout, "manual review must bind the registered formal report bytes")
 
-        reopened_carried_out = tmp / "reopened-carried-out"
-        shutil.copytree(out, reopened_carried_out)
-        reopened_report = reopened_carried_out / "reports" / "visual_comparison_audit.md"
-        reopened_report.write_text(
-            reopened_report.read_text(encoding="utf-8").replace(
-                "| desktop-cell | new route/state/viewport | evidence:shot-desktop | evidence:shot-desktop-full | pass |",
-                "| desktop-cell | carried-pass | evidence:shot-desktop | evidence:shot-desktop-full | carried-pass |",
-            ),
-            encoding="utf-8",
-        )
-        reopened_carried_result = verify(reopened_carried_out, expect=1)
-        check("must explicitly state that neither screenshot was reopened" in reopened_carried_result.stdout, "carried unchanged cells must not reopen screenshots")
-
-        invented_action_trace_out = tmp / "invented-action-trace-out"
-        shutil.copytree(out, invented_action_trace_out)
-        action_report = next((invented_action_trace_out / "reports").glob("batch_*.md"))
+        invented_wiring_out = tmp / "invented-wiring-out"
+        shutil.copytree(out, invented_wiring_out)
+        action_report = next((invented_wiring_out / "reports").glob("batch_*.md"))
         action_report.write_text(
             action_report.read_text(encoding="utf-8").replace(
                 "| missing | missing | not-applicable: fixture has no authenticated role model |",
@@ -1658,8 +2005,8 @@ def main() -> int:
             ),
             encoding="utf-8",
         )
-        invented_action_result = verify(invented_action_trace_out, expect=1)
-        check("symbol/text is absent" in invented_action_result.stdout, "invented handler symbols must fail action-trace verification")
+        invented_action_result = verify(invented_wiring_out, expect=1)
+        check("symbol/text is absent" in invented_action_result.stdout, "invented handler symbols must fail wiring-reference verification")
 
         missing_trace_without_finding_out = tmp / "missing-trace-without-finding-out"
         shutil.copytree(out, missing_trace_without_finding_out)
@@ -1673,7 +2020,7 @@ def main() -> int:
             encoding="utf-8",
         )
         missing_trace_result = verify(missing_trace_without_finding_out, expect=1)
-        check("missing handler/backend/permission/persistence/test traces require a finding" in missing_trace_result.stdout, "missing action traces must not pass under No findings")
+        check("missing handler/backend/permission/persistence/test wiring references require a finding" in missing_trace_result.stdout, "missing wiring references must not pass under No findings")
 
         checklist_missing_out = tmp / "checklist-missing-out"
         shutil.copytree(out, checklist_missing_out)
@@ -1743,11 +2090,20 @@ def main() -> int:
         stale_result = verify(stale_out, expect=1)
         check("current_hash_mismatches" in stale_result.stdout, "stale input hashes should fail verification")
 
+        formal_drift_fixture = tmp / "formal-drift-fixture"
+        make_ui_fixture(formal_drift_fixture)
+        formal_drift_out = tmp / "formal-drift-out"
+        build(formal_drift_fixture, formal_drift_out)
+        write_complete_reports(formal_drift_out)
+        write(formal_drift_fixture / "formal-web-ui.json", json.dumps({"targets": [{"url": "http://changed.invalid"}]}, indent=2))
+        formal_drift_result = verify(formal_drift_out, expect=2)
+        check("formal_config hash does not match" in formal_drift_result.stderr, "formal config drift must invalidate the audit manifest")
+
         assert_ledger_mutation_fails(
             out,
             tmp,
             "weak-capability-ledger-out",
-            lambda ledger: ledger["subagent_capability_check"].update({"can_set_reasoning_effort": None}),
+            lambda ledger: ledger["worker_capability_check"].update({"status": "pending"}),
         )
         assert_ledger_mutation_fails(
             out,
@@ -1758,8 +2114,14 @@ def main() -> int:
         assert_ledger_mutation_fails(
             out,
             tmp,
-            "missing-lead-effort-ledger-out",
-            lambda ledger: ledger["lead_effort"].update({"actual_reasoning_effort": None}),
+            "missing-lead-provenance-ledger-out",
+            lambda ledger: ledger["lead"].update({"runtime_provenance": ""}),
+        )
+        assert_ledger_mutation_fails(
+            out,
+            tmp,
+            "forbidden-worker-effort-ledger-out",
+            lambda ledger: ledger["batch_workers"][0].update({"required_reasoning_effort": "low"}),
         )
 
         cli_fixture = tmp / "cli-fixture"

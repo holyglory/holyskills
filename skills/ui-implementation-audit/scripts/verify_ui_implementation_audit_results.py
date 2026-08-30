@@ -34,8 +34,6 @@ BATCH_SECTIONS = [
     "batch summary",
     "file coverage",
     "ui source inventory",
-    "journey decision model",
-    "rendered journey usability",
     "mockup and journey alignment",
     "implementation gap findings",
     "no gap notes",
@@ -67,7 +65,7 @@ VISUAL_SECTIONS = [
     "journey decision model",
     "rendered journey usability",
     "visual comparison checks",
-    "changed visual review",
+    "formal evidence",
     "findings",
     "open questions",
 ]
@@ -86,7 +84,7 @@ VISUAL_EVIDENCE_RE = re.compile(
     re.IGNORECASE,
 )
 FIRST_VIEWPORT_EVIDENCE_RE = re.compile(
-    r"\b(screenshot|screen shot|png|jpg|jpeg|webp|trace|video|playwright|cypress|storybook|browser|preview|simulator|dom|viewport|measurement|measured|px|%|fold|scroll|source|css|blocked|unavailable|not applicable|no safe)\b",
+    r"\b(screenshot|screen shot|png|jpg|jpeg|webp|trace|video|playwright|cypress|storybook|browser|preview|simulator|native|snapshot|dom|viewport|measurement|measured|px|%|fold|scroll|source|css|blocked|unavailable|not applicable|no safe)\b",
     re.IGNORECASE,
 )
 JOURNEY_DECISION_COLUMNS = {
@@ -100,6 +98,7 @@ JOURNEY_DECISION_COLUMNS = {
     "unconfirmed assumptions",
 }
 RENDERED_USABILITY_COLUMNS = {
+    "platform",
     "viewport",
     "decision supported",
     "visible decision-driving content",
@@ -117,32 +116,36 @@ UI_SOURCE_INVENTORY_COLUMNS = {
     "source evidence",
     "expected behavior",
     "actual implementation",
-    "handler evidence",
-    "backend/api evidence",
-    "permission evidence",
-    "persistence evidence",
-    "test evidence",
+    "handler reference",
+    "backend/api reference",
+    "permission reference",
+    "persistence reference",
+    "test reference",
     "responsive/state notes",
 }
 USABILITY_RESULT_VALUES = {"PASS", "GAP", "BLOCKED", "NOT_APPLICABLE"}
-CHANGED_REVIEW_COLUMNS = {
-    "review cell",
-    "trigger/status",
-    "initial viewport evidence",
-    "full-page evidence",
-    "decision",
-    "note",
+VISUAL_COMPARISON_COLUMNS = {
+    "platform",
+    "journey",
+    "viewport",
+    "route/screen",
+    "mockup/requirement",
+    "implementation screenshot/tool evidence",
+    "differences",
+    "result",
 }
-CHANGED_REVIEW_DECISIONS = {
-    "pass",
-    "gap",
-    "blocked",
-    "carried-pass",
-    "carried-gap",
-    "carried-blocked",
-    "not-applicable",
-}
-WEB_UI_EXTENSIONS = {".astro", ".css", ".html", ".jsx", ".mdx", ".scss", ".svelte", ".tsx", ".vue"}
+FINAL_SECTIONS = [
+    "coverage",
+    "mockup and requirement inputs",
+    "journey decision model",
+    "rendered journey usability findings",
+    "visual audit findings",
+    "source implementation findings",
+    "journey and responsive findings",
+    "accessibility and interaction findings",
+    "implementation plan",
+    "verification plan",
+]
 VISUAL_DANGER_RE = re.compile(
     r"\b(overloaded?|crowded|cramped|unreadable|invisible|low[- ]contrast|clipped|cropped|truncated|"
     r"overflow|hidden overflow|no scroll|without scroll|unscannable|ambiguous hierarchy|oversized|"
@@ -266,6 +269,24 @@ def load_manifest(path: Path) -> dict:
         raise ValueError("manifest ui_implementation_audit must be an object.")
     if audit.get("visual_required") is not True:
         raise ValueError("implemented UI audits must require visual review.")
+    ui_platform = audit.get("ui_platform")
+    if ui_platform not in {"web", "native", "hybrid"}:
+        raise ValueError("manifest ui_implementation_audit.ui_platform must be web, native, or hybrid.")
+    formal_config = audit.get("formal_config")
+    if ui_platform == "native":
+        if formal_config is not None:
+            raise ValueError("native UI audit manifest must not declare formal web config.")
+    elif formal_config is not None:
+        if not isinstance(formal_config, dict) or not isinstance(formal_config.get("rel_path"), str):
+            raise ValueError("formal_config must be null or a hash-bound repository file record.")
+        rel_path = formal_config["rel_path"]
+        config_path = Path(manifest["repo_root"]) / rel_path
+        if config_path.is_symlink() or not config_path.is_file():
+            raise ValueError("formal_config must resolve to a regular repository file.")
+        if formal_config.get("sha256") != common.sha256_file(config_path):
+            raise ValueError("formal_config hash does not match the current repository file.")
+        if formal_config.get("size_bytes") != config_path.stat().st_size:
+            raise ValueError("formal_config size does not match the current repository file.")
     gate = audit.get("implementation_gate")
     gate_schema = gate.get("schema_version") if isinstance(gate, dict) else None
     if not isinstance(gate, dict) or gate_schema not in {1, 2} or gate.get("status") != "passed":
@@ -331,6 +352,8 @@ def load_manifest(path: Path) -> dict:
     manifest["_source_hashes"] = source_hashes
     manifest["_asset_hashes"] = asset_hashes
     manifest["_requirement_hashes"] = requirement_hashes
+    manifest["_ui_platform"] = ui_platform
+    manifest["_formal_config"] = formal_config
     manifest["_unit_hashes"] = unit_hashes
     manifest["_unit_to_file"] = unit_to_file
     manifest["_expected_by_batch"] = expected_by_batch
@@ -414,8 +437,12 @@ def is_mobile_viewport(value: str) -> bool:
     return any(token in lowered for token in ("mobile", "narrow", "phone", "390", "375", "360", "320"))
 
 
-def mobile_viewport_required(manifest: dict) -> bool:
-    return any(Path(item).suffix.lower() in WEB_UI_EXTENSIONS for item in manifest.get("_source_hashes", {}))
+def web_evidence_required(manifest: dict) -> bool:
+    return manifest.get("_ui_platform") in {"web", "hybrid"}
+
+
+def native_evidence_required(manifest: dict) -> bool:
+    return manifest.get("_ui_platform") in {"native", "hybrid"}
 
 
 def is_negative(value: str) -> bool:
@@ -439,7 +466,7 @@ def has_visual_danger_finding(findings: str) -> bool:
     return False
 
 
-def verify_action_trace_value(repo_root: Path, value: str, *, field: str) -> tuple[str, dict | None]:
+def verify_wiring_reference_value(repo_root: Path, value: str, *, field: str) -> tuple[str, dict | None]:
     normalized = value.strip().strip("`")
     lowered = normalized.lower()
     if lowered == "missing":
@@ -447,30 +474,30 @@ def verify_action_trace_value(repo_root: Path, value: str, *, field: str) -> tup
     if lowered.startswith("not-applicable:") or lowered.startswith("not applicable:"):
         rationale = normalized.split(":", 1)[1].strip()
         if len(rationale) < 12:
-            return "invalid", {"field": field, "reason": "not-applicable action traces require a concrete rationale", "actual": value}
+            return "invalid", {"field": field, "reason": "not-applicable wiring references require a concrete rationale", "actual": value}
         return "not-applicable", None
     if "#" not in normalized:
-        return "invalid", {"field": field, "reason": "action trace must be path#symbol, missing, or not-applicable: rationale", "actual": value}
+        return "invalid", {"field": field, "reason": "wiring reference must be path#symbol, missing, or not-applicable: rationale", "actual": value}
     raw_path, symbol = normalized.split("#", 1)
     rel_path = Path(raw_path)
     if rel_path.is_absolute() or ".." in rel_path.parts or not symbol.strip():
-        return "invalid", {"field": field, "reason": "action trace path#symbol is invalid", "actual": value}
+        return "invalid", {"field": field, "reason": "wiring reference path#symbol is invalid", "actual": value}
     path = repo_root / rel_path
     try:
         resolved = path.resolve(strict=True)
         resolved.relative_to(repo_root.resolve())
     except (FileNotFoundError, ValueError):
-        return "invalid", {"field": field, "reason": "action trace path does not resolve inside the audited repo", "actual": value}
+        return "invalid", {"field": field, "reason": "wiring reference path does not resolve inside the audited repo", "actual": value}
     if path.is_symlink() or not path.is_file():
-        return "invalid", {"field": field, "reason": "action trace must reference a regular repository file", "actual": value}
+        return "invalid", {"field": field, "reason": "wiring reference must reference a regular repository file", "actual": value}
     try:
         source = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        return "invalid", {"field": field, "reason": "action trace source is not UTF-8 text", "actual": value}
+        return "invalid", {"field": field, "reason": "wiring reference source is not UTF-8 text", "actual": value}
     if symbol.strip() not in source:
-        return "invalid", {"field": field, "reason": "action trace symbol/text is absent from the referenced file", "actual": value}
-    if field == "test evidence" and not re.search(r"(?:^|/)(?:tests?|__tests__)(?:/|$)|\.(?:test|spec)\.", raw_path, re.IGNORECASE):
-        return "invalid", {"field": field, "reason": "test evidence must reference a test/spec path", "actual": value}
+        return "invalid", {"field": field, "reason": "wiring reference symbol/text is absent from the referenced file", "actual": value}
+    if field == "test reference" and not re.search(r"(?:^|/)(?:tests?|__tests__)(?:/|$)|\.(?:test|spec)\.", raw_path, re.IGNORECASE):
+        return "invalid", {"field": field, "reason": "test reference must use a test/spec path", "actual": value}
     return "bound", None
 
 
@@ -504,14 +531,15 @@ def verify_rendered_usability_table(
     findings: str,
     *,
     require_visual_evidence: bool = False,
-    require_mobile: bool = False,
+    ui_platform: str,
 ) -> list[dict]:
     issues: list[dict] = []
     rows = common.parse_markdown_table_dicts(body)
     if not rows:
         return [{"path": str(path), "section": "Rendered Journey Usability", "reason": "missing rendered journey usability table"}]
-    seen_desktop = False
-    seen_mobile = False
+    seen_web_desktop = False
+    seen_web_mobile = False
+    seen_native = False
     gap_or_blocked = False
     danger_failure = False
     for index, row in enumerate(rows, start=1):
@@ -527,10 +555,16 @@ def verify_rendered_usability_table(
             issues.append({"path": str(path), "section": "Rendered Journey Usability", "row": index, "field": "Layout quality result", "expected": sorted(USABILITY_RESULT_VALUES), "actual": result})
         if result in {"GAP", "BLOCKED"}:
             gap_or_blocked = True
-        if "desktop" in row.get("viewport", "").lower() or "native" in row.get("viewport", "").lower():
-            seen_desktop = True
-        if is_mobile_viewport(row.get("viewport", "")):
-            seen_mobile = True
+        platform = row.get("platform", "").strip().lower()
+        if platform not in {"web", "native"}:
+            issues.append({"path": str(path), "section": "Rendered Journey Usability", "row": index, "field": "Platform", "expected": ["native", "web"], "actual": platform})
+        viewport = row.get("viewport", "").lower()
+        if platform == "web" and "desktop" in viewport:
+            seen_web_desktop = True
+        if platform == "web" and is_mobile_viewport(viewport):
+            seen_web_mobile = True
+        if platform == "native":
+            seen_native = True
         evidence = row.get("evidence", "")
         if evidence.strip() and not FIRST_VIEWPORT_EVIDENCE_RE.search(evidence):
             issues.append({"path": str(path), "section": "Rendered Journey Usability", "row": index, "field": "Evidence", "reason": "must name screenshot, DOM/viewport measurement, source evidence, or a concrete blocker"})
@@ -540,10 +574,10 @@ def verify_rendered_usability_table(
             danger_failure = True
             if result == "PASS" and VISUAL_DANGER_RE.search(" ".join(row.values())):
                 issues.append({"path": str(path), "section": "Rendered Journey Usability", "row": index, "field": "Layout quality result", "reason": "danger terms such as overload, unreadable text, clipping, overflow, or low contrast cannot be marked PASS without a finding"})
-    if not seen_desktop:
-        issues.append({"path": str(path), "section": "Rendered Journey Usability", "reason": "desktop/native viewport row is required"})
-    if require_mobile and not seen_mobile:
-        issues.append({"path": str(path), "section": "Rendered Journey Usability", "reason": "mobile/narrow viewport row is required for rendered web visual checks"})
+    if ui_platform in {"web", "hybrid"} and (not seen_web_desktop or not seen_web_mobile):
+        issues.append({"path": str(path), "section": "Rendered Journey Usability", "reason": "web platform requires desktop and mobile/narrow rendered rows"})
+    if ui_platform in {"native", "hybrid"} and not seen_native:
+        issues.append({"path": str(path), "section": "Rendered Journey Usability", "reason": "native platform requires at least one native rendered row"})
     if gap_or_blocked and findings.strip() == "No findings.":
         issues.append({"path": str(path), "section": "Findings", "reason": "GAP or BLOCKED rendered journey usability rows require a finding"})
     if danger_failure and not has_visual_danger_finding(findings):
@@ -593,7 +627,7 @@ def verify_batch_report(path: Path, manifest: dict, batch_id: str) -> list[dict]
             {
                 "path": str(path),
                 "section": "UI Source Inventory",
-                "reason": "UI source inventory headers must include exact handler/backend/permission/persistence/test trace columns",
+                "reason": "UI source inventory headers must include exact handler/backend/permission/persistence/test reference columns",
                 "expected": sorted(UI_SOURCE_INVENTORY_COLUMNS),
                 "actual": sorted(inventory_rows[0]),
             }
@@ -611,10 +645,10 @@ def verify_batch_report(path: Path, manifest: dict, batch_id: str) -> list[dict]
         for field in ("surface", "visible element", "source evidence", "expected behavior", "actual implementation", "responsive/state notes"):
             if not row.get(field, "").strip():
                 issues.append({"path": str(path), "section": "UI Source Inventory", "unit": unit, "field": field, "reason": "empty"})
-        for field in ("handler evidence", "backend/api evidence", "permission evidence", "persistence evidence", "test evidence"):
-            status, trace_issue = verify_action_trace_value(repo_root, row.get(field, ""), field=field)
-            if trace_issue:
-                issues.append({"path": str(path), "section": "UI Source Inventory", "unit": unit, **trace_issue})
+        for field in ("handler reference", "backend/api reference", "permission reference", "persistence reference", "test reference"):
+            status, reference_issue = verify_wiring_reference_value(repo_root, row.get(field, ""), field=field)
+            if reference_issue:
+                issues.append({"path": str(path), "section": "UI Source Inventory", "unit": unit, **reference_issue})
             if status == "missing":
                 missing_trace_rows.append({"unit": unit, "visible_element": row.get("visible element", ""), "field": field})
 
@@ -624,12 +658,10 @@ def verify_batch_report(path: Path, manifest: dict, batch_id: str) -> list[dict]
             {
                 "path": str(path),
                 "section": "Implementation Gap Findings",
-                "reason": "missing handler/backend/permission/persistence/test traces require a finding",
+                "reason": "missing handler/backend/permission/persistence/test wiring references require a finding",
                 "missing_traces": missing_trace_rows,
             }
         )
-    issues.extend(verify_journey_decision_model(path, bodies.get("journey decision model", "")))
-    issues.extend(verify_rendered_usability_table(path, bodies.get("rendered journey usability", ""), findings))
     issues.extend(validate_findings(findings, expected_files, path, "Implementation Gap Findings"))
     for section in ("batch summary", "mockup and journey alignment", "no gap notes", "open questions"):
         if not bodies.get(section, "").strip():
@@ -653,7 +685,7 @@ def verify_aux_report(path: Path, manifest: dict, expected_sections: list[str], 
         if not bodies.get(section, "").strip():
             issues.append({"path": str(path), "section": section, "reason": "empty"})
     if worker == "visual_comparison_audit":
-        require_mobile = mobile_viewport_required(manifest)
+        ui_platform = manifest["_ui_platform"]
         issues.extend(verify_journey_decision_model(path, bodies.get("journey decision model", "")))
         issues.extend(
             verify_rendered_usability_table(
@@ -661,10 +693,10 @@ def verify_aux_report(path: Path, manifest: dict, expected_sections: list[str], 
                 bodies.get("rendered journey usability", ""),
                 bodies.get("findings", ""),
                 require_visual_evidence=True,
-                require_mobile=require_mobile,
+                ui_platform=ui_platform,
             )
         )
-        issues.extend(verify_visual_comparison_table(path, bodies.get("visual comparison checks", ""), bodies.get("findings", ""), require_mobile=require_mobile))
+        issues.extend(verify_visual_comparison_table(path, bodies.get("visual comparison checks", ""), bodies.get("findings", ""), ui_platform=ui_platform))
         checklist_text = "\n".join(
             [
                 bodies.get("rendered journey usability", ""),
@@ -691,18 +723,26 @@ def verify_aux_report(path: Path, manifest: dict, expected_sections: list[str], 
         )
         for issue in evidence_issues:
             issues.append({"path": str(path), "section": "Visual Evidence", **issue})
-        issues.extend(
-            verify_changed_visual_review(
-                path,
-                bodies.get("changed visual review", ""),
-                bodies.get("findings", ""),
-                evidence_records,
-                required=mobile_viewport_required(manifest),
-            )
-        )
+        formal_body = bodies.get("formal evidence", "")
+        formal_references = audit_evidence.evidence_references(formal_body)
+        formal_kinds = {evidence_records[item].get("kind") for item in formal_references if item in evidence_records}
+        if web_evidence_required(manifest):
+            if manifest.get("_formal_config") is None:
+                if "blocked" not in formal_body.lower() or bodies.get("findings", "").strip() == "No findings.":
+                    issues.append({"path": str(path), "section": "Formal Evidence", "reason": "missing manifest-bound formal config must be BLOCKED with a finding"})
+            else:
+                missing_formal_kinds = sorted({"formal-web-verifier", "review-queue", "manual-review"} - formal_kinds)
+                if missing_formal_kinds:
+                    issues.append({"path": str(path), "section": "Formal Evidence", "reason": "web/hybrid audit must cite imported formal evidence", "missing_kinds": missing_formal_kinds})
+        elif formal_body.strip() != "Formal Web UI verification not applicable to declared native platform.":
+            issues.append({"path": str(path), "section": "Formal Evidence", "reason": "native audit must use the exact formal-web not-applicable statement"})
         if rendered_rows:
-            required_kinds = {"screenshot"}
-            if mobile_viewport_required(manifest):
+            required_kinds = set()
+            if web_evidence_required(manifest):
+                required_kinds.add("screenshot")
+            if native_evidence_required(manifest):
+                required_kinds.add("native-snapshot")
+            if web_evidence_required(manifest) and manifest.get("_formal_config") is not None:
                 required_kinds.update({"formal-web-verifier", "review-queue", "manual-review"})
             for issue in audit_evidence.validate_references(text, evidence_records, required_kinds=required_kinds):
                 issues.append({"path": str(path), "section": "Visual Evidence", **issue})
@@ -713,6 +753,11 @@ def verify_aux_report(path: Path, manifest: dict, expected_sections: list[str], 
                     for item in references
                     if item in evidence_records and evidence_records[item].get("kind") in {"screenshot", "native-snapshot"}
                 ]
+                row_platform = row.get("platform", "").strip().lower()
+                if row_platform == "native":
+                    screenshots = [item for item in screenshots if item.get("kind") == "native-snapshot"]
+                elif row_platform == "web":
+                    screenshots = [item for item in screenshots if item.get("kind") == "screenshot"]
                 if not screenshots:
                     issues.append(
                         {
@@ -736,69 +781,14 @@ def verify_aux_report(path: Path, manifest: dict, expected_sections: list[str], 
     return issues
 
 
-def verify_changed_visual_review(
-    path: Path,
-    body: str,
-    findings: str,
-    evidence_records: dict[str, dict],
-    *,
-    required: bool,
-) -> list[dict]:
-    issues: list[dict] = []
-    rows = common.parse_markdown_table_dicts(body)
-    if not rows:
-        return ([{"path": str(path), "section": "Changed Visual Review", "reason": "missing changed visual-review table"}] if required else [])
-    for index, row in enumerate(rows, start=1):
-        missing = sorted(CHANGED_REVIEW_COLUMNS - set(row))
-        if missing:
-            issues.append({"path": str(path), "section": "Changed Visual Review", "row": index, "missing_columns": missing})
-            continue
-        decision = row.get("decision", "").strip().lower()
-        if decision not in CHANGED_REVIEW_DECISIONS:
-            issues.append({"path": str(path), "section": "Changed Visual Review", "row": index, "field": "Decision", "actual": decision})
-            continue
-        carried = decision.startswith("carried-")
-        initial = row.get("initial viewport evidence", "")
-        full_page = row.get("full-page evidence", "")
-        if carried:
-            if "not reopened" not in initial.lower() or "not reopened" not in full_page.lower():
-                issues.append({"path": str(path), "section": "Changed Visual Review", "row": index, "reason": "carried unchanged cells must explicitly state that neither screenshot was reopened"})
-        elif decision != "not-applicable":
-            initial_refs = audit_evidence.evidence_references(initial)
-            full_refs = audit_evidence.evidence_references(full_page)
-            if not any(evidence_records.get(item, {}).get("kind") in {"screenshot", "native-snapshot"} for item in initial_refs):
-                issues.append({"path": str(path), "section": "Changed Visual Review", "row": index, "reason": "queued cell requires initial-viewport screenshot evidence"})
-            if not any(evidence_records.get(item, {}).get("kind") in {"screenshot", "native-snapshot"} for item in full_refs):
-                issues.append({"path": str(path), "section": "Changed Visual Review", "row": index, "reason": "queued cell requires full-page screenshot evidence"})
-        if decision in {"gap", "blocked", "carried-gap", "carried-blocked"} and findings.strip() == "No findings.":
-            issues.append({"path": str(path), "section": "Changed Visual Review", "row": index, "reason": "manual review gap/blocked status requires a finding"})
-    if required:
-        referenced_kinds = {
-            evidence_records[item].get("kind")
-            for item in audit_evidence.evidence_references(body)
-            if item in evidence_records
-        }
-        missing_kinds = sorted({"formal-web-verifier", "review-queue", "manual-review"} - referenced_kinds)
-        if missing_kinds:
-            issues.append({"path": str(path), "section": "Changed Visual Review", "reason": "web UI review must bind the complete formal review chain", "missing_kinds": missing_kinds})
-    return issues
-
-
-def verify_visual_comparison_table(path: Path, body: str, findings: str, *, require_mobile: bool = False) -> list[dict]:
+def verify_visual_comparison_table(path: Path, body: str, findings: str, *, ui_platform: str) -> list[dict]:
     issues: list[dict] = []
     rows = common.parse_markdown_table_dicts(body)
     if not rows:
         return [{"path": str(path), "section": "Visual Comparison Checks", "reason": "missing visual comparison table"}]
-    required = {
-        "journey",
-        "viewport",
-        "route/screen",
-        "mockup/requirement",
-        "implementation screenshot/tool evidence",
-        "differences",
-        "result",
-    }
-    viewports: set[str] = set()
+    required = VISUAL_COMPARISON_COLUMNS
+    web_viewports: set[str] = set()
+    seen_native = False
     non_not_applicable = False
     blocked_or_gap = False
     danger_failure = False
@@ -828,11 +818,16 @@ def verify_visual_comparison_table(path: Path, body: str, findings: str, *, requ
                     "reason": "danger terms such as overload, nested frames, unstable disclosure, meaningless icons, instruction noise, unreadable text, clipping, overflow, or low contrast cannot be marked MATCHED without a finding",
                 }
             )
+        platform = row.get("platform", "").strip().lower()
+        if platform not in {"web", "native"}:
+            issues.append({"path": str(path), "section": "Visual Comparison Checks", "row": index, "field": "Platform", "expected": ["native", "web"], "actual": platform})
         viewport = row.get("viewport", "").lower()
-        if "desktop" in viewport:
-            viewports.add("desktop")
-        if "mobile" in viewport or "narrow" in viewport or "phone" in viewport:
-            viewports.add("mobile")
+        if platform == "web" and "desktop" in viewport:
+            web_viewports.add("desktop")
+        if platform == "web" and ("mobile" in viewport or "narrow" in viewport or "phone" in viewport):
+            web_viewports.add("mobile")
+        if platform == "native":
+            seen_native = True
         evidence = row.get("implementation screenshot/tool evidence", "")
         if evidence.strip() and not VISUAL_EVIDENCE_RE.search(evidence):
             issues.append(
@@ -844,18 +839,70 @@ def verify_visual_comparison_table(path: Path, body: str, findings: str, *, requ
                     "reason": "must name screenshot/trace/tool evidence or a concrete blocker",
                 }
             )
-    required_viewports = {"desktop", "mobile"} if require_mobile else {"desktop"}
-    if non_not_applicable and required_viewports - viewports:
-        reason = (
-            "desktop and mobile/narrow viewport rows are required for rendered web visual checks"
-            if require_mobile
-            else "desktop/native viewport row is required when visual checks are applicable"
-        )
-        issues.append({"path": str(path), "section": "Visual Comparison Checks", "reason": reason, "viewports_found": sorted(viewports)})
+    if non_not_applicable and ui_platform in {"web", "hybrid"} and {"desktop", "mobile"} - web_viewports:
+        issues.append({"path": str(path), "section": "Visual Comparison Checks", "reason": "web platform requires desktop and mobile/narrow comparison rows", "viewports_found": sorted(web_viewports)})
+    if non_not_applicable and ui_platform in {"native", "hybrid"} and not seen_native:
+        issues.append({"path": str(path), "section": "Visual Comparison Checks", "reason": "native platform requires at least one native comparison row"})
     if blocked_or_gap and findings.strip() == "No findings.":
         issues.append({"path": str(path), "section": "Findings", "reason": "GAP or BLOCKED visual rows require a finding"})
     if danger_failure and not has_visual_danger_finding(findings):
         issues.append({"path": str(path), "section": "Findings", "reason": "visual danger terms require a visual/usability finding"})
+    return issues
+
+
+def verify_final_report(manifest_path: Path, manifest: dict) -> list[dict]:
+    path = manifest_path.parent / "final-report.md"
+    if not path.is_file() or path.is_symlink():
+        return [{"path": str(path), "reason": "final-report.md is missing or not a regular file"}]
+    text = path.read_text(encoding="utf-8")
+    order = common.section_order(text)
+    bodies = common.section_bodies(text)
+    issues: list[dict] = []
+    if order != FINAL_SECTIONS:
+        issues.append({"path": str(path), "reason": "final report sections must match required order", "expected": FINAL_SECTIONS, "actual": order})
+    for section in FINAL_SECTIONS:
+        if not bodies.get(section, "").strip():
+            issues.append({"path": str(path), "section": section, "reason": "empty"})
+    coverage = bodies.get("coverage", "")
+    if manifest["run_id"] not in coverage:
+        issues.append({"path": str(path), "section": "Coverage", "reason": "must name the audit run id"})
+    if manifest["_ui_platform"] not in coverage.lower():
+        issues.append({"path": str(path), "section": "Coverage", "reason": "must state the declared UI platform"})
+    missing_labels = common.interaction_checklist_missing(bodies.get("accessibility and interaction findings", ""))
+    if missing_labels:
+        issues.append({"path": str(path), "section": "Accessibility And Interaction Findings", "reason": "final report must mark every interaction checklist label", "missing": missing_labels})
+
+    evidence_required = native_evidence_required(manifest) or manifest.get("_formal_config") is not None
+    evidence_records, evidence_issues = audit_evidence.validate_visual_evidence_manifest(
+        manifest_path.parent,
+        manifest["run_id"],
+        required=evidence_required,
+    )
+    for issue in evidence_issues:
+        issues.append({"path": str(path), "section": "Visual Evidence", **issue})
+    required_visual_kinds = set()
+    if web_evidence_required(manifest):
+        required_visual_kinds.add("screenshot")
+    if native_evidence_required(manifest):
+        required_visual_kinds.add("native-snapshot")
+    if evidence_required:
+        for issue in audit_evidence.validate_references(text, evidence_records, required_kinds=required_visual_kinds):
+            issues.append({"path": str(path), "section": "Visual Evidence", **issue})
+    referenced = audit_evidence.evidence_references(text)
+    referenced_kinds = {evidence_records[item].get("kind") for item in referenced if item in evidence_records}
+    if web_evidence_required(manifest) and manifest.get("_formal_config") is not None:
+        missing = sorted({"formal-web-verifier", "review-queue", "manual-review"} - referenced_kinds)
+        if missing:
+            issues.append({"path": str(path), "section": "Visual Audit Findings", "reason": "final report must cite the imported formal evidence chain", "missing_kinds": missing})
+    if web_evidence_required(manifest) and manifest.get("_formal_config") is None:
+        formal_text = f"{coverage}\n{bodies.get('visual audit findings', '')}".lower()
+        if "formal" not in formal_text or "blocked" not in formal_text:
+            issues.append({"path": str(path), "section": "Visual Audit Findings", "reason": "missing formal config must remain an explicit blocker"})
+    verification = bodies.get("verification plan", "").lower()
+    if not any(token in verification for token in ("runtime", "test", "blocked", "not applicable")):
+        issues.append({"path": str(path), "section": "Verification Plan", "reason": "must name runtime/test proof or a concrete blocker/non-applicability"})
+    if "source-only proves" in text.lower() or "path#symbol proves" in text.lower():
+        issues.append({"path": str(path), "reason": "source wiring references must not be represented as observable outcome proof"})
     return issues
 
 
@@ -871,7 +918,7 @@ def verify_marker(manifest_path: Path, manifest: dict) -> list[dict]:
         "audit_kind": "ui-implementation",
         "manifest": "manifest.json",
         "audit_index": "audit_index.md",
-        "effort_ledger": "effort_ledger.json",
+        "execution_ledger": "execution_ledger.json",
         "excluded_files": "excluded_files.json",
         "reports_dir": "reports",
         "ownership_marker": ".ui-implementation-audit-artifacts.json",
@@ -900,31 +947,42 @@ def verify_excluded_files(manifest_path: Path, manifest: dict) -> tuple[list[dic
     return warnings, issues
 
 
-def verify_effort_ledger(manifest_path: Path, manifest: dict) -> list[dict]:
-    ledger_path = manifest_path.parent / "effort_ledger.json"
+def verify_execution_ledger(manifest_path: Path, manifest: dict) -> list[dict]:
+    ledger_path = manifest_path.parent / "execution_ledger.json"
     if not ledger_path.is_file():
-        return [{"path": str(ledger_path), "reason": "effort_ledger.json is missing"}]
-    ledger = common.load_json_object(ledger_path, "effort_ledger.json")
+        return [{"path": str(ledger_path), "reason": "execution_ledger.json is missing"}]
+    ledger = common.load_json_object(ledger_path, "execution_ledger.json")
     issues: list[dict] = []
     if ledger.get("run_id") != manifest["run_id"]:
         issues.append({"path": str(ledger_path), "field": "run_id", "expected": manifest["run_id"], "actual": ledger.get("run_id")})
-    capability = ledger.get("subagent_capability_check", {})
+    forbidden_effort_keys = []
+    def find_forbidden(value: object, prefix: str = "") -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                child_prefix = f"{prefix}.{key}" if prefix else key
+                if key in {"required_reasoning_effort", "actual_reasoning_effort", "can_set_reasoning_effort"}:
+                    forbidden_effort_keys.append(child_prefix)
+                find_forbidden(child, child_prefix)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                find_forbidden(child, f"{prefix}[{index}]")
+    find_forbidden(ledger)
+    if forbidden_effort_keys:
+        issues.append({"path": str(ledger_path), "reason": "UI audit execution ledger must not prescribe or validate worker reasoning effort", "fields": forbidden_effort_keys})
+
+    capability = ledger.get("worker_capability_check", {})
     if not isinstance(capability, dict):
-        issues.append({"path": str(ledger_path), "field": "subagent_capability_check", "reason": "must be an object"})
+        issues.append({"path": str(ledger_path), "field": "worker_capability_check", "reason": "must be an object"})
     else:
         if capability.get("status") != "completed":
-            issues.append({"path": str(ledger_path), "field": "subagent_capability_check.status", "expected": "completed", "actual": capability.get("status")})
-        if not isinstance(capability.get("can_set_reasoning_effort"), bool):
-            issues.append({"path": str(ledger_path), "field": "subagent_capability_check.can_set_reasoning_effort", "expected": "boolean", "actual": capability.get("can_set_reasoning_effort")})
+            issues.append({"path": str(ledger_path), "field": "worker_capability_check.status", "expected": "completed", "actual": capability.get("status")})
         if not capability.get("spawn_tool"):
-            issues.append({"path": str(ledger_path), "field": "subagent_capability_check.spawn_tool", "expected": "non-empty string", "actual": capability.get("spawn_tool")})
-    lead = ledger.get("lead_effort", {})
+            issues.append({"path": str(ledger_path), "field": "worker_capability_check.spawn_tool", "expected": "non-empty string", "actual": capability.get("spawn_tool")})
+    lead = ledger.get("lead", {})
     if not isinstance(lead, dict) or lead.get("status") not in {"completed", "confirmed", "manual-fallback-completed"}:
-        issues.append({"path": str(ledger_path), "field": "lead_effort.status", "expected": "completed/confirmed", "actual": lead.get("status") if isinstance(lead, dict) else None})
-    elif not isinstance(lead.get("actual_reasoning_effort"), str) or not lead.get("actual_reasoning_effort", "").strip():
-        issues.append({"path": str(ledger_path), "field": "lead_effort.actual_reasoning_effort", "expected": "honest non-empty runtime value", "actual": lead.get("actual_reasoning_effort")})
+        issues.append({"path": str(ledger_path), "field": "lead.status", "expected": "completed/confirmed", "actual": lead.get("status") if isinstance(lead, dict) else None})
     if isinstance(lead, dict) and not lead.get("runtime_provenance"):
-        issues.append({"path": str(ledger_path), "field": "lead_effort.runtime_provenance", "expected": "non-empty string", "actual": lead.get("runtime_provenance")})
+        issues.append({"path": str(ledger_path), "field": "lead.runtime_provenance", "expected": "non-empty string", "actual": lead.get("runtime_provenance")})
     workers = ledger.get("batch_workers")
     if not isinstance(workers, list):
         return issues + [{"path": str(ledger_path), "field": "batch_workers", "reason": "must be a list"}]
@@ -936,9 +994,7 @@ def verify_effort_ledger(manifest_path: Path, manifest: dict) -> list[dict]:
         elif row.get("status") not in {"completed", "manual-fallback-completed"}:
             issues.append({"path": str(ledger_path), "batch_id": batch["id"], "field": "status", "actual": row.get("status")})
         else:
-            if row.get("actual_reasoning_effort") != "low" and row.get("status") != "manual-fallback-completed":
-                issues.append({"path": str(ledger_path), "batch_id": batch["id"], "field": "actual_reasoning_effort", "expected": "low", "actual": row.get("actual_reasoning_effort")})
-            if not row.get("agent_id"):
+            if row.get("status") != "manual-fallback-completed" and not row.get("agent_id"):
                 issues.append({"path": str(ledger_path), "batch_id": batch["id"], "field": "agent_id", "expected": "non-empty string", "actual": row.get("agent_id")})
             if not row.get("runtime_provenance"):
                 issues.append({"path": str(ledger_path), "batch_id": batch["id"], "field": "runtime_provenance", "expected": "non-empty string", "actual": row.get("runtime_provenance")})
@@ -954,9 +1010,7 @@ def verify_effort_ledger(manifest_path: Path, manifest: dict) -> list[dict]:
             if not isinstance(row, dict) or row.get("status") not in {"completed", "manual-fallback-completed"}:
                 issues.append({"path": str(ledger_path), "field": f"{key}.status", "actual": row.get("status") if isinstance(row, dict) else None})
             else:
-                if row.get("actual_reasoning_effort") != "low" and row.get("status") != "manual-fallback-completed":
-                    issues.append({"path": str(ledger_path), "field": f"{key}.actual_reasoning_effort", "expected": "low", "actual": row.get("actual_reasoning_effort")})
-                if not row.get("agent_id"):
+                if row.get("status") != "manual-fallback-completed" and not row.get("agent_id"):
                     issues.append({"path": str(ledger_path), "field": f"{key}.agent_id", "expected": "non-empty string", "actual": row.get("agent_id")})
                 if not row.get("runtime_provenance"):
                     issues.append({"path": str(ledger_path), "field": f"{key}.runtime_provenance", "expected": "non-empty string", "actual": row.get("runtime_provenance")})
@@ -986,9 +1040,10 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
     issues: dict[str, list] = {
         "completion_marker_mismatches": verify_marker(manifest_path, manifest),
         "excluded_file_issues": [],
-        "effort_ledger_issues": verify_effort_ledger(manifest_path, manifest),
+        "execution_ledger_issues": verify_execution_ledger(manifest_path, manifest),
         "missing_reports": [],
         "report_issues": [],
+        "final_report_issues": [],
         "current_hash_mismatches": [],
     }
     _, excluded_issues = verify_excluded_files(manifest_path, manifest)
@@ -1019,6 +1074,8 @@ def verify(manifest_path: Path, reports: list[Path], *, skip_current_hash_check:
                 issues["missing_reports"].append({"report": filename})
             else:
                 issues["report_issues"].extend(verify_aux_report(report, manifest, sections, worker, all_source_files))
+
+    issues["final_report_issues"] = verify_final_report(manifest_path, manifest)
 
     ok = not any(issues.values())
     return {"ok": ok, "manifest": str(manifest_path), "run_id": manifest["run_id"], "issues": issues}

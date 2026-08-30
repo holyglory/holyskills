@@ -119,6 +119,13 @@ class RequirementSource:
     evidence: str
 
 
+@dataclass(frozen=True)
+class FormalConfigSource:
+    rel_path: str
+    sha256: str
+    size_bytes: int
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create UI implementation audit manifest and worker prompts.")
     parser.add_argument("--repo", default=".", help="Repository root to audit. Defaults to cwd.")
@@ -146,6 +153,17 @@ def parse_args() -> argparse.Namespace:
         help="Use separate asset and visual-tooling workers for unusually large or specialized evidence inventories.",
     )
     parser.add_argument("--journey-file", action="append", default=[], help="Repo-relative journey/requirements file to force into evidence.")
+    parser.add_argument(
+        "--ui-platform",
+        choices=("web", "native", "hybrid"),
+        default=None,
+        help="Required for a full audit: web, native, or hybrid product UI scope.",
+    )
+    parser.add_argument(
+        "--formal-config",
+        default=None,
+        help="Repo-relative formal-web-ui-verification config. Required for web/hybrid formal evidence; omission remains a reported audit gap.",
+    )
     parser.add_argument(
         "--implemented-ui-file",
         action="append",
@@ -177,6 +195,36 @@ def parse_args() -> argparse.Namespace:
 
 def utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def isolated_worker_contract() -> str:
+    return """Run this worker in a fresh isolated context. In Codex set `fork_turns="none"` and pass this complete prompt plus applicable project-ledger requirements. Do not prescribe or validate a reasoning-effort level; use the runtime/user-selected worker default. If workers cannot be spawned, the lead may perform the same bounded work through the documented manual fallback. Write the complete report to the exact path below and return only the bounded filename-bearing receipt."""
+
+
+def load_formal_config(repo: Path, raw_path: str | None, ui_platform: str) -> FormalConfigSource | None:
+    if ui_platform == "native":
+        if raw_path:
+            raise ValueError("--formal-config is valid only for web or hybrid audits")
+        return None
+    if not raw_path:
+        return None
+    rel_path = queue.validate_repo_relative_include(repo, raw_path)
+    path = repo / rel_path
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("--formal-config must name a regular non-symlink repository file")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"--formal-config must contain valid UTF-8 JSON: {error}") from error
+    if not isinstance(payload, dict):
+        raise ValueError("--formal-config must contain a JSON object")
+    if not isinstance(payload.get("targets"), list) and not isinstance(payload.get("targetDefaults"), dict):
+        raise ValueError("--formal-config must declare targets or targetDefaults")
+    return FormalConfigSource(
+        rel_path=rel_path,
+        sha256=queue.sha256_file(path),
+        size_bytes=path.stat().st_size,
+    )
 
 
 def table_cell(value: object) -> str:
@@ -445,7 +493,7 @@ Repo root: `{repo}`
 Batch ID: `batch_{batch_id:03d}`
 
 {queue.artifact_delivery_contract(report_path)}
-{queue.isolated_light_worker_contract()}
+{isolated_worker_contract()}
 
 You are a low-effort worker auditing interface source implementation. Do not edit the audited repository; write only the exact audit artifact authorized above. Inspect every owned unit below and compare source-defined UI behavior, visible text, layout, state handling, responsive intent, implementation paths, and test evidence against the mockup/assets, required UI elements, features, and journey requirements listed here and in `manifest.json`.
 
@@ -465,13 +513,10 @@ For ranged units, inspect the assigned range manually plus nearby imports/types/
 
 ## Review Rules
 
-- Define the journey decision model before judging visual/source alignment: primary user goal, primary decision, required facts, warning/flag conditions, frequent actions, secondary/rare actions, and unconfirmed assumptions.
 - Inventory every required visible label, control, field, menu, route link, toast, banner, empty/loading/error state, layout container, and visual/test evidence.
-- Trace handlers, state, navigation, API/persistence, permissions, validation, and missing state branches when the UI promises behavior.
+- Record source wiring references for handlers, state, navigation, API/persistence, permissions, validation, and missing state branches when the UI promises behavior. A path/symbol reference proves only that the source anchor exists; runtime or test evidence is required to prove the observable outcome.
 - Compare implementation to mockup/journey evidence: hierarchy, density, spacing, imagery, typography intent, copy, responsiveness, required decision information, feature behavior, and test evidence.
-- Flag visible overload across desktop, native, and narrow/mobile surfaces: low-journey-relevance settings, filters, rare/admin controls, debug/raw detail, explanatory copy, or secondary metadata dominating the space needed for decision-driving content.
-- Run the interaction/metadata checklist whenever the owned source contains badges, flags, expandable rows, scrollable details, message streams, tool/result blocks, copy controls, navigation rows, or icon-only controls. Explicitly mark badge-detail, row-hit target, navigation-cursor/destination, transient-disclosure lifecycle, disclosure-scrollbar separation, icon meaning, stable expanded/collapsed width, hover-copy reachability, concise status-summary behavior, sender/routing label relevance, and passive timestamp/metadata selection as PASS/GAP/BLOCKED/NOT_APPLICABLE with evidence.
-- Do not mark source alignment clear just because it resembles a mockup; rendered viewports must help the user make the current journey decision.
+- Flag source order, layout rules, or default state that plausibly elevate low-relevance settings, rare/admin controls, debug detail, or secondary metadata above journey-critical content. Leave rendered conclusions to the visual worker and formal evidence.
 - Flag missing UI elements, unwired handlers, missing data/persistence paths, missing states, missing accessibility paths, and missing safe visual states or fixture paths when source implies heavy or production-only operations.
 
 ## Required Report File
@@ -493,21 +538,9 @@ Briefly summarize the UI surfaces these files define.
 | exact unit id | CHECKED | exact sha256 | one-line UI purpose |
 
 ## UI Source Inventory
-| Unit | File | Surface | Visible Element | Source Evidence | Expected Behavior | Actual Implementation | Handler Evidence | Backend/API Evidence | Permission Evidence | Persistence Evidence | Test Evidence | Responsive/State Notes |
+| Unit | File | Surface | Visible Element | Source Evidence | Expected Behavior | Actual Implementation | Handler Reference | Backend/API Reference | Permission Reference | Persistence Reference | Test Reference | Responsive/State Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | exact unit id | repo-relative file | screen/component/style/message catalog | label/control/state/layout | source line/copy/style evidence | mockup/journey/feature/test expectation or inferred standard | implemented/missing path | `path#symbol`, `missing`, or `not-applicable: rationale` | same structured form | same structured form | same structured form | real `test-path#test-name`, `missing`, or justified not-applicable | desktop/mobile/state notes |
-
-## Journey Decision Model
-| Surface | Primary user goal | Primary decision | Required facts | Warning/flag conditions | Frequent actions | Secondary/rare actions | Unconfirmed assumptions |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| screen/component | user goal | decision the user must make | facts needed for the decision | warning or flag conditions | common action(s) | occasional/rare/admin/config actions | assumptions needing confirmation |
-
-## Rendered Journey Usability
-| Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop/native/mobile | supported decision or blocker | facts/actions/warnings visible | details/settings/debug/config visible | inline/expander/menu/detail route/blocked | source/CSS/DOM/screenshot/measurement evidence | PASS/GAP/BLOCKED/NOT_APPLICABLE | source/CSS/DOM/screenshot/measurement evidence |
-
-For any row that includes badges, flags, expandable rows, scrollable details, message streams, tool/result blocks, copy controls, navigation rows, or icon-only controls, include these exact checklist labels in `Detail access pattern` or `Evidence`: `badge-detail`, `row-hit-target`, `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`, `status-summary`, `message-metadata`.
 
 ## Mockup And Journey Alignment
 Explain how the owned UI source aligns or conflicts with the listed mockups/assets, required UI elements, features, tests, and journey requirements. Mention missing target evidence if no relevant mockup or journey exists.
@@ -522,10 +555,6 @@ Use `No findings.` or one block per gap:
 - Expected behavior/standard: expected visual, journey, feature, UI element, implementation, or test behavior
 - Gap: concrete mismatch, missing element, unwired path, or missing test evidence
 - Suggested implementation direction: specific fix direction
-
-Before `No findings.` or the first finding, include a one-line checklist summary:
-`Interaction checklist: badge-detail=<pass/gap/blocked/not-applicable>; row-hit-target=<...>; navigation-cursor=<...>; transient-disclosure=<...>; disclosure-scrollbar=<...>; icon-meaning=<...>; stable-expansion-width=<...>; hover-copy=<...>; status-summary=<...>; message-metadata=<...>.`
-Any `gap` or `blocked` item must have a finding.
 
 ## No Gap Notes
 List units or UI behaviors that look aligned and why.
@@ -549,7 +578,7 @@ Repo root: `{repo}`
 Worker: `mockup_asset_audit`
 
 {queue.artifact_delivery_contract(report_path)}
-{queue.isolated_light_worker_contract()}
+{isolated_worker_contract()}
 
 Do not edit the audited repository; write only the exact audit artifact authorized above. Inventory the design target from mockups/assets and journey requirement sources, including required screens, features, UI elements, states, implementation expectations, and test expectations. Use image-viewing tools when available for raster assets; otherwise describe the blocker and rely on filenames/nearby docs only as fallback.
 
@@ -601,7 +630,7 @@ Repo root: `{repo}`
 Worker: `visual_tooling_audit`
 
 {queue.artifact_delivery_contract(report_path)}
-{queue.isolated_light_worker_contract()}
+{isolated_worker_contract()}
 
 Do not edit the audited repository; write only the exact audit artifact authorized above. Identify how to render the implemented UI safely for screenshot comparison and how required screens, UI elements, states, and visual tests can be exercised. Prefer Playwright, Cypress, Storybook, Vite/Next dev servers, browser MCP tools, native previews/simulators, test fixtures, mock data modes, or existing screenshot tests.
 
@@ -643,16 +672,25 @@ def render_visual_comparison_prompt(
     run_id: str,
     assets: list[VisualAsset],
     requirements: list[RequirementSource],
+    ui_platform: str,
+    formal_config: FormalConfigSource | None,
     report_path: Path,
 ) -> str:
+    formal_config_text = (
+        f"`{formal_config.rel_path}` (sha256=`{formal_config.sha256}`)"
+        if formal_config
+        else "missing — formal web verification must be BLOCKED and reported as a finding"
+    )
     return f"""# UI Implementation Audit: Visual Comparison Worker
 
 Run ID: `{run_id}`
 Repo root: `{repo}`
 Worker: `visual_comparison_audit`
+Declared UI platform: `{ui_platform}`
+Formal web config: {formal_config_text}
 
 {queue.artifact_delivery_contract(report_path)}
-{queue.isolated_light_worker_contract()}
+{isolated_worker_contract()}
 
 Authorized visual evidence manifest: `{(report_path.parent.parent / 'visual_evidence.json').resolve()}`.
 Screenshot, formal-verifier, changed-review queue, decision, and manual-review artifacts may be written only beneath the same
@@ -660,9 +698,9 @@ audit-output directory and must be registered in that manifest.
 
 Do not edit the audited repository; write only the exact audit artifacts authorized above. Use available screenshot-capable tooling to compare the implemented UI against mockups/assets, required UI elements, feature behavior, tests, and user journey requirements. Prefer safe test/fixture/preview mode. If the UI cannot be rendered, create desktop and mobile `BLOCKED` rows with concrete tool/route evidence and report the missing visual harness as a finding.
 
-For every produced screenshot/native capture/formal-verifier JSON/review queue/manual-review manifest, add a record to `visual_evidence.json` with stable id, confined relative path, SHA-256, detected MIME, actual image dimensions when applicable, route/state/viewport metadata when applicable, and capture tool. Use evidence kinds `screenshot`, `formal-web-verifier`, `review-queue`, and `manual-review`, and cite each as `evidence:<id>` in every applicable row. A filename or the word screenshot is not evidence. For rendered web UI, bind the formal-verifier JSON, its first-viewport/full-page screenshot pairs, the changed-review queue, the final manual-review manifest, and each checked page's visible scrollbar inventory.
+For native captures, add normal `screenshot` or `native-snapshot` records to `visual_evidence.json`. For web evidence, do not transcribe formal artifacts by hand. Run the formal verifier only with the manifest-bound config above, complete changed-image review, then invoke `scripts/import_formal_web_evidence.py` with the audit root, audit run id, formal report, review queue, and manual-review manifest. The importer registers the formal report, screenshot pairs, queue, and review manifest and rejects path/hash/run mismatches.
 
-Run all deterministic checks and other automatic tests before manual image review. Then read the formal verifier's `review-queue.json`: open only each queued cell's initial-viewport and full-page images, never carried unchanged images. Record `pass`, `gap`, or `blocked` decisions, finalize them with `formal_web_ui_review.py`, and preserve carried prior gaps as findings without reopening their screenshots. Pixel/hash drift is integrity evidence only; review is triggered by declared UI inputs, journey/theme intent, or a new route/state/viewport.
+For platform `web`, formal browser evidence is required. For `native`, formal web evidence is not applicable and native screenshots/snapshots are required. For `hybrid`, provide both the formal web evidence chain and native captures. Run all deterministic checks and other automatic tests before manual image review. Then read the formal verifier's `review-queue.json`: open only each queued cell's initial-viewport and full-page images, never carried unchanged images. Record `pass`, `gap`, or `blocked` decisions, finalize them with `formal_web_ui_review.py`, and preserve carried prior gaps as findings without reopening their screenshots. Pixel/hash drift is integrity evidence only.
 
 Before visual comparison, define the journey decision model and required UI element set. A visual check is not clear merely because it matches a mockup, has correct data, or avoids overflow. Each rendered viewport must support the primary journey decision unless the surface is itself primarily a data-entry form. If settings, filters, menus, target/configuration blocks, raw/debug detail, explanatory copy, or other low-relevance content dominates the visible surface while the primary decision is unclear or buried, report a journey-usability finding. Also run the interaction checklist for every rendered/source-inferred viewport that contains badges, flags, expandable rows, scrollable details, message streams, tool/result blocks, copy controls, navigation rows, or icon-only controls: badge-detail, row-hit-target, navigation-cursor, transient-disclosure, disclosure-scrollbar, icon-meaning, stable-expansion-width, hover-copy, status-summary, and message-metadata.
 
@@ -694,23 +732,19 @@ Name the safe render/capture path and desktop/mobile viewport plan, or the concr
 | route/screen | user goal | decision the user must make | facts needed for the decision | warning or flag conditions | common action(s) | occasional/rare/admin/config actions | assumptions needing confirmation |
 
 ## Rendered Journey Usability
-| Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| desktop/native/mobile | supported decision or blocker | facts/actions/warnings visible | details/settings/debug/config visible | inline/expander/menu/detail route/blocked | screenshot/tool/DOM/viewport evidence | PASS/GAP/BLOCKED/NOT_APPLICABLE | screenshot/tool/DOM/viewport evidence |
+| Platform | Viewport | Decision supported | Visible decision-driving content | Visible secondary/detail content | Detail access pattern | Readability/contrast evidence | Layout quality result | Evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| web/native | desktop/native/mobile | supported decision or blocker | facts/actions/warnings visible | details/settings/debug/config visible | inline/expander/menu/detail route/blocked | screenshot/tool/DOM/viewport evidence | PASS/GAP/BLOCKED/NOT_APPLICABLE | screenshot/tool/DOM/viewport evidence |
 
 For relevant rows, include these exact checklist labels in `Detail access pattern` or `Evidence`: `badge-detail`, `row-hit-target`, `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`, `status-summary`, `message-metadata`.
 
 ## Visual Comparison Checks
-| Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
-| --- | --- | --- | --- | --- | --- | --- |
-| journey or screen | desktop/mobile | route/screen/story | asset or requirement | tool command plus `evidence:<id>`, or concrete blocker | visual/responsive differences | MATCHED/GAP/BLOCKED/NOT_APPLICABLE |
+| Platform | Journey | Viewport | Route/Screen | Mockup/Requirement | Implementation Screenshot/Tool Evidence | Differences | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| web/native | journey or screen | desktop/mobile/native | route/screen/story | asset or requirement | tool command plus `evidence:<id>`, or concrete blocker | visual/responsive differences | MATCHED/GAP/BLOCKED/NOT_APPLICABLE |
 
-## Changed Visual Review
-| Review cell | Trigger/status | Initial viewport evidence | Full-page evidence | Decision | Note |
-| --- | --- | --- | --- | --- | --- |
-| reviewCellKey | new/inputs changed/intent changed/carried-pass/carried-gap/carried-blocked | `evidence:<id>` or `not reopened — carried unchanged` | `evidence:<id>` or `not reopened — carried unchanged` | pass/gap/blocked/carried-pass/carried-gap/carried-blocked | concrete review result or carried prior note |
-
-Cite the formal report, review queue, and manual-review manifest evidence ids in this section. Every queued cell must have both screenshot evidence ids and a decision. A carried cell must say `not reopened — carried unchanged`; carried gaps/blocks remain findings.
+## Formal Evidence
+For web/hybrid, cite the imported `formal-web-verifier`, `review-queue`, and `manual-review` evidence ids and summarize formal coverage, critical findings, pending/current decisions, carried gaps, visible scrollbars, and palette risks. For native, write exactly `Formal Web UI verification not applicable to declared native platform.`
 
 ## Findings
 Use `No findings.` or finding blocks with Priority, Files, Mockup/requirement evidence, Interface evidence, Expected behavior/standard, Gap, Suggested implementation direction. Start with `Interaction checklist: badge-detail=<pass/gap/blocked/not-applicable>; row-hit-target=<...>; navigation-cursor=<...>; transient-disclosure=<...>; disclosure-scrollbar=<...>; icon-meaning=<...>; stable-expansion-width=<...>; hover-copy=<...>; status-summary=<...>; message-metadata=<...>.` If screenshot production is blocked, include a finding that names the missing safe visual path. If a required element/state is absent, content is overloaded/crowded/unreadable, low-relevance detail dominates while the primary decision is unclear or buried, or any interaction checklist item is gap/blocked, include a finding.
@@ -720,7 +754,7 @@ List visual blockers, missing mockups, unclear routes, or `None.`
 """
 
 
-def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
+def write_execution_ledger(out_dir: Path, manifest: dict) -> None:
     ui_required = bool(manifest.get("ui_implementation_audit", {}).get("visual_required"))
     audit = manifest.get("ui_implementation_audit", {})
     ledger = {
@@ -728,47 +762,36 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
         "repo_root": manifest["repo_root"],
         "audit_kind": "ui-implementation",
         "provenance_scope": "lead-recorded runtime ledger",
-        "effort_verification_scope": "ledger-recorded",
-        "subagent_capability_check": {
+        "worker_capability_check": {
             "status": "pending",
             "spawn_tool": None,
-            "can_set_reasoning_effort": None,
             "notes": "",
         },
-        "lead_effort": {
-            "required_reasoning_effort": "runtime-default",
-            "actual_reasoning_effort": None,
+        "lead": {
             "status": "pending",
             "agent_id": None,
             "runtime_provenance": None,
-            "evidence": "",
         },
         "fallback": {"status": "not-started", "reason": ""},
         "mockup_asset_worker": {
             "status": "pending" if audit.get("mockup_asset_prompt") else "not-applicable",
             "prompt": audit.get("mockup_asset_prompt"),
-            "required_reasoning_effort": "low" if audit.get("mockup_asset_prompt") else None,
             "report": audit.get("mockup_asset_report"),
             "agent_id": None,
-            "actual_reasoning_effort": None,
             "runtime_provenance": None,
         },
         "visual_tooling_worker": {
             "status": "pending" if audit.get("visual_tooling_prompt") else "not-applicable",
             "prompt": audit.get("visual_tooling_prompt"),
-            "required_reasoning_effort": "low" if audit.get("visual_tooling_prompt") else None,
             "report": audit.get("visual_tooling_report"),
             "agent_id": None,
-            "actual_reasoning_effort": None,
             "runtime_provenance": None,
         },
         "visual_comparison_worker": {
             "status": "pending" if ui_required else "not-applicable",
             "prompt": "visual_comparison_audit.md" if ui_required else None,
-            "required_reasoning_effort": "low" if ui_required else None,
             "report": "reports/visual_comparison_audit.md" if ui_required else None,
             "agent_id": None,
-            "actual_reasoning_effort": None,
             "runtime_provenance": None,
         },
         "batch_workers": [
@@ -776,10 +799,8 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
                 "batch_id": batch["id"],
                 "status": "pending",
                 "prompt": batch["prompt"],
-                "required_reasoning_effort": "low",
                 "report": f"reports/{batch['id']}.md",
                 "agent_id": None,
-                "actual_reasoning_effort": None,
                 "runtime_provenance": None,
                 "fallback": False,
             }
@@ -791,7 +812,7 @@ def write_effort_ledger(out_dir: Path, manifest: dict) -> None:
             "decisions": [],
         },
     }
-    queue.write_json(out_dir / "effort_ledger.json", ledger)
+    queue.write_json(out_dir / "execution_ledger.json", ledger)
 
 
 def write_completion_marker(out_dir: Path, manifest: dict) -> None:
@@ -802,7 +823,7 @@ def write_completion_marker(out_dir: Path, manifest: dict) -> None:
         "audit_kind": "ui-implementation",
         "manifest": "manifest.json",
         "audit_index": "audit_index.md",
-        "effort_ledger": "effort_ledger.json",
+        "execution_ledger": "execution_ledger.json",
         "excluded_files": "excluded_files.json",
         "reports_dir": "reports",
         "logs_dir": "logs",
@@ -810,7 +831,7 @@ def write_completion_marker(out_dir: Path, manifest: dict) -> None:
         "ownership_marker": ARTIFACT_MARKER,
         "batch_count": manifest["batch_count"],
         "source_file_count": manifest["source_file_count"],
-        "marker_semantics": "Queue artifacts were generated; worker reports and effort ledger still require verifier completion.",
+        "marker_semantics": "Queue artifacts were generated; worker reports and execution ledger still require verifier completion.",
     }
     queue.write_json(out_dir / "queue_complete.json", marker)
 
@@ -844,17 +865,19 @@ Batches: **{manifest['batch_count']}**
 Visual assets found: **{audit['visual_asset_count']}**
 Mockup assets found: **{audit['mockup_asset_count']}**
 Requirement sources found: **{audit['requirement_source_count']}**
+Declared UI platform: **{audit['ui_platform']}**
+Formal web config: **{audit['formal_config']['rel_path'] if audit.get('formal_config') else 'missing/not applicable'}**
 Scope warnings: **{manifest['scope_warning_count']}**
 
 ## Dispatch
 
-1. Fill `effort_ledger.json` as workers are assigned.
-2. Dispatch one Light-effort (`reasoning_effort="low"`) worker per batch prompt. In Codex set `fork_turns="none"` and pass the entire prompt plus applicable project-ledger requirements.
+1. Fill `execution_ledger.json` as workers are assigned.
+2. Dispatch one fresh isolated worker per batch prompt. In Codex set `fork_turns="none"`; use the runtime/user-selected worker effort and pass the entire prompt plus applicable project-ledger requirements.
 3. Workers write complete reports to their prompt-declared `reports/` paths and return only bounded filename-bearing `REPORT_SAVED` receipts; never request the report body through the worker response.
 4. Dispatch visual workers when listed below.
-5. Run verifier: `{manifest['verifier_command']}`
-6. The lead must review visual evidence directly before final synthesis; source-only review is not a completed visual audit.
-7. Redirect verbose command output to `logs/`, write the complete synthesis to `final-report.md`, and return only a compact outcome/counts/verifier/artifact summary to chat.
+5. The lead reviews visual evidence, writes the complete synthesis to `final-report.md`, and keeps verbose output in `logs/`.
+6. Run verifier: `{manifest['verifier_command']}`
+7. Return only a compact outcome/counts/verifier/artifact summary to chat.
 
 {visual_prompts}
 
@@ -879,6 +902,8 @@ def write_outputs(
     non_interface_source_count: int,
     implementation_gate: dict,
     split_visual_discovery: bool,
+    ui_platform: str,
+    formal_config: FormalConfigSource | None,
 ) -> None:
     queue.ARTIFACT_OWNER = ARTIFACT_OWNER
     queue.ARTIFACT_MARKER = ARTIFACT_MARKER
@@ -981,6 +1006,8 @@ def write_outputs(
                 run_id,
                 visual_assets,
                 requirements,
+                ui_platform,
+                formal_config,
                 reports_dir / "visual_comparison_audit.md",
             ),
             encoding="utf-8",
@@ -997,7 +1024,7 @@ def write_outputs(
     ]
     generated_artifacts = [
         "audit_index.md",
-        "effort_ledger.json",
+        "execution_ledger.json",
         "excluded_files.json",
         "manifest.json",
         "queue_complete.json",
@@ -1018,7 +1045,7 @@ def write_outputs(
         "final_report": str(out_dir / "final-report.md"),
         "archived_reports_dir": archived_reports_dir,
         "artifact_marker": str(out_dir / ARTIFACT_MARKER),
-        "effort_ledger": str(out_dir / "effort_ledger.json"),
+        "execution_ledger": str(out_dir / "execution_ledger.json"),
         "generated_artifacts": generated_artifacts,
         "verifier_command": " ".join(shlex.quote(arg) for arg in verifier_args),
         "verifier_args": verifier_args,
@@ -1035,6 +1062,8 @@ def write_outputs(
         "coverage_units": [asdict(item) for item in units],
         "batches": batch_records,
         "ui_implementation_audit": {
+            "ui_platform": ui_platform,
+            "formal_config": asdict(formal_config) if formal_config else None,
             "visual_required": visual_required,
             "visual_worker_mode": "split" if split_visual_discovery else "combined",
             "implementation_gate": implementation_gate,
@@ -1069,7 +1098,7 @@ def write_outputs(
     queue.write_json(out_dir / "manifest.json", manifest)
     queue.write_json(out_dir / "excluded_files.json", excluded)
     (out_dir / "audit_index.md").write_text(render_index(repo, out_dir, manifest), encoding="utf-8")
-    write_effort_ledger(out_dir, manifest)
+    write_execution_ledger(out_dir, manifest)
     queue.write_ownership_marker(out_dir, repo, generated_artifacts)
     write_completion_marker(out_dir, manifest)
 
@@ -1155,6 +1184,14 @@ def main() -> int:
         return INAPPLICABLE_EXIT
     if args.eligibility_only:
         return 0
+    if args.ui_platform is None:
+        print("--ui-platform is required for a full UI implementation audit", file=sys.stderr)
+        return 2
+    try:
+        formal_config = load_formal_config(repo, args.formal_config, args.ui_platform)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     evidence_paths = {item["rel_path"] for item in implementation_gate["evidence_files"]}
     automatic_paths = {item.rel_path for item in automatic_interface_entries}
     interface_entries = [
@@ -1199,6 +1236,8 @@ def main() -> int:
             non_interface_source_count,
             implementation_gate,
             args.split_visual_discovery,
+            args.ui_platform,
+            formal_config,
         )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)

@@ -1,468 +1,204 @@
 ---
 name: ui-implementation-audit
-description: Run an exhaustive audit of an existing substantive product UI implementation against mockups and journeys with deterministic source batches, real hashed rendered evidence, formal-verifier JSON, and end-to-end action traces. Invoke only through the runtime's explicit skill command (`$ui-implementation-audit` in Codex or `/ui-implementation-audit` in Claude Code); ordinary UI implementation, review, testing, visual checking, or gap-finding requests must not trigger it. After explicit invocation, use only after manually confirming and naming at least one repo-owned executable screen, component, or native view. Do not use before UI implementation, or for plans, mockups, screenshots, design prototypes, assets/styles, Storybook/tests, untouched framework scaffolds, or backend-only repos. A partial implementation qualifies once one real target surface exists; audit its missing planned screens and behavior as gaps.
+description: Run an explicit exhaustive audit of an existing substantive product UI against product journeys, mockups, source wiring, rendered evidence, and tests. Use only through `$ui-implementation-audit` in Codex or `/ui-implementation-audit` in Claude Code after manually confirming at least one repo-owned executable screen/component/view. Do not use for ordinary implementation or review, pre-implementation plans, mockups, screenshots, stories/tests, styles/assets alone, scaffolding, or backend-only repositories.
 disable-model-invocation: true
 ---
 
 # UI Implementation Audit
 
-## Overview
+## Purpose And Boundary
 
-This exhaustive workflow is explicit-only. Run it only when the user invokes
-the runtime's direct skill command: `$ui-implementation-audit` in Codex or
-`/ui-implementation-audit` in Claude Code. Ordinary UI implementation, review,
-testing, visual checking, or gap-finding requests must not activate it
-implicitly. Explicit invocation authorizes the read-only audit workflow and its
-required workers and artifacts, not product implementation or unrelated
-repository changes.
+This is an explicit-only, read-only assurance workflow. Invocation authorizes
+the audit, its isolated workers, and external audit artifacts—not product
+implementation or unrelated repository changes.
 
-Run a read-only, manifest-verified audit of whether the implemented UI matches
-the intended UI shown in mockups/assets and described by user journey
-requirements. The lead agent owns the final visual judgment. Low-effort workers
-inspect deterministic batches of interface source files, while one visual
-worker normally inventories evidence, identifies tooling, and compares
-desktop/mobile screenshots against the design target.
+Use it to determine whether an implemented product UI is complete and faithful
+to its journeys and design target:
 
-This skill exists because UI implementations often drift from generated mockups:
-spacing, density, hierarchy, responsive fit, visible states, and asset use must
-be checked with actual screenshots, not only source reading.
+- Are all intended screens, states, controls, messages, and journeys present?
+- Do visible actions have source wiring references for handlers, navigation,
+  APIs, permissions, persistence, and tests?
+- Does the rendered product support intended decisions and match relevant
+  mockups across its declared platforms?
+- Are missing behavior, evidence, and test paths converted into a prioritized
+  implementation plan?
+
+`formal-web-ui-verification` is the deterministic browser engine, not a second
+implementation audit. It owns declared web route/state/viewport execution,
+geometry, journey hierarchy, continuation, WCAG contrast, theme metrics,
+screenshot pairs, and changed-review selection. This skill consumes that
+structured evidence for web surfaces and adds discovery, source review,
+mockup/journey judgment, native UI review, subjective visual judgment, and
+cross-surface synthesis.
 
 ## Applicability Gate
 
-Use this audit only when the target product already contains at least one
-substantive, repo-owned UI surface in executable interface source. Before
-running self-tests, creating a queue or artifacts, or dispatching workers,
-manually inspect the repository and name the implementing source file with
-`--implemented-ui-file`. The preflight must recognize an executable UI
-surface with substantive visible content or controls in that file; imports,
-empty view shells, route/provider/root-mount plumbing, and naming an arbitrary
-source path are not enough.
+Before self-tests, queue creation, or workers, manually identify a substantive
+repo-owned executable product UI source file and pass it through
+`--implemented-ui-file`. Imports, empty shells, route/provider mounts,
+untouched starters, styles, assets, prototypes, mockups, stories, fixtures,
+tests, and screenshots are insufficient.
 
-Plans, requirements, mockups, screenshots, exported designs, prototypes,
-Storybook stories, visual tests, fixtures, examples, styles, assets, message
-catalogs, route or package scaffolding, and untouched framework starters do not
-establish an implemented product UI. Neither does a backend-only repository. If
-none exists, stop: report that this audit is not applicable and route the work
-to UI design or implementation. Do not start an empty audit or call the absence
-of implementation an audit blocker.
+A partial implementation qualifies once one real screen/component/view exists;
+missing planned surfaces remain findings. A backend-only or pre-implementation
+repository is not applicable, and the eligibility preflight exits `3` without
+creating artifacts.
 
-A genuinely partial implementation qualifies once one real target screen,
-component, or native view exists. Audit that implementation, and record absent
-planned screens, states, wiring, and journeys as gaps.
+For an unrecognized real UI toolkit, use
+`--implemented-ui-override PATH UI-KIND SOURCE-ANCHOR` only after manual
+inspection. The verifier rechecks that the named source defines the anchor and
+uses the named UI kind.
 
-For a legitimate UI toolkit the detector does not recognize, use the exceptional
-`--implemented-ui-override PATH UI-KIND SOURCE-ANCHOR` form only after manual
-inspection. `UI-KIND` must be the exact framework, view type, or UI construct
-written in executable source and used in an import, inheritance/conformance, or
-constructor relationship. `SOURCE-ANCHOR` must be a distinct exact named
-screen/component definition whose body uses that UI kind. The builder persists
-both strings and the verifier checks the relationship against the hash-bound
-source. This is a narrow human-attested fallback, not permission to relabel two
-backend symbols, route scaffolding, or planned UI as implementation.
+## Required Inputs
 
-Actual means an artifact recorded in `<audit-output>/visual_evidence.json`, not a filename mentioned in prose. Each screenshot/native snapshot is verified by path confinement, SHA-256, MIME, dimensions, route, state, viewport, and capture tool. Web audits bind formal-verifier JSON with checked pages and visible scrollbar inventory. Reports cite these records as `evidence:<id>`.
+For a full audit, declare `--ui-platform web`, `native`, or `hybrid`.
 
-Hard reporting gate: every final audit must include an interaction checklist in
-`## Accessibility And Interaction Findings` with the exact labels
-`badge-detail`, `row-hit-target`, `navigation-cursor`,
-`transient-disclosure`, `disclosure-scrollbar`, `icon-meaning`,
-`stable-expansion-width`, `hover-copy`, `status-summary`, and
-`message-metadata`. Each label must be marked `pass`, `gap`, `blocked`, or
-`not applicable` with evidence. If the final report does not contain all ten
-literal labels, rewrite it before returning.
+- `web`: desktop and narrow/mobile rendered evidence plus a manifest-bound
+  formal Web UI config.
+- `native`: at least one native screenshot/snapshot; formal Web UI evidence is
+  not applicable.
+- `hybrid`: both the web formal-evidence chain and native captures.
 
-Treat the intended interface as a complete contract: every required screen,
-journey step, UI element, visible message, interaction state, responsive layout,
-handler, data path, accessibility path, and visual/test evidence must be present.
-If a mockup, journey doc, product requirement, visible source promise, or
-user-confirmed intent implies an element or behavior, audit it as required and
-report anything missing, partial, unwired, visually wrong, or untested.
-Journey docs are evidence, not immunity. If the rendered UI is overloaded,
-duplicative, vague, or dominated by secondary/detail/debug content because a
-journey doc over-prescribed default visibility, report both the rendered UI gap
-and the documentation handoff conflict instead of marking the UI as compliant.
+Pass the existing project-owned formal verifier config with `--formal-config`
+for web/hybrid. The builder records its path, size, and SHA-256. When it is
+missing, the audit may continue, but formal coverage stays `BLOCKED` with a
+finding; a worker must not invent an unbound replacement.
 
-## Required Execution Model
+Use `--mockup` and `--journey-file` to force known design/requirement evidence
+when discovery would miss it.
 
-- Do not request a special lead reasoning level. Use the runtime default and
-  record the actual runtime value and provenance honestly in the effort ledger.
-- Use Light-effort subagents for source and visual batches when the runtime
-  supports spawned workers. **Light** is the Codex selector label for runtime
-  `reasoning_effort="low"`. In Codex, every worker spawn must set
-  `fork_turns="none"` and receive the entire generated prompt plus applicable
-  project-ledger requirements. Other runtimes use the equivalent fresh worker
-  context. If runtime `low` is genuinely unavailable, use disclosed manual
-  fallback rather than an invalid effort request or inherited lead context.
-  Treat the user's request to
-  run this audit as authorization for the needed workers.
-- Queue only interface-defining source files in `batch_###.md` prompts. Do not
-  batch unrelated backend, scripts, build files, or non-UI source.
-- Always run `visual_comparison_audit.md` when interface source files are
-  queued. It owns mockup/asset discovery, visual-tooling discovery, and rendered
-  comparison by default. Add `--split-visual-discovery` only when the evidence
-  inventory is unusually large or requires specialized independent workers;
-  that mode also generates `mockup_asset_audit.md` and
-  `visual_tooling_audit.md`.
-- Before comparing screenshots to mockups, define a journey decision model:
-  primary user goal, primary decision, required facts, warning/flag conditions,
-  frequent actions, secondary/rare actions, and unconfirmed assumptions.
-- The visual comparison worker must try available rendered-surface tooling:
-  Playwright, Cypress, Storybook, browser MCP tools, app/browser preview,
-  native simulator/preview tools, or screenshot-capable test commands. It must
-  check desktop and narrow mobile viewports when a web UI exists.
-- When a web UI has a safe render path, the visual comparison worker must run
-  `formal-web-ui-verification` with a complete per-target/state journey,
-  semantic-region, continuation, light/dark/mixed theme, and declared UI-input
-  mapping, or explicitly report why it is blocked. Treat unresolved critical
-  findings for displaced primary content, offscreen/unfocused continuation,
-  WCAG contrast, theme contradiction, clipping, overlap, off-canvas controls,
-  broken media, invisible text, document overflow, or area violations as audit
-  gaps. Always include its visible scrollbar and palette-risk inventory.
-- Finish formal verification and all other automatic tests before manual image
-  judgment. Read `review-queue.json`, open only queued initial-viewport/full-page
-  pairs, finalize decisions with `formal_web_ui_review.py`, and bind the formal
-  report, queue, screenshot pairs, and manual-review manifest in
-  `visual_evidence.json`. Never reopen carried unchanged images; carried prior
-  gaps remain findings. Screenshot hash/pixel drift is integrity evidence only.
-- The visual comparison worker must answer whether each rendered viewport
-  supports the current journey decision. Except on pages whose primary purpose
-  is data entry, visible content should mostly drive the current decision;
-  secondary detail, debug data, and rare configuration should be available
-  without dominating the main surface. Use the documented information
-  hierarchy to judge placement: critical-always information must be visible at
-  the decision point, primary-frequent information should be prominent,
-  secondary information should be reachable without dominating, and
-  rare/debug/expert detail should not consume prime space unless the journey
-  docs justify it.
-- The visual comparison worker must check interaction affordances, not just
-  static appearance. Decision badges, flags, rows, and disclosures should show
-  hover/focus/click affordance when interactive; whole-row activation should be
-  preferred when the row is the meaningful target; disclosure icons must not
-  collide with scrollbars or adjacent controls; and expanded/collapsed states
-  should keep stable width, placement, and readable alignment. Navigating rows,
-  badges, links, and contextual explanations must expose a predictable
-  destination and pointer/keyboard affordance. Temporary panels, popovers, and
-  expanded signal regions should have an intentional lifecycle such as explicit
-  close, outside click, focus loss, idle leave timer, or documented persistence.
-- Treat interaction affordances as a required checklist for any UI that contains
-  badges, flags, expandable rows, tool/result blocks, scrollable details,
-  message streams, or icon-only controls. The audit is incomplete if it does not
-  explicitly mark each relevant item as pass, gap, blocked, or not applicable:
-  badge hover/focus/click feedback and popover/detail access; row/card
-  activation versus tiny icon-only activation; navigation destination and
-  pointer/focus cursor affordance; transient disclosure lifecycle; disclosure
-  control separation from scrollbars and adjacent controls; stable
-  collapsed/expanded dimensions; icon meaning; hover-revealed copy controls that
-  are stable and reachable; concise status summaries that avoid duplicate
-  status/severity/duration noise; message sender/routing label relevance; and
-  timestamp/passive metadata selection behavior.
-- Prefer test, fixture, preview, mock-data, dry-run, or Storybook paths over
-  production paths. If no safe visual path exists, report the blocker with
-  evidence and include an implementation step to add one.
-- Keep the audited repo read-only unless the user separately asks to implement
-  the resulting plan. Generated audit artifacts are allowed and should live
-  outside the audited repo by default.
-- Workers write complete reports directly to their prompt-declared paths and
-  return only bounded filename-bearing `REPORT_SAVED` receipts. Visual workers
-  may additionally write only the explicitly named audit-output screenshots,
-  formal-verifier reports, and `visual_evidence.json`. Keep full command output
-  under `<audit-output>/logs/`; never route full reports or logs through worker
-  responses.
-- Do not claim completion until the passed implementation gate, manifest,
-  source-batch reports, visual reports, effort ledger, and verifier agree.
+## Worker Model
+
+Use fresh isolated workers when available. In Codex set `fork_turns="none"`
+and pass the complete generated prompt plus applicable project-ledger
+requirements. Do not prescribe or validate a worker reasoning-effort level;
+use the runtime/user-selected default.
+
+Workers write complete reports to their prompt-declared paths and return only a
+bounded filename-bearing `REPORT_SAVED` receipt. If workers cannot be spawned,
+the lead may execute the same bounded prompts through the documented manual
+fallback and records that provenance.
+
+Source workers own only their deterministic interface-source units. They:
+
+- inventory visible elements, states, responsive rules, and requirement
+  alignment;
+- record handler/API/permission/persistence/test `path#symbol` references or
+  `missing`/reasoned `not-applicable`;
+- report source-backed gaps.
+
+A source reference proves only that its anchor exists. It does not prove an
+observable outcome, integration, persistence, or success. Completion claims for
+those behaviors require real runtime or test evidence.
+
+One visual worker owns the journey decision model, rendered usability,
+mockup comparison, interaction checklist, and visual findings. Source workers
+do not duplicate those rendered judgments.
 
 ## Workflow
 
-1. **Confirm the audit applies**
-   - Manually identify at least one repo-owned source file that implements a
-     real target product screen, component, or native view. Do not infer
-     eligibility from framework dependencies, routes, styles, assets, mockups,
-     stories, tests, prototypes, or planned screens.
-   - Resolve `UI_IMPLEMENTATION_AUDIT_SKILL_DIR` to the directory containing
-     this `SKILL.md`, then run a no-artifact preflight:
+1. **Confirm eligibility**
+   - Inspect and name at least one substantive executable UI source.
+   - Run the builder with `--eligibility-only`. Exit `3` means not applicable.
 
-     ```bash
-     REPO_ROOT="${REPO_ROOT:-$PWD}"
-     python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/build_ui_implementation_audit_batches.py" \
-       --repo "$REPO_ROOT" \
-       --implemented-ui-file <repo-relative-implemented-surface> \
-       --eligibility-only
-     ```
+2. **Build the audit queue**
+   - Run the skill self-test unless validation commands are forbidden.
+   - Generate the queue with implemented UI evidence, declared platform, and
+     formal config when applicable.
+   - Inspect `manifest.json`, `audit_index.md`, and `excluded_files.json`;
+     resolve every scope warning before claiming coverage.
 
-   - Repeat `--implemented-ui-file` when several files are useful evidence.
-     If the only real surface uses an unrecognized toolkit, substitute the
-     exceptional `--implemented-ui-override` form described above; do not use
-     it merely because an ordinary file failed the gate.
-     Exit code `3` means the skill is not applicable, not that an audit ran and
-     became blocked. Stop before self-tests, artifacts, or workers.
+3. **Dispatch source workers**
+   - Process every generated `batch_###.md` in a fresh context or documented
+     manual fallback.
+   - Accept only its bounded receipt and confirm the report exists.
 
-2. **Set scope**
-   - Use the current working directory as the repo root unless the user names
-     another path.
-   - Identify interface source from pages, screens, components, templates,
-     styles, layout files, native UI files, message catalogs, UI config, and
-     visible-copy files.
-   - Treat mockup/design assets, screenshots, exported Figma images, ImageGen
-     outputs, brand assets, journey docs, route maps, product specs, Storybook
-     stories, and visual tests as evidence, not source-batch ownership.
+4. **Run visual and formal evidence**
+   - Read journey requirements and mockups before visual judgment.
+   - For web/hybrid, run `formal-web-ui-verification` only with the
+     manifest-bound config. Finish it and other automatic tests before opening
+     review images.
+   - Review only entries in `review-queue.json`; never reopen carried unchanged
+     screenshots. Finalize decisions with `formal_web_ui_review.py`.
+   - Import the completed formal bundle into `visual_evidence.json` using
+     `scripts/import_formal_web_evidence.py`; do not transcribe its screenshot,
+     queue, or review records manually.
+   - For native/hybrid, register real `native-snapshot` evidence.
+   - Compare rendered results against journeys and mockups. Missing mockups are
+     labelled `mockup target missing`, not silently replaced by taste.
 
-3. **Generate the audit queue**
-   - Resolve the audited repo to an absolute path.
-   - Resolve `UI_IMPLEMENTATION_AUDIT_SKILL_DIR` to the directory containing
-     this `SKILL.md`.
-   - Preflight the skill scripts and run:
+5. **Complete visual review**
+   - Build one journey decision model per important surface.
+   - Check web desktop/mobile and/or native surfaces according to the declared
+     platform.
+   - Verify decision-driving content, secondary-detail access, responsive fit,
+     typography, imagery, palette quality, state coverage, and accessibility.
+   - Complete these interaction labels as `pass`, `gap`, `blocked`, or
+     `not applicable` with evidence: `badge-detail`, `row-hit-target`,
+     `navigation-cursor`, `transient-disclosure`, `disclosure-scrollbar`,
+     `icon-meaning`, `stable-expansion-width`, `hover-copy`, `status-summary`,
+     `message-metadata`.
 
-     ```bash
-     python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/self_test.py"
-     ```
-
-     unless the user explicitly forbids validation commands.
-   - Run:
-
-     ```bash
-     REPO_ROOT="${REPO_ROOT:-$PWD}"
-     python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/build_ui_implementation_audit_batches.py" \
-       --repo "$REPO_ROOT" \
-       --implemented-ui-file <repo-relative-implemented-surface>
-     ```
-
-   - Use `--out <dir>` when the user wants a specific artifact location.
-   - Use `--mockup <repo-relative-path>` to force a mockup/design asset into
-     the visual evidence set, and `--journey-file <repo-relative-path>` to force
-     a requirements/journey source into the evidence set.
-   - Use `--include-file` or `--include-glob` only to force a source/manual file
-     that truly defines the interface. They do not substitute for the
-     implementation gate.
-   - Inspect `audit_index.md`, `manifest.json`, and `excluded_files.json`.
-     Resolve `scope_warning: true` rows before claiming full coverage.
-
-4. **Lead visual orientation**
-   - Read the mockup/design assets listed in `manifest.json`.
-   - Read journey requirement sources before deciding visual priorities.
-   - Write the journey decision model before inspecting screenshots: primary
-     goal, primary decision, required facts, warning/flag conditions, frequent
-     actions, secondary/rare actions, and unconfirmed assumptions.
-   - Build a complete screen inventory: route/screen, target user, journey step, primary
-     decision, required information, primary actions, secondary/rare details,
-     all required UI elements, states, and supported viewport constraints.
-   - For every important rendered viewport, define the decision it must support,
-     which visible content is decision-driving, which content is secondary/detail
-     or configuration, and whether details are reachable without overwhelming
-     the decision path.
-   - Identify the safest way to render each high-priority screen.
-   - Map each web route/state to the exact repo-relative UI code, styles,
-     tokens, fonts, and assets that can change it. Do not use an all-repository
-     digest as a substitute for target ownership.
-
-5. **Dispatch workers**
-   - Dispatch one Light/runtime-low worker per `batch_###.md`; in Codex set
-     `fork_turns="none"`. Pass the complete prompt, accept only its compact
-     filename-bearing receipt, and confirm the exact report artifact on disk.
-     Workers do not edit the audited repository and must cover every owned unit.
-   - Dispatch `visual_comparison_audit.md` to render or screenshot desktop and
-     narrow mobile UI, inventory relevant mockups/assets and safe tooling,
-     compare the result against journey requirements, and report visual gaps
-     with artifact evidence.
-   - Only when the manifest records `visual_worker_mode: split`, also dispatch
-     `mockup_asset_audit.md` and `visual_tooling_audit.md` for specialized
-     discovery work.
-   - If workers are unavailable, use disclosed manual fallback coverage: process
-     each prompt yourself, save reports under `reports/`, update the ledger, and
-     keep the final coverage label as manual fallback coverage.
-
-6. **Verify coverage**
-   - Confirm one report per source batch was written under
-     `reports/batch_###.md`.
-   - Save `reports/visual_comparison_audit.md`. In explicit split mode, also
-     save `reports/mockup_asset_audit.md` and
-     `reports/visual_tooling_audit.md`.
-   - Fill `effort_ledger.json` with lead effort, subagent capability, per-batch
-     worker status, visual worker status, fallback status, and pruned-directory
-     review decisions when applicable.
-   - Run:
-
-     ```bash
-     python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/verify_ui_implementation_audit_results.py" --manifest <audit-output>/manifest.json --reports <audit-output>/reports
-     ```
-
-   - Treat verifier failures as blockers before final synthesis.
-
-7. **Synthesize the implementation plan**
-   - For large audits, consolidate findings across all reports first:
-     ```bash
-     python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/_vendor/full_repo_harness/merge_findings.py" \
-       --reports <audit-output>/reports \
-       --markdown-out <audit-output>/consolidated-findings.md
-     ```
-     It conservatively deduplicates only findings whose immutable fields all
-     match, ranks P0→P3, and cites the source reports; use it as the starting
-     point, not a replacement for lead judgment.
+6. **Synthesize the final report**
    - Deduplicate source and visual findings.
-   - Separate confirmed screenshot/source gaps from hypotheses and blockers.
-   - Treat rendered journey-usability failures as real UI defects even when the
-     page matches a mockup, has correct data, and has no horizontal overflow.
-   - Prioritize by user journey impact, missing required UI elements, visual mismatch severity, responsive
-     breakage, accessibility, implementation risk, and dependency order.
-   - Include concrete implementation and verification steps for every missing or incomplete UI, interaction, state, accessibility, data, and test gap.
+   - Separate confirmed gaps from assumptions and external blockers.
+   - Prioritize by journey impact, missing behavior, accessibility, visual
+     mismatch, implementation risk, and dependency order.
+   - Write `final-report.md` before running the result verifier.
 
-## Batch Worker Review Rules
+7. **Verify completion**
+   - Run `verify_ui_implementation_audit_results.py` against the manifest and
+     reports directory.
+   - The verifier checks source/unit coverage, current hashes, worker status,
+     formal/native evidence, final-report structure, interaction labels, and
+     evidence references.
+   - `ok: true` means the audit artifact set is internally complete. It does not
+     mean the product UI is ready; the final report may truthfully remain
+     `GAP`/`BLOCKED` until its findings are implemented and retested.
 
-For every owned interface source unit:
+## Commands
 
-- Inventory visible labels, controls, form fields, menus, route links, toasts,
-  banners, empty/loading/error states, and critical layout containers.
-- Trace the implementation path: handler, state, navigation, API/persistence,
-  permission, validation, loading/error/empty state, and responsive rules.
-- In `UI Source Inventory`, trace every visible action through exact `path#symbol` evidence for handler, backend/API, permission, persistence, and tests. Use `missing` to create a finding. Use `not-applicable: concrete rationale` only when that layer genuinely does not apply. The verifier opens files and confirms cited symbol/text exists.
-- Compare source implementation against mockup/journey evidence from the prompt
-  and manifest.
-- Confirm every required UI element has real implementation and verification
-  evidence; report missing handlers, missing persistence, missing state coverage,
-  missing accessibility, and missing visual/test coverage as gaps.
-- Flag visual and UX gaps: wrong hierarchy, missing content, wrong density,
-  excessive decoration, missing states, dead controls, hidden primary action,
-  overexposed rare detail, layout overflow, cropped text, hidden overflow
-  without scrolling, unreadable controls, low-contrast or invisible theme text,
-  missing asset use, accessibility gaps, and mismatched copy.
-- Flag surfaces where low-journey-relevance content dominates the visible area:
-  settings/filter forms, rare/admin controls, debug/raw status detail,
-  explanatory copy, or secondary metadata that crowds out decision-driving
-  content. Do this across desktop, native, and narrow/mobile viewports rather
-  than only one mobile layout pattern.
-- Flag visual-noise and layout-discipline gaps that prevent the information
-  hierarchy from reading correctly: cards or blocks nested inside other cards,
-  repeated borders/background changes, inconsistent gutters, controls that move
-  when expanded, permanent obvious instructions, meaningless icons, decorative
-  avatars or clutter, and message layouts whose sender/receiver alignment is
-  inconsistent with the journey.
-- Flag interaction and metadata gaps: badges or flags that look interactive but
-  lack hover/click feedback or a useful popover/detail; meaningful rows that
-  require hitting only a tiny icon; contextual explanation rows that navigate
-  without a pointer/focus affordance or predictable destination; temporary
-  popovers/panels that stay open indefinitely without a clear lifecycle;
-  disclosure controls that interfere with scrollbars; icons whose meaning is
-  unclear even with context; expandable tool or result blocks that change width
-  between states; copy controls that permanently clutter messages or disappear
-  while the pointer moves toward them; concise tool/result blocks that repeat
-  completed/error/severity/duration signals instead of showing the minimum
-  status needed; selectable timestamps or metadata that should be passive; and
-  visible sender/routing labels that add noise when the message content alone is
-  the decision-driving information.
-- For ranged units, use the exact unit id in coverage rows and inventory rows.
+Eligibility only:
 
-## Required Batch Report
-
-Each batch report must contain exactly these top-level headings in order:
-
-```markdown
-## Run ID
-## Batch ID
-## Batch Summary
-## File Coverage
-## UI Source Inventory
-## Journey Decision Model
-## Rendered Journey Usability
-## Mockup And Journey Alignment
-## Implementation Gap Findings
-## No Gap Notes
-## Open Questions
+```bash
+python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/build_ui_implementation_audit_batches.py" \
+  --repo "$REPO_ROOT" \
+  --implemented-ui-file src/App.tsx \
+  --eligibility-only
 ```
 
-`File Coverage` must include one row per owned unit with columns `Unit`,
-`Status`, `SHA-256`, and `Purpose`; every status must be `CHECKED`.
+Web audit queue:
 
-`UI Source Inventory` must include columns `Unit`, `File`, `Surface`, `Visible Element`, `Source Evidence`, `Expected Behavior`, `Actual Implementation`, `Handler Evidence`, `Backend/API Evidence`, `Permission Evidence`, `Persistence Evidence`, `Test Evidence`, and `Responsive/State Notes`.
+```bash
+python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/build_ui_implementation_audit_batches.py" \
+  --repo "$REPO_ROOT" \
+  --implemented-ui-file src/App.tsx \
+  --ui-platform web \
+  --formal-config formal-web-ui.json
+```
 
-`Journey Decision Model` must include columns `Surface`, `Primary user goal`,
-`Primary decision`, `Required facts`, `Warning/flag conditions`, `Frequent
-actions`, `Secondary/rare actions`, and `Unconfirmed assumptions`.
+Import completed formal evidence:
 
-`Rendered Journey Usability` must include columns `Viewport`, `Decision
-supported`, `Visible decision-driving content`, `Visible secondary/detail
-content`, `Detail access pattern`, `Readability/contrast evidence`, `Layout
-quality result`, and `Evidence`. Desktop rows are required for native or desktop
-apps; desktop and mobile/narrow rows are required when a web UI can be rendered.
-When a viewport contains badges, flags, expandable rows, tool/result blocks,
-scrollable details, message streams, or icon-only controls, its `Detail access
-pattern` or `Evidence` cell must explicitly cover row activation, badge
-hover/focus/click detail behavior, disclosure/scrollbar separation, icon
-meaning, expanded/collapsed size stability, and passive metadata behavior. Use
-`not applicable` for categories truly absent from that viewport.
+```bash
+python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/import_formal_web_evidence.py" \
+  --audit-root <audit-output> \
+  --run-id <audit-run-id> \
+  --formal-report <audit-output>/artifacts/report.json \
+  --review-queue <audit-output>/artifacts/review-queue.json \
+  --manual-review <audit-output>/artifacts/manual-review.json
+```
 
-Findings must use either `No findings.` or field blocks with:
+Verify the complete audit:
 
-- Priority: `P0`, `P1`, `P2`, or `P3`
-- Files: repo-relative files owned by the batch
-- Mockup/requirement evidence: asset, journey doc, route, or explicit absence
-- Interface evidence: source file, visible text, handler, style, or state
-- Expected behavior/standard: expected visual or journey behavior
-- Gap: concrete mismatch
-- Suggested implementation direction: specific fix direction
+```bash
+python3 "$UI_IMPLEMENTATION_AUDIT_SKILL_DIR/scripts/verify_ui_implementation_audit_results.py" \
+  --manifest <audit-output>/manifest.json \
+  --reports <audit-output>/reports
+```
 
-## Visual Worker Requirements
+## Final Report
 
-The visual comparison report is not complete if it only says the UI "looks
-good" or "matches the mockup." It must include `Mockup And Asset Inventory`,
-`Visual Tooling`, `Journey Decision Model`, `Rendered Journey Usability`, and
-`Visual Comparison Checks`, followed by `Changed Visual Review`, with
-desktop and mobile/narrow rows when a web UI can be rendered. Evidence must
-name the command/tool and bind `evidence:<id>` records from `visual_evidence.json`.
-If screenshots cannot be produced, the row result must be `BLOCKED` and the
-findings must explain the missing safe render path.
-When the web UI can be rendered, evidence should also name the
-`formal-web-ui-verification` command, report, changed-review queue, and finalized
-manual-review paths. If the verifier cannot
-run, mark formal DOM/layout verification as `BLOCKED`; if it runs, summarize
-critical findings, visible scrollbars, palette risks, pending changed-review
-cells, and carried gaps from the Markdown or JSON report.
-
-`Changed Visual Review` uses columns `Review cell`, `Trigger/status`, `Initial
-viewport evidence`, `Full-page evidence`, `Decision`, and `Note`. Queued cells
-cite both screenshot artifacts and use `pass`/`gap`/`blocked`; carried cells say
-`not reopened — carried unchanged` in both image columns and use
-`carried-pass`/`carried-gap`/`carried-blocked`. It also cites the formal report,
-review queue, and manual-review manifest evidence ids.
-
-For each rendered screen, check:
-
-- Match to mockup composition, spacing, density, typography, color, imagery,
-  iconography, and information priority.
-- Desktop, native, and mobile fit: no accidental horizontal scroll, overlap,
-  cropped decision data, hidden overflow without scrolling, unreadable
-  compression, or low-value content dominating the decision path.
-- Rendered journey usefulness: visible content should be dominated by facts,
-  warnings, and actions that help the user progress through the current journey.
-  Details, settings, filters, raw/debug status, and rare/admin controls may be
-  present, but they should not overwhelm the primary decision path.
-- Handoff conflict: if a requirement says all facts must be visible but the
-  screenshot shows duplicate severity summaries, vague labels, source-model
-  leakage, or detail controls dominating the main state, record a gap and
-  recommend separating default indicators from hover/focus/click detail.
-- Structure and alignment: if the screenshot shows nested cards/blocks,
-  stacked borders, competing backgrounds, random-looking placement, weak grid
-  discipline, disclosure controls that jump or change width, permanent helper
-  copy, meaningless icons, avatar clutter, or inconsistent message alignment,
-  record a visual/usability gap even when all data is technically present.
-- Answer: "What decision can the user make from this rendered viewport?" If the
-  answer is unclear, only configuration-oriented, or buried under secondary
-  detail, report a journey-usability gap.
-- Flag broad layout problems: overload, crowding, ambiguous hierarchy, clipped
-  or truncated text, hidden overflow with no scroll path, oversized controls,
-  unreadable compression, low contrast, invisible dark-theme text, and any
-  visually present information that is not scannable enough to support the
-  journey.
-- Journey relevance: critical-always and primary-frequent content is prominent;
-  secondary content is available; rare-under-5-percent detail is available
-  through an appropriate detail path when visible space is tight.
-- Interaction states: loading, empty, error, disabled, focus, hover/pressed,
-  permission-denied, destructive confirmation, undo/rollback, and success.
-- Accessibility: labels, focus order, keyboard access, contrast risk, semantic
-  controls, text fitting, and state not conveyed only by color.
-
-## Final Audit Artifact And Chat Output
-
-Write the complete audit to `<audit-output>/final-report.md` with exactly these
-top-level headings:
+`final-report.md` contains exactly these top-level sections:
 
 ```markdown
 ## Coverage
@@ -477,43 +213,25 @@ top-level headings:
 ## Verification Plan
 ```
 
-Do not paste `final-report.md`, worker reports, screenshot inventories, formal
-verifier JSON/Markdown, consolidated findings, or raw command logs into chat.
-Return only the overall outcome, incomplete/blocking status, critical and total
-finding counts, verifier result, material visual-coverage caveats, and paths to
-the final report and audit directory.
-
-The `Accessibility And Interaction Findings` section must include a short
-checklist before or after findings with all ten exact labels: `badge-detail`,
-`row-hit-target`, `navigation-cursor`, `transient-disclosure`,
-`disclosure-scrollbar`, `icon-meaning`, `stable-expansion-width`, `hover-copy`,
-`status-summary`, `message-metadata`. Each label must be marked `pass`, `gap`,
-`blocked`, or `not applicable` with a file/screenshot/source reference. The
-`visual_comparison_audit` worker report is verified for these labels
-automatically, so the same set must be carried into this final section. If any
-label is `gap` or `blocked`, include a prioritized finding in this section or in
-the closest specific findings section.
-
-Use this priority scale:
-
-- `P0`: Core journey unusable, data-loss/destructive risk, or runtime failure.
-- `P1`: Major missing UI element, implementation path, test path, mismatch from mockup/requirements, or primary journey expectation.
-- `P2`: Important visual, responsive, accessibility, state, or maintainability
-  gap.
-- `P3`: Polish, consistency, copy, or low-risk cleanup.
+Every section is non-empty. `Coverage` names the run id and declared platform.
+The interaction section contains all ten labels. Web/hybrid reports cite the
+imported formal report, review queue, manual-review manifest, and relevant
+screenshots; native/hybrid reports cite native snapshots. The verification plan
+names runtime/test proof or a concrete blocker/non-applicability and never
+presents source references as outcome proof.
 
 ## Completion Rules
 
-- The final report must state the audit output path, run id, source files
-  queued, visual assets/mockups found, requirement sources found, visual tools
-  attempted, formal Web UI verifier result when applicable, visible scrollbar
-  inventory when applicable, screenshot/artifact evidence, unchecked
-  files/units, scope warnings, ledger status, and verifier result.
-- For every visual artifact, state evidence id, confined path, SHA-256, route, state, viewport, dimensions, and capture tool. State the bound formal-verifier evidence id and scrollbar inventory for rendered web UI.
-- If no mockups/assets are found, label visual target coverage as
-  `mockup target missing` and include a plan item to add or provide target
-  imagery.
-- If no safe rendered UI path exists, label visual comparison coverage as
-  `blocked by missing visual harness` and include a plan item to add Playwright,
-  Storybook, a fixture route, a native preview, or another screenshot path.
-- Do not present source-only review as a completed visual audit.
+- Keep the audited repository read-only; write generated audit artifacts
+  outside it by default.
+- Do not call a source-only review a visual audit.
+- Do not call web/hybrid formal coverage complete without the manifest-bound
+  config and imported formal evidence chain.
+- Do not call native coverage complete with browser evidence substituted for a
+  native snapshot.
+- Do not report the product UI ready while any requested journey, enabled
+  control, implementation gap, or request-related completion-ledger item
+  remains unresolved. A blocked but fully evidenced audit is reported as a
+  completed audit with an unready product result.
+- Keep full reports and logs in cold artifacts. Return only outcome, blocking
+  status, finding counts, coverage caveats, verifier status, and artifact paths.

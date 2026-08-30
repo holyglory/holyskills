@@ -3,8 +3,12 @@
 This skill runs a deterministic Playwright/Chromium heuristic over rendered
 web pages. It measures DOM geometry, computed visibility, clipping, occlusion,
 off-canvas controls, broken media, contrast risks, document overflow, and
-visible scrollbars. It also measures rendered placeholders and selected option
-labels without retaining their text, supports opt-in readable-content inset
+visible scrollbars with their same-axis nesting chains. Every horizontal
+scrollbar is a warning; nested horizontal scrolling is blocking. Two vertical
+scroll layers warn and three or more block, with the document scrollbar
+counting as a layer and mixed axes kept separate. It also measures rendered
+placeholders and selected option labels without retaining their text, supports
+opt-in readable-content inset
 contracts, and samples immediately around declared responsive breakpoints.
 It traverses discoverable open shadow roots, evaluates
 Playwright-reachable frames, supports mobile device descriptors, and can open
@@ -16,8 +20,9 @@ coverage limits.
 Every effective target/state also declares its primary journey, frequency/risk
 context, semantic rendered regions, light/dark/mixed theme, and
 repository-relative UI review inputs. The verifier rejects secondary workflows
-above primary content, offscreen or unfocused continuation, WCAG text contrast
-failures, and large declared-theme contradictions. Palette-cohesion risks stay
+above primary content, offscreen or unfocused continuation, nested horizontal
+scrolling, triple vertical scroll nesting, WCAG text contrast failures, and
+large declared-theme contradictions. Palette-cohesion risks stay
 explicit agent-review evidence rather than automatic aesthetic verdicts.
 
 Each checked cell automatically captures a redacted initial viewport and full

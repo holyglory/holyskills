@@ -57,7 +57,7 @@ def main() -> int:
             parity_files = {
                 "skills/formal-web-ui-verification/SKILL.md": "review-queue.json formal_web_ui_review.py secondary-workflow-precedes-primary declared-theme-contradiction",
                 "skills/user-journey-docs-audit/SKILL.md": "Formal Web UI verification handoff continuation anchor changed visual review",
-                "skills/ui-implementation-audit/SKILL.md": "Changed Visual Review not reopened — carried unchanged manual-review",
+                "skills/ui-implementation-audit/SKILL.md": "import_formal_web_evidence.py runtime/user-selected default manual-review",
                 "skills/full-repo-audit/SKILL.md": "Changed Visual Review formal_web_ui_review.py manual-review",
                 "full_repo_harness/evidence.py": '"review-queue" "manual-review" formal-web-ui-manual-review',
                 "full_repo_harness/queue.py": "Changed Visual Review review-queue.json formal_web_ui_review.py",
@@ -73,11 +73,11 @@ def main() -> int:
             try:
                 MODULE.check_changed_visual_review_parity()
                 broken = parity_root / "skills" / "ui-implementation-audit" / "SKILL.md"
-                broken.write_text("Changed Visual Review manual-review", encoding="utf-8")
+                broken.write_text("import_formal_web_evidence.py manual-review", encoding="utf-8")
                 try:
                     MODULE.check_changed_visual_review_parity()
                 except SystemExit as error:
-                    check("not reopened" in str(error), "parity failure should identify the missing changed-review rule")
+                    check("runtime/user-selected default" in str(error), "parity failure should identify the missing worker-effort boundary")
                 else:
                     raise AssertionError("changed visual-review parity accepted a missing carried-image rule")
             finally:

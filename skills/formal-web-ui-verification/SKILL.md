@@ -1,6 +1,6 @@
 ---
 name: formal-web-ui-verification
-description: Run journey-aware browser verification of rendered web UI hierarchy, immediate interaction continuation, WCAG text contrast, declared-theme balance, palette risks, geometry, responsive samples, and truthful route/state/viewport evidence. Use when frontend work needs deterministic checks plus initial/full-page screenshots and changed-input-only agent review for displaced primary content, offscreen forms, unreadable colors, contradictory themes, clipping, overlap, broken media, stale deployments, or incomplete coverage.
+description: Run journey-aware browser verification of rendered web UI hierarchy, immediate interaction continuation, WCAG text contrast, declared-theme balance, palette risks, geometry, scroll topology, responsive samples, and truthful route/state/viewport evidence. Use when frontend work needs deterministic checks plus initial/full-page screenshots and changed-input-only agent review for displaced primary content, offscreen forms, unreadable colors, contradictory themes, nested scrolling, clipping, overlap, broken media, stale deployments, or incomplete coverage.
 ---
 
 # Formal Web UI Verification
@@ -22,7 +22,10 @@ checks cover both self-overflow and cuts made by ancestor `overflow` clipping
 (absolute children, negative offsets, parent crops). By default it runs a
 full-page scroll pass before measuring so below-the-fold and lazy-loaded
 content is exercised. Every run inventories visible/active document and
-element scrollbars, records contrast it could not measure against a solid
+element scrollbars, records their same-axis containment chains, warns for every
+horizontal scrollbar and every second vertical layer, and blocks nested
+horizontal or third-and-deeper vertical layers. It also records contrast it
+could not measure against a solid
 background, traverses discoverable open shadow roots, evaluates every
 Playwright-reachable iframe, records any reachable context it could not inspect, and lists
 allowed ellipsis/line-clamp truncations, hidden text-like elements, and
@@ -256,6 +259,10 @@ Critical findings by default:
   `continuation-anchor-not-recognizable`, `continuation-focus-missing`,
   `continuation-document-jump`).
 - Document horizontal overflow (`document-horizontal-overflow`).
+- A horizontal scrollbar nested inside another active horizontal scroll path
+  (`nested-horizontal-scrollbars`).
+- A third or deeper active vertical scroll layer
+  (`triple-nested-vertical-scrollbars`).
 - Text/controls clipped by their own `overflow: hidden`/`clip`
   (`clipped-x`/`clipped-y`) without a scroll path or explicit allowance.
 - Rendered native input placeholders or selected option labels wider than the
@@ -297,9 +304,17 @@ Critical findings by default:
 
 Warnings by default:
 
-- Visible/active scrollbars are always reported in `metrics.visibleScrollbars`
-  and the Markdown `Visible Scrollbars` section; they are not failures by
-  themselves unless they also cause overflow, clipping, or area violations.
+- Every visible/active horizontal scrollbar raises `horizontal-scrollbar`, even
+  at same-axis depth one, because horizontal scrolling is exceptional. A
+  second horizontal layer is also the critical
+  `nested-horizontal-scrollbars` finding. A second vertical layer raises
+  `double-nested-vertical-scrollbars`; the third and every deeper vertical
+  layer is critical. The document scrollbar counts as a layer, differently
+  directed ancestors do not increase same-axis depth, and an explicit
+  `overflow-*: scroll` bar counts even when it has no current scroll range.
+  `metrics.visibleScrollbars` and the Markdown `Visible Scrollbars` section
+  retain each outer-to-inner chain as evidence. A lone vertical scrollbar
+  remains inventory-only.
 - Coverage gaps are always reported in the Markdown `Coverage & Unmeasurable`
   section: `metrics.unmeasurableContrast`, `metrics.notInspected`
   (discovered/inspected open-shadow and iframe counts plus reachable frame

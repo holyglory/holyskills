@@ -558,6 +558,32 @@ def page_metrics(report: dict) -> list[dict]:
     return [p.get("metrics", {}) for p in report.get("pages", []) if not p.get("skipped")]
 
 
+def visible_scrollbars(report: dict) -> list[dict]:
+    return [
+        item
+        for metrics in page_metrics(report)
+        for item in metrics.get("visibleScrollbars", [])
+    ]
+
+
+def require_scrollbar(report: dict, selector_suffix: str, axis: str, depth: int) -> dict:
+    matches = [
+        item
+        for item in visible_scrollbars(report)
+        if selector_suffix in item.get("selector", "") and item.get("axis") == axis
+    ]
+    if not matches:
+        raise AssertionError(
+            f"Expected {selector_suffix} {axis}-axis scrollbar, got {visible_scrollbars(report)}"
+        )
+    scrollbar = matches[0]
+    if scrollbar.get("sameAxisDepth") != depth or len(scrollbar.get("scrollChain", [])) != depth:
+        raise AssertionError(f"Expected same-axis depth {depth}, got {scrollbar}")
+    if selector_suffix not in scrollbar.get("scrollChain", [])[-1]:
+        raise AssertionError(f"Scroll chain must end at its reported scrollbar: {scrollbar}")
+    return scrollbar
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="fwv-"))
     server = None
@@ -638,6 +664,62 @@ def main() -> int:
             fixtures / "scrollbars.html",
             page("<div class='scrollbox'><p>One</p><p>Two</p><p>Three</p><p>Four</p></div>", ".scrollbox { width: 180px; height: 48px; overflow-y: scroll; overflow-x: hidden; border: 1px solid #aaa; }"),
         )
+        write(
+            fixtures / "horizontal-scrollbar.html",
+            page(
+                "<h1>Wide comparison</h1><div class='x-scroll'><div class='wide'>Account status and billing details</div></div>",
+                ".x-scroll { width: 240px; overflow-x: auto; border: 1px solid #aaa; } .wide { width: 640px; padding: 12px; white-space: nowrap; }",
+            ),
+        )
+        write(
+            fixtures / "forced-horizontal-scrollbar.html",
+            page(
+                "<h1>Forced scrollbar</h1><div class='forced-x'>Content already fits</div>",
+                ".forced-x { width: 240px; overflow-x: scroll; padding: 12px; border: 1px solid #aaa; }",
+            ),
+        )
+        write(
+            fixtures / "nested-horizontal-scrollbars.html",
+            page(
+                "<h1>Nested comparisons</h1><div class='outer-x'><div class='inner-x'><div class='wide'>A very wide comparison table</div></div></div>",
+                ".outer-x { width: 280px; overflow-x: auto; border: 1px solid #777; } .inner-x { width: 520px; overflow-x: auto; } .wide { width: 900px; padding: 12px; white-space: nowrap; }",
+            ),
+        )
+        write(
+            fixtures / "double-vertical-scrollbars.html",
+            page(
+                "<h1>Nested activity</h1><div class='outer-v'><div class='inner-v'><div class='inner-content' aria-hidden='true'></div></div><div class='outer-fill' aria-hidden='true'></div></div>",
+                ".outer-v { width: 280px; height: 280px; overflow-y: auto; border: 1px solid #777; } .inner-v { height: 150px; overflow-y: auto; } .inner-content { height: 520px; } .outer-fill { height: 320px; }",
+            ),
+        )
+        write(
+            fixtures / "triple-vertical-scrollbars.html",
+            page(
+                "<h1>Deeply nested activity</h1><div class='outer-v'><div class='middle-v'><div class='inner-v'><div class='inner-content' aria-hidden='true'></div></div><div class='middle-fill' aria-hidden='true'></div></div><div class='outer-fill' aria-hidden='true'></div></div>",
+                ".outer-v { width: 280px; height: 320px; overflow-y: auto; border: 1px solid #777; } .middle-v { height: 240px; overflow-y: auto; } .inner-v { height: 140px; overflow-y: auto; } .inner-content { height: 500px; } .middle-fill { height: 250px; } .outer-fill { height: 250px; }",
+            ),
+        )
+        write(
+            fixtures / "document-plus-vertical-panel.html",
+            page(
+                "<h1>Long activity page</h1><div class='panel-v'><div class='panel-content' aria-hidden='true'></div></div><div class='page-fill' aria-hidden='true'></div>",
+                ".panel-v { width: 280px; height: 160px; overflow-y: auto; border: 1px solid #777; } .panel-content { height: 480px; } .page-fill { height: 900px; }",
+            ),
+        )
+        write(
+            fixtures / "mixed-axis-scrollbars.html",
+            page(
+                "<h1>Mixed axes</h1><div class='outer-y'><div class='inner-x'><div class='wide'>Wide comparison content</div></div><div class='outer-fill' aria-hidden='true'></div></div>",
+                ".outer-y { width: 280px; height: 260px; overflow-y: auto; border: 1px solid #777; } .inner-x { width: 220px; overflow-x: auto; } .wide { width: 600px; padding: 12px; white-space: nowrap; } .outer-fill { height: 320px; }",
+            ),
+        )
+        write(
+            fixtures / "nonoverflowing-auto.html",
+            page(
+                "<h1>Fitting panel</h1><div class='fits-auto'>Content fits without scrolling</div>",
+                ".fits-auto { width: 240px; height: 80px; overflow: auto; padding: 12px; border: 1px solid #aaa; }",
+            ),
+        )
         # Fix 2: white text on a gradient must NOT be a critical invisible-text finding,
         # and must be recorded under metrics.unmeasurableContrast.
         write(
@@ -652,7 +734,10 @@ def main() -> int:
         # itself does not contain.
         write(
             fixtures / "iframe-child.html",
-            page("<button class='bad'>Framed action</button>", ".bad { width: 34px; overflow: hidden; white-space: nowrap; }"),
+            page(
+                "<button class='bad'>Framed action</button><div class='frame-x'><div class='frame-wide'>Framed comparison</div></div>",
+                ".bad { width: 34px; overflow: hidden; white-space: nowrap; } .frame-x { width: 120px; overflow-x: auto; } .frame-wide { width: 320px; white-space: nowrap; }",
+            ),
         )
         write(
             fixtures / "shadow-iframe.html",
@@ -1676,16 +1761,101 @@ document.querySelector('#open-add').addEventListener('click', () => {
         assert_no_critical(chart)
 
         scrollbars = run_verify(f"{server.base_url}/scrollbars.html", tmp / "scrollbars", expect=0)
-        reported_scrollbars = [
-            item
-            for page_report in scrollbars.get("pages", [])
-            for item in page_report.get("metrics", {}).get("visibleScrollbars", [])
-        ]
-        if not any(item.get("selector", "").endswith(".scrollbox") and item.get("axis") == "y" for item in reported_scrollbars):
-            raise AssertionError(f"Expected .scrollbox vertical scrollbar in report, got {reported_scrollbars}")
+        require_scrollbar(scrollbars, ".scrollbox", "y", 1)
+        assert_no_rule(scrollbars, "double-nested-vertical-scrollbars")
         markdown = (tmp / "scrollbars" / "report.md").read_text(encoding="utf-8")
-        if "## Visible Scrollbars" not in markdown or ".scrollbox" not in markdown:
-            raise AssertionError("Markdown report did not include visible scrollbar inventory")
+        if (
+            "## Visible Scrollbars" not in markdown
+            or "Same-axis depth" not in markdown
+            or "Scroll chain" not in markdown
+            or ".scrollbox" not in markdown
+        ):
+            raise AssertionError("Markdown report did not include scroll-depth evidence")
+
+        # Scroll topology must-catches: every horizontal path warns, same-axis
+        # horizontal depth two blocks, vertical depth two warns, and vertical
+        # depth three blocks.
+        horizontal = run_verify(
+            f"{server.base_url}/horizontal-scrollbar.html",
+            tmp / "horizontal-scrollbar",
+            expect=0,
+        )
+        assert_warning_rule(horizontal, "horizontal-scrollbar")
+        assert_no_rule(horizontal, "nested-horizontal-scrollbars")
+        require_scrollbar(horizontal, ".x-scroll", "x", 1)
+
+        forced_horizontal = run_verify(
+            f"{server.base_url}/forced-horizontal-scrollbar.html",
+            tmp / "forced-horizontal-scrollbar",
+            expect=0,
+        )
+        assert_warning_rule(forced_horizontal, "horizontal-scrollbar")
+        forced_entry = require_scrollbar(forced_horizontal, ".forced-x", "x", 1)
+        if forced_entry.get("scrollWidth", 0) > forced_entry.get("clientWidth", 0) + 2:
+            raise AssertionError(f"Forced-scroll fixture unexpectedly had a content overflow range: {forced_entry}")
+
+        nested_horizontal = run_verify(
+            f"{server.base_url}/nested-horizontal-scrollbars.html",
+            tmp / "nested-horizontal-scrollbars",
+            expect=1,
+        )
+        assert_warning_rule(nested_horizontal, "horizontal-scrollbar")
+        assert_critical_rule(nested_horizontal, "nested-horizontal-scrollbars")
+        require_scrollbar(nested_horizontal, ".outer-x", "x", 1)
+        require_scrollbar(nested_horizontal, ".inner-x", "x", 2)
+
+        double_vertical = run_verify(
+            f"{server.base_url}/double-vertical-scrollbars.html",
+            tmp / "double-vertical-scrollbars",
+            expect=0,
+        )
+        assert_warning_rule(double_vertical, "double-nested-vertical-scrollbars")
+        assert_no_rule(double_vertical, "triple-nested-vertical-scrollbars")
+        require_scrollbar(double_vertical, ".outer-v", "y", 1)
+        require_scrollbar(double_vertical, ".inner-v", "y", 2)
+
+        triple_vertical = run_verify(
+            f"{server.base_url}/triple-vertical-scrollbars.html",
+            tmp / "triple-vertical-scrollbars",
+            expect=1,
+        )
+        assert_warning_rule(triple_vertical, "double-nested-vertical-scrollbars")
+        assert_critical_rule(triple_vertical, "triple-nested-vertical-scrollbars")
+        require_scrollbar(triple_vertical, ".middle-v", "y", 2)
+        require_scrollbar(triple_vertical, ".inner-v", "y", 3)
+
+        document_panel = run_verify(
+            f"{server.base_url}/document-plus-vertical-panel.html",
+            tmp / "document-plus-vertical-panel",
+            expect=0,
+        )
+        assert_warning_rule(document_panel, "double-nested-vertical-scrollbars")
+        panel_entry = require_scrollbar(document_panel, ".panel-v", "y", 2)
+        if panel_entry.get("scrollChain", [None])[0] != "document.scrollingElement":
+            raise AssertionError(f"Document scrollbar must count as the outer layer: {panel_entry}")
+
+        # Precision guards: unlike axes do not nest, and overflow:auto without
+        # an actual scroll range does not invent a scrollbar.
+        mixed_axes = run_verify(
+            f"{server.base_url}/mixed-axis-scrollbars.html",
+            tmp / "mixed-axis-scrollbars",
+            expect=0,
+        )
+        assert_warning_rule(mixed_axes, "horizontal-scrollbar")
+        assert_no_rule(mixed_axes, "nested-horizontal-scrollbars")
+        assert_no_rule(mixed_axes, "double-nested-vertical-scrollbars")
+        assert_no_rule(mixed_axes, "triple-nested-vertical-scrollbars")
+        require_scrollbar(mixed_axes, ".outer-y", "y", 1)
+        require_scrollbar(mixed_axes, ".inner-x", "x", 1)
+
+        nonoverflowing_auto = run_verify(
+            f"{server.base_url}/nonoverflowing-auto.html",
+            tmp / "nonoverflowing-auto",
+            expect=0,
+        )
+        assert_no_rule(nonoverflowing_auto, "horizontal-scrollbar")
+        if any(item.get("selector", "").endswith(".fits-auto") for item in visible_scrollbars(nonoverflowing_auto)):
+            raise AssertionError("Non-overflowing auto container was incorrectly inventoried as a scrollbar")
 
         # Fix 2: gradient background must not yield an invisible-text critical and must be
         # recorded as unmeasurable contrast.
@@ -1706,6 +1876,24 @@ document.querySelector('#open-add').addEventListener('click', () => {
         clipped_contexts = [item for item in shadow.get("findings", []) if item.get("rule") == "clipped-x"]
         if len(clipped_contexts) < 2:
             raise AssertionError(f"Expected clipped controls from shadow root and iframe, got {clipped_contexts}")
+        framed_scrollbars = [
+            item
+            for item in visible_scrollbars(shadow)
+            if ".frame-x" in item.get("selector", "")
+        ]
+        if (
+            len(framed_scrollbars) != 1
+            or framed_scrollbars[0].get("sameAxisDepth") != 1
+            or not framed_scrollbars[0].get("scrollChain", [""])[0].startswith("[frame ")
+        ):
+            raise AssertionError(f"Iframe horizontal scrollbar lost its prefixed depth evidence: {framed_scrollbars}")
+        framed_warnings = [
+            item
+            for item in shadow.get("findings", [])
+            if item.get("rule") == "horizontal-scrollbar" and item.get("selector", "").startswith("[frame ")
+        ]
+        if len(framed_warnings) != 1:
+            raise AssertionError(f"Iframe horizontal scrollbar did not produce one warning: {framed_warnings}")
         not_inspected_totals = [m.get("notInspected", {}) for m in page_metrics(shadow)]
         if any(ni.get("openShadowRoots", 0) for ni in not_inspected_totals):
             raise AssertionError(f"Reachable open shadow roots should be inspected, got {not_inspected_totals}")
