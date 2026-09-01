@@ -116,6 +116,130 @@ declares `continuation`.
   verifier records the user's current scroll position. It defaults to the last
   action.
 
+## Conditional Control Ownership
+
+A conditional action may declare both `ownerJourney` and `ownerState`:
+
+```json
+{
+  "action": "click",
+  "selector": "[data-action='advanced-target']",
+  "ownerJourney": "advanced-targeting",
+  "ownerState": "advanced-targeting-open"
+}
+```
+
+The named owner must resolve to exactly one configured state in the same target
+group, and that state's primary journey must match. Outside its owner, an absent
+or hidden control records an immediate zero-wait handoff. If it is visible
+outside the owner, the ownership contract is contradictory and fails. In the
+owner state, the normal action and continuation contracts apply. Do not label a
+control as conditionally owned merely to avoid a legitimate readiness wait.
+
+## Observable Readiness
+
+`waitFor` may combine these exact signals:
+
+- `selector`, optionally raced against `errorSelector`;
+- `responseUrl` or `url` (armed before the triggering action);
+- `loadState` or an explicit `networkIdleMs` deadline;
+- `readback: {url, status, jsonPath?, equals?, intervalMs?}`;
+- `renderFrames: 1|2`;
+- compatibility `settleMs` only from 0 through 100 ms.
+
+`timeoutMs`, `loadStateTimeoutMs`, and `networkIdleMs` are event failure
+ceilings and may exceed 100 ms. `settleMs`, `pollIntervalMs`, and readback
+`intervalMs` are deliberate intervals and may never exceed 100 ms. An empty
+wait contract advances after two animation frames rather than an arbitrary
+sleep. `afterFailureWaitFor` may collect one bounded downstream observation
+after an ordinary interaction failure.
+
+## Safe Complete Execution
+
+Top-level `execution.maxConcurrency` is 4 by default. Each target/state may
+declare:
+
+```json
+{
+  "execution": {
+    "parallelSafe": true,
+    "resourceLocks": ["fixture-account-42"],
+    "priority": 50000,
+    "stopOnFailure": true,
+    "stopReason": "A failed mutation can invalidate shared fixture state"
+  }
+}
+```
+
+Undeclared work is exclusive. Parallel-safe cells may overlap only when their
+resource locks do not conflict. A fresh browser context isolates each cell, but
+does not prove that shared server data is isolated. Results retain declared
+plan order plus separate execution indices. Explicit priority overrides the
+default risk-plus-frequency score and changes start order only.
+
+Use `stopOnFailure` only when a failure can corrupt shared state or invalidate
+later evidence, and always provide `stopReason`. It is not a fail-fast shortcut:
+undeclared ordinary failures continue. A declared unsafe failure names every
+remaining unexecuted cell.
+
+Ordinary navigation, interaction, focus, assertion, page, or locale failures
+become cell results while later safe cells continue. Cleanup runs for every
+created context. Loss of browser authority is an unsafe stop: remaining cells
+are recorded as unexecuted rather than silently omitted.
+
+## In-Memory Authentication Profiles
+
+```json
+{
+  "authProfiles": [{
+    "name": "admin",
+    "url": "http://127.0.0.1:3000/sign-in",
+    "actions": [
+      {"action": "fill", "selector": "#password", "value": "secret supplied by caller"},
+      {"action": "click", "selector": "#sign-in"}
+    ],
+    "waitFor": {"responseUrl": "**/session", "selector": "[data-auth-ready]"}
+  }],
+  "targets": [{"url": "http://127.0.0.1:3000/admin", "authProfile": "admin"}]
+}
+```
+
+Each profile bootstraps once. Its Playwright storage state remains in memory and
+seeds a fresh context for every bound cell. Profile failure affects only bound
+cells. Action values and storage contents never enter config evidence, reports,
+logs, progress, or cache entries.
+
+## Development Selection And Cache
+
+Fast affected-cell runs are explicit development evidence:
+
+```json
+{
+  "development": {
+    "changedPaths": ["src/accounts/AccountList.tsx"],
+    "cache": {
+      "directory": "/explicit/external/formal-ui-cache",
+      "dataRevision": "fixture-snapshot-2026-09-01",
+      "mode": "read-write"
+    }
+  }
+}
+```
+
+Changed paths are repository-relative and match declared `reviewInputs`. All
+states and viewports for an affected target group are selected. Any unmapped
+path expands to the full plan instead of risking a false subset. The full
+declared plan still must fit `maxPageCount` before selection.
+
+The cache directory must already exist, be absolute, external to `repoRoot`,
+and contain no symlinked path components. Cache reuse additionally requires an
+expected source binding and valid review-input fingerprint. Keys bind verifier,
+browser, privacy-safe config, secret-value digest, source, intent, data
+revision, route, state, and viewport. Only successful cells with matched source
+identity and complete masked screenshot evidence are written atomically.
+Corrupt or symlinked entries are rejected and rerun. The cache is never a
+hidden baseline and never makes a run readiness-eligible.
+
 ## Theme And Palette Rules
 
 - Every target/state declares `light`, `dark`, or `mixed` theme intent.

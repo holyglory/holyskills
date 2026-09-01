@@ -151,8 +151,13 @@ def check_standalone_skill(skill: Path) -> None:
             extra_env = {
                 "FORMAL_WEB_UI_PLAYWRIGHT_NODE_MODULES": str(playwright_modules.resolve()),
             }
+        standalone_script = (
+            copied / "scripts" / "standalone_smoke.py"
+            if skill.name == "formal-web-ui-verification"
+            else copied / "scripts" / "self_test.py"
+        )
         run(
-            [sys.executable, str(copied / "scripts" / "self_test.py")],
+            [sys.executable, str(standalone_script)],
             extra_env=extra_env,
         )
     finally:

@@ -287,7 +287,9 @@ freshness and
 dependency-boundary and self-hosted-CI detector recall, vendored-harness synchronization,
 skill-link and global-policy transaction/rollback behavior, public-artifact policy, interaction-label
 parity, all six in-repository self-tests, Python compilation, and all six
-standalone copied skill tests. CI installs a locked
+standalone copied-package checks. The formal verifier runs its complete browser
+matrix once in-repository and a focused clean/finding browser smoke from its
+copied package; other skills retain their complete standalone self-tests. CI installs a locked
 Playwright runtime solely because the remaining formal web verifier requires a
 real Chromium run.
 

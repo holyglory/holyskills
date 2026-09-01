@@ -139,11 +139,15 @@ class RedirectToSignInHandler(BaseHTTPRequestHandler):
 
 class SourceBindingHandler(BaseHTTPRequestHandler):
     revision = "deployed-revision"
+    request_count = 0
+    lock = threading.Lock()
 
     def log_message(self, format: str, *args: object) -> None:
         return
 
     def do_GET(self) -> None:
+        with self.lock:
+            type(self).request_count += 1
         data = page("<h1>Bound deployment</h1><p>Current page content.</p>").encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -151,6 +155,90 @@ class SourceBindingHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+
+class AuthReuseHandler(BaseHTTPRequestHandler):
+    auth_calls = 0
+    observations: list[str] = []
+    lock = threading.Lock()
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def send_html(self, body: str, status: int = 200, *, cookie: str | None = None) -> None:
+        data = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("X-UI-Source-Revision", "auth-fixture-revision")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self) -> None:
+        route, _, query = self.path.partition("?")
+        if route == "/login":
+            self.send_html(page(
+                "<h1>Sign in once</h1><input id='password' type='password'><button id='login'>Sign in</button><div id='ready' hidden>Ready</div>"
+                "<script>"
+                "localStorage.setItem('auth-seed','ready');"
+                "document.querySelector('#login').onclick=()=>fetch('/authenticate').then(()=>{document.querySelector('#ready').hidden=false});"
+                "</script>"
+            ))
+            return
+        if route == "/authenticate":
+            with self.lock:
+                type(self).auth_calls += 1
+            self.send_html("ok", cookie="auth=ok; Path=/; SameSite=Lax")
+            return
+        if route == "/observe":
+            value = query.removeprefix("value=") or "missing"
+            with self.lock:
+                type(self).observations.append(value)
+            self.send_html("observed")
+            return
+        if route == "/protected":
+            if "auth=ok" not in (self.headers.get("Cookie") or ""):
+                self.send_html(page("<h1>Unauthorized</h1>"), status=401)
+                return
+            self.send_html(page(
+                "<h1>Protected dashboard</h1><div id='protected'>Authenticated</div><div id='ready' hidden>Ready</div>"
+                "<script>"
+                "const before=localStorage.getItem('cellMutation')||'clean';"
+                "fetch('/observe?value='+encodeURIComponent(before)).then(()=>{document.querySelector('#ready').hidden=false});"
+                "localStorage.setItem('cellMutation','dirty');"
+                "</script>"
+            ))
+            return
+        self.send_html(page("<h1>Not found</h1>"), status=404)
+
+
+class ConcurrencyHandler(BaseHTTPRequestHandler):
+    condition = threading.Condition()
+    arrivals = 0
+    active = 0
+    max_active = 0
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def do_GET(self) -> None:
+        with self.condition:
+            type(self).arrivals += 1
+            type(self).active += 1
+            type(self).max_active = max(type(self).max_active, type(self).active)
+            self.condition.notify_all()
+            self.condition.wait_for(lambda: type(self).arrivals >= 3, timeout=2)
+        data = page("<h1>Parallel cell</h1><p>Independent evidence.</p>").encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+        with self.condition:
+            type(self).active -= 1
+            self.condition.notify_all()
 
 
 class DynamicServer:
@@ -333,6 +421,16 @@ def assert_complete_artifacts(json_out: Path, markdown_out: Path, *, expect: int
     ):
         raise AssertionError(f"Verification artifacts omitted full report evidence: {json_out}")
     if expect != 2:
+        progress_path = Path(report.get("execution", {}).get("progressPath", ""))
+        if not progress_path.is_file():
+            raise AssertionError(f"Bounded progress artifact is missing: {progress_path}")
+        progress_rows = [json.loads(line) for line in progress_path.read_text(encoding="utf-8").splitlines()]
+        if (
+            not progress_rows
+            or progress_rows[0].get("kind") != "run-start"
+            or progress_rows[-1].get("kind") != "run-complete"
+        ):
+            raise AssertionError(f"Progress artifact does not bind the complete run: {progress_path}")
         queue_path = Path(report["review"]["queuePath"])
         if not queue_path.is_file() or hashlib.sha256(queue_path.read_bytes()).hexdigest() != report["review"]["queueSha256"]:
             raise AssertionError(f"Review queue is missing or not hash-bound: {queue_path}")
@@ -781,6 +879,23 @@ def main() -> int:
                 ".bad { width: 40px; overflow: hidden; white-space: nowrap; }",
             ),
         )
+        write(
+            fixtures / "conditional-ownership.html",
+            page(
+                "<h1>Conditional controls</h1>"
+                "<button id='show-special' onclick=\"document.getElementById('special').hidden=false\">Open specialist journey</button>"
+                "<button id='special' hidden onclick=\"document.getElementById('special-form').hidden=false;document.getElementById('special-name').focus()\">Special action</button>"
+                "<form id='special-form' data-ui-continuation-anchor hidden><label>Special name <input id='special-name'></label></form>",
+            ),
+        )
+        write(
+            fixtures / "event-readiness.html",
+            page(
+                "<h1>Event readiness</h1><button id='start'>Start</button><button id='slow'>Slow</button><button id='fail'>Fail</button><div id='ready' hidden>Ready</div><div id='error' hidden>Error</div>"
+                "<script>document.querySelector('#start').onclick=()=>{fetch('/readback.json');requestAnimationFrame(()=>requestAnimationFrame(()=>{document.querySelector('#ready').hidden=false}))};document.querySelector('#slow').onclick=()=>setTimeout(()=>{document.querySelector('#ready').hidden=false},180);document.querySelector('#fail').onclick=()=>{document.querySelector('#error').hidden=false}</script>",
+            ),
+        )
+        write(fixtures / "readback.json", '{"ready":true}\n')
         # Fix 1: a tall lazy-load page whose below-the-fold control is only created when
         # it scrolls into view. With scrolling on it is found (and its clip is critical);
         # with --no-scroll it is never created.
@@ -1254,6 +1369,62 @@ document.querySelector('#open-add').addEventListener('click', () => {
             ),
         )
         server = Server(fixtures)
+        unsafe_progress = tmp / "unsafe-scheduler-progress.jsonl"
+        scheduler_probe = f"""
+import {{ executePlan }} from {json.dumps(VERIFY.as_uri())};
+const cells = [0, 1, 2].map((planIndex) => ({{
+  cellId: `cell-${{planIndex + 1}}`,
+  planIndex,
+  executionPriority: 10 - planIndex,
+  target: {{
+    name: `unsafe-${{planIndex + 1}}`,
+    url: 'http://127.0.0.1/unsafe',
+    stateName: 'base',
+    execution: {{ parallelSafe: false, resourceLocks: [], priority: null }},
+    reviewEvidence: null,
+    intentFingerprint: null,
+  }},
+  viewport: {{ name: 'desktop', width: 1280, height: 800, contextOptions: {{}} }},
+}}));
+const runner = async (_browser, cell, _config, _label, _auth, _cache, executionIndex) => ({{
+  page: {{
+    cellId: cell.cellId,
+    target: cell.target,
+    viewport: cell.viewport,
+    outcome: 'internal_cell_error',
+    skipped: true,
+    skipReason: 'browser authority lost',
+    durationMs: 1,
+    cache: {{ hit: false }},
+    cleanup: {{ status: 'completed' }},
+    execution: {{ planIndex: cell.planIndex, executionIndex }},
+  }},
+  unsafeStop: 'browser-authority-lost',
+}});
+const result = await executePlan(
+  {{}},
+  cells,
+  {{ execution: {{ maxConcurrency: 2 }}, progressOut: {json.dumps(str(unsafe_progress))} }},
+  'fixture-browser',
+  new Map(),
+  null,
+  runner,
+);
+if (result.pages.length !== 3 || result.pages.slice(1).some((page) => page.outcome !== 'unsafe_stop_unexecuted')) process.exit(7);
+if (result.executionCount !== 1 || result.unsafeStop !== 'browser-authority-lost') process.exit(8);
+"""
+        scheduler_result = subprocess.run(
+            [node_binary(), "--input-type=module", "--eval", scheduler_probe],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=TIMEOUT_SECONDS,
+            env=verifier_env(),
+        )
+        if scheduler_result.returncode != 0:
+            raise AssertionError(
+                f"Unsafe-stop scheduler probe failed: {scheduler_result.stdout} {scheduler_result.stderr}"
+            )
         clean_contract_config = tmp / "clean-contract.json"
         clean_contract_config.write_text(
             json.dumps(
@@ -1501,6 +1672,91 @@ document.querySelector('#open-add').addEventListener('click', () => {
             if "## Evidence Identity" not in binding_markdown or "Requested path" not in binding_markdown:
                 raise AssertionError("Markdown report omitted evidence identity or exact path cells")
 
+            cache_root = tmp / "formal-cell-cache"
+            cache_root.mkdir()
+            cached_config = {
+                **binding_config,
+                "development": {
+                    "cache": {
+                        "directory": str(cache_root),
+                        "dataRevision": "fixture-data-v1",
+                    }
+                },
+            }
+            before_cache_requests = SourceBindingHandler.request_count
+            cache_first = run_verify_config(cached_config, tmp / "cache-first", expect=0)
+            first_cache = cache_first.get("pages", [{}])[0].get("cache", {})
+            if not first_cache.get("write", {}).get("written") or cache_first.get("coverage", {}).get("readinessEligible"):
+                raise AssertionError(f"First development cache run did not write an ineligible exact entry: {first_cache}")
+            after_first_requests = SourceBindingHandler.request_count
+            cache_second = run_verify_config(cached_config, tmp / "cache-second", expect=0)
+            second_cache = cache_second.get("pages", [{}])[0].get("cache", {})
+            if not second_cache.get("hit") or SourceBindingHandler.request_count != after_first_requests:
+                raise AssertionError(f"Exact cache hit still navigated or was not reused: {second_cache}")
+            if after_first_requests <= before_cache_requests:
+                raise AssertionError("First cache run did not execute the real browser cell")
+            if not cache_second.get("pages", [{}])[0].get("screenshots", {}).get("fullPage", {}).get("path"):
+                raise AssertionError("Cache hit did not restore full screenshot evidence")
+
+            cache_key = second_cache.get("key")
+            manifest = cache_root / "v1" / cache_key[:2] / cache_key / "manifest.json"
+            manifest.write_text("{\"corrupt\":true}\n", encoding="utf-8")
+            requests_before_corrupt = SourceBindingHandler.request_count
+            cache_corrupt = run_verify_config(cached_config, tmp / "cache-corrupt", expect=0)
+            corrupt_cache = cache_corrupt.get("pages", [{}])[0].get("cache", {})
+            if corrupt_cache.get("hit") or SourceBindingHandler.request_count <= requests_before_corrupt:
+                raise AssertionError(f"Corrupt cache entry was reused: {corrupt_cache}")
+            if not str(corrupt_cache.get("reason", "")).startswith("rejected:"):
+                raise AssertionError(f"Corrupt cache rejection was not explicit: {corrupt_cache}")
+
+            changed_data = {
+                **cached_config,
+                "development": {
+                    "cache": {
+                        "directory": str(cache_root),
+                        "dataRevision": "fixture-data-v2",
+                    }
+                },
+            }
+            changed_data_report = run_verify_config(changed_data, tmp / "cache-data-changed", expect=0)
+            if changed_data_report.get("pages", [{}])[0].get("cache", {}).get("hit"):
+                raise AssertionError("Changed fixture/data revision reused a stale cache cell")
+
+            changed_viewport = {
+                **cached_config,
+                "viewports": [{"name": "different", "width": 1024, "height": 700}],
+            }
+            changed_viewport_report = run_verify_config(
+                changed_viewport,
+                tmp / "cache-viewport-changed",
+                expect=0,
+            )
+            if changed_viewport_report.get("pages", [{}])[0].get("cache", {}).get("hit"):
+                raise AssertionError("Changed viewport reused a stale cache cell")
+
+            symlink_cache_root = tmp / "formal-cell-cache-symlink"
+            symlink_cache_root.mkdir()
+            symlink_config = {
+                **binding_config,
+                "development": {
+                    "cache": {
+                        "directory": str(symlink_cache_root),
+                        "dataRevision": "fixture-data-v1",
+                    }
+                },
+            }
+            symlink_first = run_verify_config(symlink_config, tmp / "cache-symlink-first", expect=0)
+            symlink_key = symlink_first.get("pages", [{}])[0].get("cache", {}).get("write", {}).get("key")
+            symlink_manifest = symlink_cache_root / "v1" / symlink_key[:2] / symlink_key / "manifest.json"
+            outside_manifest = tmp / "outside-cache-manifest.json"
+            outside_manifest.write_text("{}\n", encoding="utf-8")
+            symlink_manifest.unlink()
+            symlink_manifest.symlink_to(outside_manifest)
+            symlink_second = run_verify_config(symlink_config, tmp / "cache-symlink-second", expect=0)
+            symlink_result = symlink_second.get("pages", [{}])[0].get("cache", {})
+            if symlink_result.get("hit") or "symlink" not in symlink_result.get("reason", ""):
+                raise AssertionError(f"Symlinked cache evidence was not rejected: {symlink_result}")
+
             stale_config = {
                 **binding_config,
                 "targets": [{
@@ -1600,7 +1856,7 @@ document.querySelector('#open-add').addEventListener('click', () => {
             {
                 "targets": [{"url": f"{server.base_url}/clean.html"}],
                 "viewports": [{"name": "mobile", "width": 390, "height": 844}],
-                "waitFor": {"selector": "main", "networkIdleMs": 500, "settleMs": 25},
+                "waitFor": {"selector": "main", "networkIdleMs": 500, "settleMs": 100},
                 "rules": {"failOn": "critical"},
             },
             tmp / "wait-for-config",
@@ -1726,6 +1982,224 @@ document.querySelector('#open-add').addEventListener('click', () => {
             raise AssertionError("A failed required interaction state must fail the coverage gate")
         if "SECRET_ACTION_VALUE_MUST_NOT_LEAK" in json.dumps(failed_interaction_state):
             raise AssertionError("Failed interaction report leaked an action value")
+        failed_timings = failed_interaction_state.get("pages", [{}])[0].get("actionTimings", [])
+        if not failed_timings or failed_timings[0].get("durationMs", 1000) >= 500:
+            raise AssertionError(f"Unowned absent control incurred a locator timeout: {failed_timings}")
+
+        ownership = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/conditional-ownership.html",
+                    "includeBase": False,
+                    "journeys": [
+                        {"id": "general", "frequencyPercent": 95, "risk": "normal"},
+                        {"id": "special", "frequencyPercent": 5, "risk": "normal"},
+                    ],
+                    "primaryJourney": "general",
+                    "regions": [{"selector": "main", "role": "primary-content", "journey": "general"}],
+                    "states": [
+                        {
+                            "name": "general-conditional",
+                            "actions": [{
+                                "action": "click",
+                                "selector": "#special",
+                                "ownerJourney": "special",
+                                "ownerState": "specialized",
+                            }],
+                        },
+                        {
+                            "name": "specialized",
+                            "primaryJourney": "special",
+                            "priorityOverrideReason": "Specialized ownership fixture",
+                            "regions": [{"selector": "main", "role": "primary-content", "journey": "special"}],
+                            "actions": [
+                                {"action": "click", "selector": "#show-special"},
+                                {
+                                    "action": "click",
+                                    "selector": "#special",
+                                    "ownerJourney": "special",
+                                    "ownerState": "specialized",
+                                },
+                            ],
+                            "continuation": {
+                                "kind": "in-page",
+                                "anchor": "#special-form",
+                                "focusWithin": "#special-form",
+                                "triggerActionIndex": 1,
+                            },
+                        },
+                    ],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "conditional-ownership",
+            expect=0,
+        )
+        ownership_pages = {item.get("target", {}).get("stateName"): item for item in ownership.get("pages", [])}
+        general_handoffs = ownership_pages.get("general-conditional", {}).get("handoffs", [])
+        if len(general_handoffs) != 1 or general_handoffs[0].get("locatorWaitMs") != 0:
+            raise AssertionError(f"Owned absence did not hand off immediately: {general_handoffs}")
+        if ownership_pages.get("specialized", {}).get("outcome") != "checked":
+            raise AssertionError(f"Specialized owner journey did not execute: {ownership_pages}")
+
+        missing_owner = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/conditional-ownership.html",
+                    "includeBase": False,
+                    "states": [{
+                        "name": "general-conditional",
+                        "actions": [{
+                            "action": "click",
+                            "selector": "#special",
+                            "ownerJourney": "fixture-primary",
+                            "ownerState": "missing-owner-state",
+                        }],
+                    }],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "conditional-owner-missing",
+            expect=3,
+        )
+        if missing_owner.get("pages", [{}])[0].get("outcome") != "journey_contract_error":
+            raise AssertionError("A missing specialized owner state did not fail the journey contract")
+
+        event_readiness = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/event-readiness.html",
+                    "includeBase": False,
+                    "states": [{
+                        "name": "event-ready",
+                        "actions": [{"action": "click", "selector": "#start"}],
+                        "waitFor": {
+                            "selector": "#ready",
+                            "errorSelector": "#error",
+                            "responseUrl": "**/readback.json",
+                            "renderFrames": 2,
+                            "timeoutMs": 2000,
+                        },
+                    }],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "event-readiness",
+            expect=0,
+        )
+        wait_kinds = {
+            item.get("kind")
+            for item in event_readiness.get("pages", [{}])[0].get("waitEvidence", [])
+        }
+        if not {"response", "ready-or-error-dom", "render-frames"}.issubset(wait_kinds):
+            raise AssertionError(f"Exact interaction readiness evidence is incomplete: {wait_kinds}")
+
+        readiness_error = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/event-readiness.html",
+                    "includeBase": False,
+                    "states": [{
+                        "name": "event-error",
+                        "actions": [{"action": "click", "selector": "#fail"}],
+                        "waitFor": {
+                            "selector": "#ready",
+                            "errorSelector": "#error",
+                            "timeoutMs": 1000,
+                        },
+                    }],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "event-readiness-error",
+            expect=3,
+        )
+        if readiness_error.get("pages", [{}])[0].get("outcome") != "interaction_error":
+            raise AssertionError("Ready-or-error DOM race did not surface the error state")
+
+        missing_event = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/event-readiness.html",
+                    "includeBase": False,
+                    "states": [{
+                        "name": "event-missing",
+                        "actions": [{"action": "click", "selector": "#fail"}],
+                        "waitFor": {"selector": "#never-ready", "timeoutMs": 150},
+                    }],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "event-readiness-missing",
+            expect=3,
+        )
+        missing_duration = missing_event.get("pages", [{}])[0].get("durationMs", 0)
+        if missing_duration < 100 or missing_duration > 1000:
+            raise AssertionError(f"Missing event did not fail at its bounded outer deadline: {missing_duration} ms")
+
+        slow_event = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/event-readiness.html",
+                    "includeBase": False,
+                    "states": [{
+                        "name": "event-slow-valid",
+                        "actions": [{"action": "click", "selector": "#slow"}],
+                        "waitFor": {"selector": "#ready", "timeoutMs": 1000},
+                    }],
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "event-readiness-slow",
+            expect=0,
+        )
+        selector_waits = [
+            item.get("durationMs", 0)
+            for item in slow_event.get("pages", [{}])[0].get("waitEvidence", [])
+            if item.get("kind") == "selector"
+        ]
+        if not selector_waits or selector_waits[0] < 100 or selector_waits[0] >= 900:
+            raise AssertionError(f"Slow valid event did not return on arrival: {selector_waits}")
+
+        readback = run_verify_config(
+            {
+                "targets": [{
+                    "url": f"{server.base_url}/clean.html",
+                    "waitFor": {
+                        "readback": {
+                            "url": f"{server.base_url}/readback.json",
+                            "status": 200,
+                            "jsonPath": "ready",
+                            "equals": True,
+                            "intervalMs": 25,
+                        },
+                        "timeoutMs": 1000,
+                    },
+                }],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "server-readback",
+            expect=0,
+        )
+        if "server-readback" not in {
+            item.get("kind") for item in readback.get("pages", [{}])[0].get("waitEvidence", [])
+        }:
+            raise AssertionError("Server readback readiness was not recorded")
+
+        excessive_delay = run_verify_config(
+            {
+                "targets": [{"url": f"{server.base_url}/clean.html"}],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+                "waitFor": {"settleMs": 101},
+            },
+            tmp / "excessive-delay-rejected",
+            expect=2,
+        )
+        if "must not exceed 100 ms" not in excessive_delay.get("error", {}).get("message", ""):
+            raise AssertionError("A deliberate delay above 100 ms was accepted")
+        verifier_source = VERIFY.read_text(encoding="utf-8")
+        if "settleMs = 120" in verifier_source or "waitForTimeout(120" in verifier_source:
+            raise AssertionError("The verifier retained a deliberate delay above 100 ms")
 
         clipped_button = run_verify(f"{server.base_url}/clipped-button.html", tmp / "clipped-button", expect=1)
         assert_rules(clipped_button, "clipped-x")
@@ -2201,6 +2675,315 @@ document.querySelector('#open-add').addEventListener('click', () => {
                 raise AssertionError("Malformed cookie domain should preserve the validator message in the JSON artifact")
         finally:
             cookie_server.close()
+
+        AuthReuseHandler.auth_calls = 0
+        AuthReuseHandler.observations = []
+        auth_server = DynamicServer(AuthReuseHandler).start()
+        try:
+            auth_cache_root = tmp / "auth-evidence-cache"
+            auth_cache_root.mkdir()
+            auth_reuse = run_verify_config(
+                {
+                    "authProfiles": [{
+                        "name": "admin",
+                        "url": f"{auth_server.base_url}/login",
+                        "actions": [
+                            {
+                                "action": "fill",
+                                "selector": "#password",
+                                "value": "AUTH_SECRET_MUST_NOT_LEAK",
+                            },
+                            {"action": "click", "selector": "#login"},
+                        ],
+                        "waitFor": {
+                            "responseUrl": "**/authenticate",
+                            "selector": "#ready",
+                            "timeoutMs": 2000,
+                        },
+                    }],
+                    "targets": [{
+                        "url": f"{auth_server.base_url}/protected",
+                        "authProfile": "admin",
+                        "sourceBinding": {"expected": "auth-fixture-revision"},
+                        "waitFor": {"selector": "#ready", "timeoutMs": 2000},
+                        "execution": {"parallelSafe": True},
+                    }],
+                    "execution": {"maxConcurrency": 2},
+                    "development": {
+                        "cache": {
+                            "directory": str(auth_cache_root),
+                            "dataRevision": "auth-fixture-data-v1",
+                        }
+                    },
+                    "viewports": [
+                        {"name": "mobile", "width": 390, "height": 844},
+                        {"name": "desktop", "width": 1280, "height": 800},
+                    ],
+                },
+                tmp / "auth-profile-reuse",
+                expect=0,
+            )
+            if AuthReuseHandler.auth_calls != 1:
+                raise AssertionError(f"Authentication bootstrap ran {AuthReuseHandler.auth_calls} times instead of once")
+            if sorted(AuthReuseHandler.observations) != ["clean", "clean"]:
+                raise AssertionError(f"Fresh contexts leaked local storage across cells: {AuthReuseHandler.observations}")
+            auth_status = auth_reuse.get("authentication", [])
+            if len(auth_status) != 1 or auth_status[0].get("status") != "ready":
+                raise AssertionError(f"Authentication profile status is incomplete: {auth_status}")
+            if "AUTH_SECRET_MUST_NOT_LEAK" in json.dumps(auth_reuse):
+                raise AssertionError("Authentication action value leaked into formal artifacts")
+            if any(page_report.get("outcome") != "checked" for page_report in auth_reuse.get("pages", [])):
+                raise AssertionError("Authenticated cells did not complete")
+            auth_manifests = list(auth_cache_root.rglob("manifest.json"))
+            if len(auth_manifests) != 2:
+                raise AssertionError("Authenticated successful cells did not create exact cache evidence")
+            cached_auth_text = "\n".join(item.read_text(encoding="utf-8") for item in auth_manifests)
+            if "AUTH_SECRET_MUST_NOT_LEAK" in cached_auth_text or '"cookies"' in cached_auth_text or '"storageState"' in cached_auth_text:
+                raise AssertionError("Authentication or cookie state leaked into the development cache")
+
+            auth_isolation = run_verify_config(
+                {
+                    "authProfiles": [
+                        {
+                            "name": "admin",
+                            "url": f"{auth_server.base_url}/login",
+                            "actions": [{"action": "click", "selector": "#login"}],
+                            "waitFor": {"responseUrl": "**/authenticate", "selector": "#ready"},
+                        },
+                        {
+                            "name": "broken-role",
+                            "url": f"{auth_server.base_url}/login",
+                            "actions": [{"action": "click", "selector": "#missing-login-control"}],
+                        },
+                    ],
+                    "targets": [
+                        {
+                            "name": "good-role-target",
+                            "url": f"{auth_server.base_url}/protected",
+                            "authProfile": "admin",
+                            "waitFor": {"selector": "#ready"},
+                        },
+                        {
+                            "name": "bad-role-target",
+                            "url": f"{auth_server.base_url}/protected",
+                            "authProfile": "broken-role",
+                        },
+                    ],
+                    "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+                },
+                tmp / "auth-profile-isolation",
+                expect=3,
+            )
+            auth_pages = {
+                page_report.get("target", {}).get("name"): page_report
+                for page_report in auth_isolation.get("pages", [])
+            }
+            if auth_pages.get("good-role-target", {}).get("outcome") != "checked":
+                raise AssertionError("A failed auth profile blocked an unrelated ready profile")
+            if auth_pages.get("bad-role-target", {}).get("outcome") != "auth_setup_error":
+                raise AssertionError("Failed auth profile did not fail only its owned target")
+        finally:
+            auth_server.close()
+
+        ConcurrencyHandler.arrivals = 0
+        ConcurrencyHandler.active = 0
+        ConcurrencyHandler.max_active = 0
+        concurrency_server = DynamicServer(ConcurrencyHandler).start()
+        try:
+            parallel = run_verify_config(
+                {
+                    "targets": [
+                        {
+                            "name": f"parallel-{index}",
+                            "url": f"{concurrency_server.base_url}/parallel-{index}",
+                            "execution": {"parallelSafe": True},
+                        }
+                        for index in range(3)
+                    ],
+                    "execution": {"maxConcurrency": 3},
+                    "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+                },
+                tmp / "bounded-concurrency",
+                expect=0,
+            )
+            if ConcurrencyHandler.max_active < 3:
+                raise AssertionError(f"Independent cells did not overlap: max_active={ConcurrencyHandler.max_active}")
+            execution_indices = sorted(
+                page_report.get("execution", {}).get("executionIndex")
+                for page_report in parallel.get("pages", [])
+            )
+            if execution_indices != [1, 2, 3]:
+                raise AssertionError(f"Bounded scheduler execution indices are incomplete: {execution_indices}")
+        finally:
+            concurrency_server.close()
+
+        locked = run_verify_config(
+            {
+                "targets": [
+                    {
+                        "name": "locked-a",
+                        "url": f"{server.base_url}/clean.html",
+                        "execution": {"parallelSafe": True, "resourceLocks": ["shared-account"]},
+                    },
+                    {
+                        "name": "locked-b",
+                        "url": f"{server.base_url}/clean.html",
+                        "execution": {"parallelSafe": True, "resourceLocks": ["shared-account"]},
+                    },
+                ],
+                "execution": {"maxConcurrency": 2},
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "resource-locks",
+            expect=0,
+        )
+        locked_by_execution = sorted(
+            locked.get("pages", []),
+            key=lambda page_report: page_report.get("execution", {}).get("executionIndex", 0),
+        )
+        if locked_by_execution[1].get("startedAt", "") < locked_by_execution[0].get("endedAt", ""):
+            raise AssertionError("Conflicting resource locks overlapped")
+
+        priority = run_verify_config(
+            {
+                "targets": [
+                    {
+                        "name": "low-priority",
+                        "url": f"{server.base_url}/clean.html",
+                        "execution": {"priority": 1},
+                    },
+                    {
+                        "name": "high-priority",
+                        "url": f"{server.base_url}/clean.html",
+                        "execution": {"priority": 100},
+                    },
+                ],
+                "execution": {"maxConcurrency": 1},
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "priority-order",
+            expect=0,
+        )
+        if [page_report.get("target", {}).get("name") for page_report in priority.get("pages", [])] != [
+            "low-priority", "high-priority"
+        ]:
+            raise AssertionError("Final report order did not preserve the declared plan")
+        priority_execution = {
+            page_report.get("target", {}).get("name"): page_report.get("execution", {}).get("executionIndex")
+            for page_report in priority.get("pages", [])
+        }
+        if priority_execution != {"low-priority": 2, "high-priority": 1}:
+            raise AssertionError(f"High-value cell did not execute first: {priority_execution}")
+        progress_rows = [
+            json.loads(line)
+            for line in (tmp / "priority-order" / "progress.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        if progress_rows[1].get("targetName") != "high-priority":
+            raise AssertionError("Bounded progress evidence did not expose the first high-priority result")
+
+        locale_targets = []
+        for locale_index in range(1, 8):
+            target: dict = {
+                "name": f"locale-{locale_index}",
+                "url": f"{server.base_url}/clean.html",
+            }
+            if locale_index == 2:
+                target.update({
+                    "url": f"{server.base_url}/event-readiness.html",
+                    "includeBase": False,
+                    "states": [{
+                        "name": "focus-check",
+                        "actions": [
+                            {"action": "click", "selector": "#start"},
+                            {"action": "focus", "selector": "#missing-locale-focus"},
+                        ],
+                        "afterFailureWaitFor": {"selector": "#ready", "timeoutMs": 1000},
+                    }],
+                })
+            locale_targets.append(target)
+        complete_after_failure = run_verify_config(
+            {
+                "targets": locale_targets,
+                "execution": {"maxConcurrency": 1},
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "complete-after-failure",
+            expect=3,
+        )
+        locale_pages = complete_after_failure.get("pages", [])
+        if len(locale_pages) != 7:
+            raise AssertionError(f"Ordinary locale failure stopped the safe remainder: {len(locale_pages)} cells")
+        if locale_pages[1].get("outcome") != "interaction_error":
+            raise AssertionError("Injected locale-two focus failure was not recorded")
+        after_failure = locale_pages[1].get("interactionFailure", {}).get("afterFailureObservation", {})
+        if not after_failure.get("checked"):
+            raise AssertionError(f"Useful downstream observation was not retained: {after_failure}")
+        if any(page_report.get("outcome") != "checked" for page_report in locale_pages[2:]):
+            raise AssertionError("Later locales did not continue after the ordinary failure")
+        if any(page_report.get("cleanup", {}).get("status") != "completed" for page_report in locale_pages):
+            raise AssertionError("Every executed locale must complete isolated-context cleanup")
+        if len(complete_after_failure.get("coverage", {}).get("failures", [])) != 1:
+            raise AssertionError("Ordinary failures were not returned as one combined failure list")
+
+        unsafe_targets = json.loads(json.dumps(locale_targets))
+        unsafe_targets[1]["execution"] = {
+            "stopOnFailure": True,
+            "stopReason": "Injected shared fixture corruption",
+        }
+        unsafe_stop = run_verify_config(
+            {
+                "targets": unsafe_targets,
+                "execution": {"maxConcurrency": 1},
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+            },
+            tmp / "declared-unsafe-stop",
+            expect=3,
+        )
+        unsafe_pages = unsafe_stop.get("pages", [])
+        if len(unsafe_pages) != 7 or unsafe_stop.get("execution", {}).get("executedCount") != 2:
+            raise AssertionError("Declared unsafe stop did not retain the full planned-cell account")
+        if any(page_report.get("outcome") != "unsafe_stop_unexecuted" for page_report in unsafe_pages[2:]):
+            raise AssertionError("Cells after a declared unsafe failure were not explicitly marked unexecuted")
+        if "Injected shared fixture corruption" not in (unsafe_stop.get("execution", {}).get("unsafeStop") or ""):
+            raise AssertionError("Unsafe-stop report omitted the declared shared-state reason")
+
+        change_repo = tmp / "change-aware-repo"
+        write(change_repo / "ui" / "a.css", ".a { color: #111; }\n")
+        write(change_repo / "ui" / "b.css", ".b { color: #111; }\n")
+        change_config = {
+            "repoRoot": str(change_repo),
+            "targets": [
+                {
+                    "name": "route-a",
+                    "url": f"{server.base_url}/clean.html",
+                    "reviewInputs": [{"path": "ui/a.css", "kind": "style"}],
+                },
+                {
+                    "name": "route-b",
+                    "url": f"{server.base_url}/clean.html",
+                    "reviewInputs": [{"path": "ui/b.css", "kind": "style"}],
+                },
+            ],
+            "development": {"changedPaths": ["ui/a.css"]},
+            "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+        }
+        changed_subset = run_verify_config(change_config, tmp / "changed-subset", expect=0)
+        if [page_report.get("target", {}).get("name") for page_report in changed_subset.get("pages", [])] != ["route-a"]:
+            raise AssertionError("Changed-input selection did not isolate the mapped target")
+        selection = changed_subset.get("plan", {}).get("selection", {})
+        if selection.get("fullPlanCount") != 2 or selection.get("selectedCount") != 1:
+            raise AssertionError(f"Development selection counts are incomplete: {selection}")
+        if changed_subset.get("coverage", {}).get("readinessEligible"):
+            raise AssertionError("A changed-cell subset was presented as readiness evidence")
+
+        unmapped_config = {
+            **change_config,
+            "development": {"changedPaths": ["unmapped/shared.css"]},
+        }
+        unmapped = run_verify_config(unmapped_config, tmp / "changed-unmapped", expect=0)
+        unmapped_selection = unmapped.get("plan", {}).get("selection", {})
+        if len(unmapped.get("pages", [])) != 2 or not unmapped_selection.get("fallbackToFull"):
+            raise AssertionError(f"Unmapped change did not safely expand to the full plan: {unmapped_selection}")
 
         # --ignore-https-errors: a self-signed TLS target must be verifiable.
         tls_server = make_tls_server(tmp)

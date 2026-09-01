@@ -30,6 +30,14 @@ page. `review-queue.json` contains only cells whose mapped UI inputs or
 journey/theme intent changed, or whose route/state/viewport is new. Screenshot
 hashes prove artifact integrity and never trigger review.
 
+The verifier also supports fast, safe-complete execution: exact event/readback
+waits, zero-wait handoff for conditionally owned controls, bounded concurrency
+with resource locks, journey-priority ordering, one in-memory authentication
+bootstrap per role, changed-input development selection, and an explicit
+content-addressed development cache. Ordinary failures do not stop later safe
+cells. Subsets and cache hits are always marked ineligible for readiness; final
+delivery still requires a fresh complete run.
+
 Run the self-test before relying on it:
 
 ```bash
@@ -79,6 +87,7 @@ binding are configured together:
     "sourceBinding": {"expected": "git:abc123"}
   }],
   "viewports": [{"name": "desktop", "width": 1440, "height": 900}],
+  "execution": {"maxConcurrency": 4},
   "maxPageCount": 12
 }
 ```
@@ -92,7 +101,7 @@ expected source value.
 
 The default invocation creates a unique external artifact directory (normally
 under the system temporary root), writes complete `report.json` and `report.md`
-files, `review-queue.json`, and screenshot pairs, then prints one bounded JSON
+files, `review-queue.json`, bounded `progress.jsonl`, and screenshot pairs, then prints one bounded JSON
 receipt with the exit code, coverage, counts, directory, and filenames. Use
 `--json-out` and `--markdown-out` to select known artifact paths; supplying one
 derives the other. Setup/configuration failures use the same bounded receipt and
@@ -102,6 +111,12 @@ effective-config SHA-256 hashes, requested and final paths, every exact
 route/state/viewport cell, sampled-only width coverage, and per-cell
 deployment/source binding status. A sign-in redirect or stale bound deployment
 does not count as checked coverage.
+
+Advanced execution, ownership, authentication, changed-selection, cache, and
+readiness schemas are documented in
+`references/journey_review_contract.md`. Development cache storage is disabled
+by default, must use an explicitly supplied existing external directory and
+data revision, and never contains cookies or authentication storage state.
 
 Full Markdown stdout is available only through the explicit human-terminal
 compatibility flag `--human-readable-stdout`. Do not use that flag for agent

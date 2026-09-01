@@ -53,6 +53,16 @@ def main() -> int:
             )
             check(explicit_environment, "explicit validation dependency environment was not forwarded")
 
+            validate_source = SCRIPT.read_text(encoding="utf-8")
+            check(
+                'copied / "scripts" / "standalone_smoke.py"' in validate_source,
+                "formal standalone validation must use the focused copied-package smoke",
+            )
+            check(
+                'run([sys.executable, str(skill.relative_to(ROOT) / "scripts" / "self_test.py")])' in validate_source,
+                "canonical validation must retain each complete skill self-test",
+            )
+
             parity_root = Path(raw) / "parity"
             parity_files = {
                 "skills/formal-web-ui-verification/SKILL.md": "review-queue.json formal_web_ui_review.py secondary-workflow-precedes-primary declared-theme-contradiction",

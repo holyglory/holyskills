@@ -46,6 +46,15 @@ a visible focused continuation without a document jump. Bare URL targets fail
 coverage because geometry without product intent cannot prove that the right
 content owns the page.
 
+The execution plan is safe-complete rather than fail-fast. Ordinary cell
+failures are collected while later independent work continues; browser-authority
+or evidence-safety loss is the explicit stop boundary. Optional bounded
+concurrency, journey priority, in-memory authentication profiles, changed-input
+development selection, and an exact caller-owned evidence cache improve speed
+without weakening the fresh complete run required for readiness. Read
+[references/journey_review_contract.md](references/journey_review_contract.md)
+before using these advanced contracts.
+
 Each checked cell automatically emits a redacted initial-viewport screenshot
 and full-page screenshot plus a changed visual-review queue. Screenshot hashes
 prove integrity only. Manual review repeats only for new cells or changed
@@ -91,7 +100,8 @@ node "$FORMAL_WEB_UI_SKILL_DIR/scripts/formal_web_ui_verify.mjs" \
 Artifact-first output is the software-owned default. With no output paths, the
 verifier creates a unique directory under a safe external runtime root
 (normally the system temporary directory) outside the current audited worktree,
-writes complete `report.json`, `report.md`, `review-queue.json`, and redacted
+writes complete `report.json`, `report.md`, `review-queue.json`, bounded
+`progress.jsonl`, and redacted
 initial/full-page screenshot artifacts, and emits one bounded JSON receipt
 naming them. Exit codes `0`/`1`/`2`/`3` are preserved. `--json-out` and
 `--markdown-out` override those paths when a caller needs a known cold artifact
@@ -117,6 +127,9 @@ to the target URL) to verify pages behind a session cookie, and
 untrusted certificate (local HTTPS dev servers). Both are also accepted in the
 JSON config as `cookies` (strings or `{name, value, url?, domain?, path?}`)
 and `ignoreHttpsErrors`.
+For repeated role setup, declare an `authProfiles` bootstrap and bind targets by
+name. The resulting Playwright storage state exists only in memory for that run;
+it is never written to reports, logs, source, or cache entries.
 
 Exit codes are stable: `0` checked with no blocking findings, `1` blocking UI
 findings, `2` setup/configuration failure, and `3` required-target coverage
@@ -165,6 +178,14 @@ skill; callers can always provide explicit `--url` targets instead.
      Action failures fail the target-coverage gate; arbitrary injected JavaScript
      is deliberately unsupported. Values used by actions are omitted from the
      public report.
+   - A conditional action may name `ownerJourney` and `ownerState`. Outside that
+     owner, an absent or hidden control hands off immediately to the exact
+     planned owner cell. Visible contradictions, missing/duplicate owners, and
+     failed owner cells fail coverage.
+   - Readiness waits use observable events: response, URL/navigation, selector
+     or ready/error selector race, server readback, load state, or one/two render
+     frames. Longer timeouts are failure ceilings. Deliberate delays and polling
+     intervals above 100 ms are rejected.
    - A target may declare `breakpointProfile` with `breakpoints`, `height`, and
      optional `name`/`baseViewport`. Each breakpoint adds exactly width−1,
      width, and width+1 for that target. Equivalent configured/profile cells
@@ -174,6 +195,19 @@ skill; callers can always provide explicit `--url` targets instead.
    - Treat every viewport result as sampled-only evidence. The JSON and
      Markdown reports list the exact widths checked and explicitly state that
      widths between samples were not inspected.
+   - `execution.maxConcurrency` bounds the worker pool. Only targets/states with
+     explicit `parallelSafe: true` may overlap; shared `resourceLocks` serialize
+     conflicts and undeclared work remains exclusive. Risk, frequency, and an
+     optional explicit priority affect start order only, never coverage or final
+     report order.
+   - `development.changedPaths` selects mapped target groups for a fast feedback
+     run. Any unmapped path expands safely to the full plan. Every development
+     run is marked ineligible for readiness even when it executes all cells.
+   - An optional development cache requires an explicit existing external
+     directory, `dataRevision`, source binding, and declared review inputs. It
+     stores only privacy-safe page evidence plus masked screenshot pairs under
+     an exact content key. It never stores auth state, never discovers a hidden
+     latest entry, and never replaces a fresh complete readiness run.
    - The verifier scrolls the full page top-to-bottom before measuring so
      below-the-fold and lazy-loaded content is exercised; how far it scrolled is
      reported in `metrics.scroll`. Pass `--no-scroll` (or `"scroll": false` in a
@@ -221,11 +255,15 @@ skill; callers can always provide explicit `--url` targets instead.
      parent-agent result.
      Return only the outcome, exit code, checked/skipped page counts, critical
      and warning counts, coverage status, and artifact paths.
+   - Keep `progress.jsonl` as bounded cold evidence while the safe-complete pass
+     runs. It records plan/execution indices, outcome, timing, cache, and cleanup
+     only; it never streams action, cookie, auth, or control values.
    - The complete reports bind evidence to run/per-cell start and end times,
      verifier SHA-256, a privacy-safe normalized effective-config SHA-256,
      requested/final paths, every exact route/state/viewport cell, sampled-only
-     widths, and deployment/source binding status. Cookie values, declarative
-     action values, typed values, placeholders, and selected labels are never
+     widths, and deployment/source binding status. Cookie values,
+     authentication/readback expectations, declarative action values, typed
+     values, placeholders, and selected labels are never
      included in the config hash input or control findings.
    - Read only the specific finding rows or metrics needed for diagnosis; keep
      raw command output in a cold log file.
@@ -446,6 +484,11 @@ native control text; an overflowing declared exception becomes an
   deployment/source binding.
 - Do not describe responsive width coverage as exhaustive. Report the exact
   sampled widths and retain the hard `maxPageCount` plan evidence.
+- Do not use a changed-input subset or any cache hit as readiness evidence.
+  Readiness and visual completion require a fresh complete all-cell run.
+- Do not serialize an authentication storage snapshot. Reuse it only in memory
+  to seed fresh contexts, and do not infer server-side data isolation from
+  browser-context isolation.
 - Do not treat screenshots alone as formal evidence for clipped text, overlap,
   off-canvas controls, or invisible text when this verifier can run.
 - Do not claim visual completion while `review.pendingCount` is nonzero, a

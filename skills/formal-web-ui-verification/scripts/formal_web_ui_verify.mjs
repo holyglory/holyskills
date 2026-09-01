@@ -15,6 +15,8 @@ const DEFAULT_VIEWPORTS = [
   { name: "desktop", width: 1440, height: 900 },
 ];
 const DEFAULT_MAX_PAGE_COUNT = 60;
+const DEFAULT_MAX_CONCURRENCY = 4;
+const MAX_DELAY_INTERVAL_MS = 100;
 const RECEIPT_MAX_BYTES = 2048;
 const DEFAULT_ARTIFACT_PREFIX = "formal-web-ui-verification-";
 const REPORT_SCHEMA_VERSION = 2;
@@ -57,11 +59,16 @@ Options:
   --config <path>                   Load JSON config.
   --viewport <name=WIDTHxHEIGHT>    Add viewport. Can be repeated.
   --max-page-count <count>          Hard cap on route/state/viewport cells. Default: ${DEFAULT_MAX_PAGE_COUNT}.
+  --concurrency <count>             Maximum concurrently running safe cells. Default: ${DEFAULT_MAX_CONCURRENCY}.
+  --changed-path <path>             Select affected cells for a development-only run. Repeatable.
+  --cache-dir <path>                Explicit external development cache directory.
+  --data-revision <value>           Caller-owned fixture/data identity required with --cache-dir.
   --repo-root <path>                Repository root for declared per-target UI review inputs.
   --review-against <path>           Explicit prior reviewed manifest for changed-input review selection.
   --json-out <path>                 Override the auto-created JSON artifact path.
   --markdown-out <path>             Override the auto-created Markdown artifact path.
   --review-queue-out <path>         Override the generated changed-visual-review queue path.
+  --progress-out <path>             Override the bounded JSON-lines progress artifact path.
   --receipt-only                    Deprecated no-op; bounded receipt output is already the default.
   --human-readable-stdout           Human-only compatibility mode: print the full Markdown report instead of the bounded JSON receipt.
   --fail-on <critical|warning|info> Exit 1 when this severity or higher is found. Default: critical.
@@ -106,6 +113,7 @@ function createDefaultArtifacts() {
         jsonOut: path.join(directory, "report.json"),
         markdownOut: path.join(directory, "report.md"),
         reviewQueueOut: path.join(directory, "review-queue.json"),
+        progressOut: path.join(directory, "progress.jsonl"),
         screenshotDir: path.join(directory, "screenshots"),
         automatic: true,
       };
@@ -141,6 +149,10 @@ function resolveArtifactPaths(config, cli, defaults) {
         cli.reviewQueueOut ?? config.reviewQueueOut ?? defaults.reviewQueueOut,
         "reviewQueueOut",
       ),
+      progressOut: normalizeOutputPath(
+        cli.progressOut ?? config.progressOut ?? defaults.progressOut,
+        "progressOut",
+      ),
       screenshotDir: normalizeOutputPath(
         cli.screenshotDir ?? config.screenshotDir ?? defaults.screenshotDir,
         "screenshotDir",
@@ -159,6 +171,10 @@ function resolveArtifactPaths(config, cli, defaults) {
     reviewQueueOut: normalizeOutputPath(
       cli.reviewQueueOut ?? config.reviewQueueOut ?? path.join(path.dirname(jsonOut), "review-queue.json"),
       "reviewQueueOut",
+    ),
+    progressOut: normalizeOutputPath(
+      cli.progressOut ?? config.progressOut ?? path.join(path.dirname(jsonOut), "progress.jsonl"),
+      "progressOut",
     ),
     screenshotDir: normalizeOutputPath(
       cli.screenshotDir ?? config.screenshotDir ?? path.join(path.dirname(jsonOut), "screenshots"),
@@ -230,6 +246,11 @@ function parseArgs(argv) {
     repoRoot: undefined,
     reviewAgainst: undefined,
     reviewQueueOut: undefined,
+    progressOut: undefined,
+    concurrency: undefined,
+    changedPaths: [],
+    cacheDir: undefined,
+    dataRevision: undefined,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -259,6 +280,16 @@ function parseArgs(argv) {
       cli.markdownOut = next();
     } else if (arg === "--review-queue-out") {
       cli.reviewQueueOut = next();
+    } else if (arg === "--progress-out") {
+      cli.progressOut = next();
+    } else if (arg === "--concurrency") {
+      cli.concurrency = next();
+    } else if (arg === "--changed-path") {
+      cli.changedPaths.push(next());
+    } else if (arg === "--cache-dir") {
+      cli.cacheDir = next();
+    } else if (arg === "--data-revision") {
+      cli.dataRevision = next();
     } else if (arg === "--receipt-only") {
       // Deprecated compatibility alias. Receipt output is always the safe
       // default, and this flag can never disable artifact creation.
@@ -682,11 +713,13 @@ function normalizeWaitFor(value, name) {
     throw new Error(`${name} must be a selector string or object`);
   }
   const normalized = {};
-  if (value.selector !== undefined) {
-    if (typeof value.selector !== "string" || !value.selector.trim()) {
-      throw new Error(`${name}.selector must be a non-empty string`);
+  for (const key of ["selector", "errorSelector", "responseUrl", "url"]) {
+    if (value[key] !== undefined) {
+      if (typeof value[key] !== "string" || !value[key].trim()) {
+        throw new Error(`${name}.${key} must be a non-empty string`);
+      }
+      normalized[key] = value[key].trim();
     }
-    normalized.selector = value.selector.trim();
   }
   if (value.loadState !== undefined) {
     if (!["load", "domcontentloaded", "networkidle"].includes(value.loadState)) {
@@ -694,7 +727,7 @@ function normalizeWaitFor(value, name) {
     }
     normalized.loadState = value.loadState;
   }
-  for (const key of ["timeoutMs", "loadStateTimeoutMs", "networkIdleMs", "settleMs"]) {
+  for (const key of ["timeoutMs", "loadStateTimeoutMs", "networkIdleMs", "settleMs", "pollIntervalMs"]) {
     if (value[key] !== undefined) {
       const numberValue = Number(value[key]);
       if (!Number.isFinite(numberValue) || numberValue < 0) {
@@ -702,6 +735,49 @@ function normalizeWaitFor(value, name) {
       }
       normalized[key] = numberValue;
     }
+  }
+  for (const key of ["settleMs", "pollIntervalMs"]) {
+    if ((normalized[key] || 0) > MAX_DELAY_INTERVAL_MS) {
+      throw new Error(`${name}.${key} must not exceed ${MAX_DELAY_INTERVAL_MS} ms`);
+    }
+  }
+  if (value.renderFrames !== undefined) {
+    const renderFrames = Number(value.renderFrames);
+    if (!Number.isInteger(renderFrames) || renderFrames < 1 || renderFrames > 2) {
+      throw new Error(`${name}.renderFrames must be 1 or 2`);
+    }
+    normalized.renderFrames = renderFrames;
+  }
+  if (value.readback !== undefined) {
+    const readback = value.readback;
+    if (!readback || typeof readback !== "object" || Array.isArray(readback)) {
+      throw new Error(`${name}.readback must be an object`);
+    }
+    if (typeof readback.url !== "string" || !readback.url.trim()) {
+      throw new Error(`${name}.readback.url must be a non-empty string`);
+    }
+    const status = readback.status === undefined ? 200 : Number(readback.status);
+    if (!Number.isInteger(status) || status < 100 || status > 599) {
+      throw new Error(`${name}.readback.status must be an HTTP status integer`);
+    }
+    const intervalMs = readback.intervalMs === undefined ? 50 : Number(readback.intervalMs);
+    if (!Number.isFinite(intervalMs) || intervalMs < 0 || intervalMs > MAX_DELAY_INTERVAL_MS) {
+      throw new Error(`${name}.readback.intervalMs must be between 0 and ${MAX_DELAY_INTERVAL_MS}`);
+    }
+    if (readback.jsonPath !== undefined && (typeof readback.jsonPath !== "string" || !readback.jsonPath.trim())) {
+      throw new Error(`${name}.readback.jsonPath must be a non-empty string when present`);
+    }
+    if ((readback.jsonPath === undefined) !== (readback.equals === undefined)) {
+      throw new Error(`${name}.readback.jsonPath and equals must be supplied together`);
+    }
+    normalized.readback = {
+      url: readback.url.trim(),
+      status,
+      intervalMs,
+      ...(readback.jsonPath === undefined
+        ? {}
+        : { jsonPath: readback.jsonPath.trim(), equals: readback.equals }),
+    };
   }
   return normalized;
 }
@@ -713,20 +789,297 @@ function mergeWaitFor(configWaitFor, targetWaitFor) {
   };
 }
 
-async function applyWaitFor(page, waitFor) {
-  if (waitFor.selector) {
-    await page.waitForSelector(waitFor.selector, { timeout: waitFor.timeoutMs ?? 10000 });
+function timedWaitPromise(promise) {
+  return promise.then((value) => ({ value, error: null }), (error) => ({ value: null, error }));
+}
+
+function armWaitFor(page, waitFor) {
+  const timeout = waitFor.timeoutMs ?? 10000;
+  return {
+    response: waitFor.responseUrl
+      ? timedWaitPromise(page.waitForResponse(waitFor.responseUrl, { timeout }))
+      : null,
+    url: waitFor.url
+      ? timedWaitPromise(page.waitForURL(waitFor.url, { timeout }))
+      : null,
+  };
+}
+
+function jsonPathValue(payload, jsonPath) {
+  let current = payload;
+  for (const part of jsonPath.split(".")) {
+    if (!part || current === null || typeof current !== "object" || !Object.hasOwn(current, part)) {
+      return { found: false, value: undefined };
+    }
+    current = current[part];
+  }
+  return { found: true, value: current };
+}
+
+async function waitForReadback(page, readback, timeoutMs) {
+  const started = Date.now();
+  let attempts = 0;
+  let lastStatus = null;
+  while (Date.now() - started <= timeoutMs) {
+    attempts += 1;
+    try {
+      const requestRemaining = Math.max(1, timeoutMs - (Date.now() - started));
+      const response = await page.context().request.get(readback.url, { timeout: requestRemaining });
+      lastStatus = response.status();
+      if (lastStatus === readback.status) {
+        if (!readback.jsonPath) {
+          return { attempts, status: lastStatus };
+        }
+        const payload = await response.json();
+        const observed = jsonPathValue(payload, readback.jsonPath);
+        if (observed.found && stableJson(observed.value) === stableJson(readback.equals)) {
+          return { attempts, status: lastStatus, jsonPath: readback.jsonPath };
+        }
+      }
+    } catch {
+      // The outer deadline owns failure; transient readback errors are retried.
+    }
+    const remaining = timeoutMs - (Date.now() - started);
+    if (remaining <= 0) break;
+    await page.waitForTimeout(Math.min(readback.intervalMs, remaining));
+  }
+  throw new Error(`server readback did not reach the declared state (last status ${lastStatus ?? "unavailable"})`);
+}
+
+async function waitForRenderFrames(page, count) {
+  await page.evaluate((frames) => new Promise((resolve) => {
+    const advance = (remaining) => {
+      if (remaining <= 0) resolve();
+      else requestAnimationFrame(() => advance(remaining - 1));
+    };
+    advance(frames);
+  }), count);
+}
+
+async function applyWaitFor(page, waitFor, armed = null) {
+  const evidence = [];
+  const timeout = waitFor.timeoutMs ?? 10000;
+  const record = async (kind, operation, detail = {}) => {
+    const started = Date.now();
+    const value = await operation();
+    evidence.push({ kind, durationMs: Date.now() - started, ...detail });
+    return value;
+  };
+  const handles = armed || armWaitFor(page, waitFor);
+  if (waitFor.responseUrl) {
+    await record("response", async () => {
+      const result = await handles.response;
+      if (result.error) throw result.error;
+      return result.value;
+    }, { matcher: waitFor.responseUrl });
+  }
+  if (waitFor.url) {
+    await record("url", async () => {
+      const result = await handles.url;
+      if (result.error) throw result.error;
+      return result.value;
+    }, { matcher: waitFor.url });
+  }
+  if (waitFor.selector && waitFor.errorSelector) {
+    const outcome = await record("ready-or-error-dom", () => page.waitForFunction(
+      ({ ready, error }) => {
+        const visible = (selector) => {
+          const element = document.querySelector(selector);
+          if (!element) return false;
+          const style = getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+        };
+        if (visible(error)) return "error";
+        if (visible(ready)) return "ready";
+        return false;
+      },
+      { ready: waitFor.selector, error: waitFor.errorSelector },
+      { timeout },
+    ).then((handle) => handle.jsonValue()), {
+      readySelector: waitFor.selector,
+      errorSelector: waitFor.errorSelector,
+    });
+    if (outcome === "error") throw new Error(`error readiness selector became visible: ${waitFor.errorSelector}`);
+  } else if (waitFor.selector) {
+    await record("selector", () => page.waitForSelector(waitFor.selector, { timeout }), { selector: waitFor.selector });
+  } else if (waitFor.errorSelector) {
+    throw new Error("errorSelector requires selector");
   }
   if (waitFor.loadState) {
-    await page.waitForLoadState(waitFor.loadState, { timeout: waitFor.loadStateTimeoutMs ?? 5000 });
+    await record("load-state", () => page.waitForLoadState(waitFor.loadState, {
+      timeout: waitFor.loadStateTimeoutMs ?? timeout,
+    }), { state: waitFor.loadState });
   } else if (waitFor.networkIdleMs !== undefined) {
-    await page.waitForLoadState("networkidle", { timeout: waitFor.networkIdleMs }).catch(() => {});
-  } else if (!waitFor.selector) {
-    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+    await record("network-idle", () => page.waitForLoadState("networkidle", {
+      timeout: waitFor.networkIdleMs,
+    }), { deadlineMs: waitFor.networkIdleMs });
+  }
+  if (waitFor.readback) {
+    const readback = await record(
+      "server-readback",
+      () => waitForReadback(page, waitFor.readback, timeout),
+      { url: waitFor.readback.url, expectedStatus: waitFor.readback.status },
+    );
+    evidence[evidence.length - 1].attempts = readback.attempts;
+  }
+  if (waitFor.renderFrames) {
+    await record("render-frames", () => waitForRenderFrames(page, waitFor.renderFrames), {
+      frames: waitFor.renderFrames,
+    });
+  } else if (!Object.keys(waitFor).length) {
+    await record("render-frames", () => waitForRenderFrames(page, 2), { frames: 2 });
   }
   if (waitFor.settleMs) {
-    await page.waitForTimeout(waitFor.settleMs);
+    await record("bounded-delay", () => page.waitForTimeout(waitFor.settleMs), { delayMs: waitFor.settleMs });
   }
+  return evidence;
+}
+
+function normalizeActionList(value, name, { allowEmpty = false } = {}) {
+  if (!Array.isArray(value) || (!allowEmpty && !value.length)) {
+    throw new Error(`${name} must be ${allowEmpty ? "an" : "a non-empty"} array`);
+  }
+  return value.map((action, actionIndex) => {
+    if (!action || typeof action !== "object" || Array.isArray(action)) {
+      throw new Error(`${name}[${actionIndex}] must be an object`);
+    }
+    const kind = action.action;
+    if (!["click", "hover", "focus", "fill", "check", "uncheck", "press", "selectOption"].includes(kind)) {
+      throw new Error(`Unsupported declarative action: ${kind}`);
+    }
+    if (typeof action.selector !== "string" || !action.selector.trim()) {
+      throw new Error(`${name}[${actionIndex}].selector must be non-empty`);
+    }
+    if (["fill", "press", "selectOption"].includes(kind) && action.value === undefined) {
+      throw new Error(`Declarative ${kind} action requires value`);
+    }
+    if (["fill", "press"].includes(kind) && typeof action.value !== "string") {
+      throw new Error(`Declarative ${kind} value must be a string`);
+    }
+    if (kind === "selectOption" && typeof action.value !== "string" && !Array.isArray(action.value)) {
+      throw new Error("Declarative selectOption value must be a string or string array");
+    }
+    if (Array.isArray(action.value) && !action.value.every((item) => typeof item === "string")) {
+      throw new Error("Declarative selectOption array values must all be strings");
+    }
+    const timeoutMs = action.timeoutMs === undefined ? 5000 : Number(action.timeoutMs);
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+      throw new Error("Declarative action timeoutMs must be a non-negative number");
+    }
+    const ownerJourney = action.ownerJourney === undefined ? null : action.ownerJourney;
+    const ownerState = action.ownerState === undefined ? null : action.ownerState;
+    if ((ownerJourney === null) !== (ownerState === null)) {
+      throw new Error(`${name}[${actionIndex}] ownerJourney and ownerState must be supplied together`);
+    }
+    if (ownerJourney !== null && (
+      typeof ownerJourney !== "string" || !ownerJourney.trim() ||
+      typeof ownerState !== "string" || !ownerState.trim()
+    )) {
+      throw new Error(`${name}[${actionIndex}] ownerJourney and ownerState must be non-empty strings`);
+    }
+    return {
+      action: kind,
+      selector: action.selector.trim(),
+      value: action.value,
+      timeoutMs,
+      ownerJourney: ownerJourney?.trim() || null,
+      ownerState: ownerState?.trim() || null,
+    };
+  });
+}
+
+function normalizeExecution(value, name, base = null) {
+  const fallback = base || {
+    parallelSafe: false,
+    resourceLocks: [],
+    priority: null,
+    stopOnFailure: false,
+    stopReason: "",
+  };
+  if (value === undefined || value === null) return { ...fallback, resourceLocks: [...fallback.resourceLocks] };
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${name} must be an object`);
+  }
+  if (value.parallelSafe !== undefined && typeof value.parallelSafe !== "boolean") {
+    throw new Error(`${name}.parallelSafe must be a boolean`);
+  }
+  if (value.stopOnFailure !== undefined && typeof value.stopOnFailure !== "boolean") {
+    throw new Error(`${name}.stopOnFailure must be a boolean`);
+  }
+  const stopOnFailure = value.stopOnFailure ?? fallback.stopOnFailure;
+  const stopReasonValue = value.stopReason === undefined ? fallback.stopReason : value.stopReason;
+  if (stopReasonValue !== "" && (typeof stopReasonValue !== "string" || !stopReasonValue.trim())) {
+    throw new Error(`${name}.stopReason must be a non-empty string when present`);
+  }
+  const stopReason = typeof stopReasonValue === "string" ? stopReasonValue.trim() : "";
+  if (stopOnFailure && !stopReason) {
+    throw new Error(`${name}.stopReason is required when stopOnFailure is true`);
+  }
+  const resourceLocks = value.resourceLocks === undefined ? fallback.resourceLocks : value.resourceLocks;
+  if (!Array.isArray(resourceLocks) || !resourceLocks.every((item) => typeof item === "string" && item.trim())) {
+    throw new Error(`${name}.resourceLocks must be an array of non-empty strings`);
+  }
+  const priorityValue = value.priority === undefined ? fallback.priority : value.priority;
+  const priority = priorityValue === null ? null : Number(priorityValue);
+  if (priority !== null && (!Number.isInteger(priority) || Math.abs(priority) > 100000)) {
+    throw new Error(`${name}.priority must be an integer between -100000 and 100000`);
+  }
+  return {
+    parallelSafe: value.parallelSafe ?? fallback.parallelSafe,
+    resourceLocks: [...new Set(resourceLocks.map((item) => item.trim()))].sort(),
+    priority,
+    stopOnFailure,
+    stopReason,
+  };
+}
+
+function normalizeExecutionOverride(value, name) {
+  if (value === undefined || value === null) return undefined;
+  const validated = normalizeExecution(value, name);
+  return {
+    ...(Object.hasOwn(value, "parallelSafe") ? { parallelSafe: validated.parallelSafe } : {}),
+    ...(Object.hasOwn(value, "resourceLocks") ? { resourceLocks: validated.resourceLocks } : {}),
+    ...(Object.hasOwn(value, "priority") ? { priority: validated.priority } : {}),
+    ...(Object.hasOwn(value, "stopOnFailure") ? { stopOnFailure: validated.stopOnFailure } : {}),
+    ...(Object.hasOwn(value, "stopReason") ? { stopReason: validated.stopReason } : {}),
+  };
+}
+
+function normalizeAuthProfileName(value, name) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${name} must be a non-empty string`);
+  return value.trim();
+}
+
+function normalizeAuthProfiles(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("authProfiles must be an array");
+  const seen = new Set();
+  return value.map((profile, index) => {
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+      throw new Error(`authProfiles[${index}] must be an object`);
+    }
+    if (typeof profile.name !== "string" || !profile.name.trim()) {
+      throw new Error(`authProfiles[${index}].name must be non-empty`);
+    }
+    const name = profile.name.trim();
+    if (seen.has(name)) throw new Error(`duplicate auth profile ${name}`);
+    seen.add(name);
+    if (typeof profile.url !== "string" || !profile.url.trim()) {
+      throw new Error(`authProfiles[${index}].url must be non-empty`);
+    }
+    const actions = normalizeActionList(profile.actions, `authProfiles[${index}].actions`);
+    if (actions.some((action) => action.ownerJourney || action.ownerState)) {
+      throw new Error(`authProfiles[${index}].actions cannot declare conditional ownership`);
+    }
+    return {
+      name,
+      url: profile.url.trim(),
+      actions,
+      waitFor: normalizeWaitFor(profile.waitFor, `authProfiles[${index}].waitFor`),
+    };
+  });
 }
 
 function normalizeTargetDefaults(value) {
@@ -748,6 +1101,8 @@ function normalizeTargetDefaults(value) {
     allowContrast: normalizeSelectorReasonList(value.allowContrast, "targetDefaults.allowContrast"),
     themeExceptions: normalizeSelectorReasonList(value.themeExceptions, "targetDefaults.themeExceptions"),
     screenshotMasks: normalizeSelectorReasonList(value.screenshotMasks, "targetDefaults.screenshotMasks"),
+    execution: normalizeExecution(value.execution, "targetDefaults.execution"),
+    authProfile: normalizeAuthProfileName(value.authProfile, "targetDefaults.authProfile"),
   };
 }
 
@@ -764,41 +1119,7 @@ function normalizeTargets(config, cli) {
       if (typeof state.name !== "string" || !state.name.trim()) {
         throw new Error(`target.states[${stateIndex}].name must be a non-empty string`);
       }
-      if (!Array.isArray(state.actions) || !state.actions.length) {
-        throw new Error(`target.states[${stateIndex}].actions must be a non-empty array`);
-      }
-      const actions = state.actions.map((action, actionIndex) => {
-        if (!action || typeof action !== "object" || Array.isArray(action)) {
-          throw new Error(`target.states[${stateIndex}].actions[${actionIndex}] must be an object`);
-        }
-        const kind = action.action;
-        if (!["click", "hover", "focus", "fill", "check", "uncheck", "press", "selectOption"].includes(kind)) {
-          throw new Error(`Unsupported declarative action: ${kind}`);
-        }
-        if (typeof action.selector !== "string" || !action.selector.trim()) {
-          throw new Error(`target.states[${stateIndex}].actions[${actionIndex}].selector must be non-empty`);
-        }
-        if (["fill", "press", "selectOption"].includes(kind) && action.value === undefined) {
-          throw new Error(`Declarative ${kind} action requires value`);
-        }
-        if (kind === "fill" && typeof action.value !== "string") {
-          throw new Error("Declarative fill action value must be a string");
-        }
-        if (kind === "press" && typeof action.value !== "string") {
-          throw new Error("Declarative press action value must be a string");
-        }
-        if (kind === "selectOption" && typeof action.value !== "string" && !Array.isArray(action.value)) {
-          throw new Error("Declarative selectOption value must be a string or string array");
-        }
-        if (Array.isArray(action.value) && !action.value.every((item) => typeof item === "string")) {
-          throw new Error("Declarative selectOption array values must all be strings");
-        }
-        const timeoutMs = action.timeoutMs === undefined ? 5000 : Number(action.timeoutMs);
-        if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
-          throw new Error("Declarative action timeoutMs must be a non-negative number");
-        }
-        return { action: kind, selector: action.selector.trim(), value: action.value, timeoutMs };
-      });
+      const actions = normalizeActionList(state.actions, `target.states[${stateIndex}].actions`);
       if (state.allowFailure !== undefined && (typeof state.allowFailure !== "string" || !state.allowFailure.trim())) {
         throw new Error(`target.states[${stateIndex}].allowFailure must be a non-empty reason string`);
       }
@@ -816,6 +1137,10 @@ function normalizeTargets(config, cli) {
         name: state.name.trim(),
         actions,
         waitFor: normalizeWaitFor(state.waitFor, `target.states[${stateIndex}].waitFor`),
+        afterFailureWaitFor: normalizeWaitFor(
+          state.afterFailureWaitFor,
+          `target.states[${stateIndex}].afterFailureWaitFor`,
+        ),
         allowFailure: state.allowFailure,
         continuation,
         journeys: state.journeys === undefined
@@ -836,12 +1161,20 @@ function normalizeTargets(config, cli) {
         reviewInputs: state.reviewInputs === undefined
           ? undefined
           : normalizeReviewInputs(state.reviewInputs, `target.states[${stateIndex}].reviewInputs`),
+        execution: state.execution === undefined
+          ? undefined
+          : normalizeExecutionOverride(state.execution, `target.states[${stateIndex}].execution`),
+        authProfile: state.authProfile === undefined
+          ? undefined
+          : normalizeAuthProfileName(state.authProfile, `target.states[${stateIndex}].authProfile`),
       };
     });
   };
   if (Array.isArray(config.targets)) {
     for (const [targetIndex, item] of config.targets.entries()) {
-      if (typeof item === "string") targets.push({ ...targetDefaults, url: item, source: "explicit" });
+      if (typeof item === "string") {
+        targets.push({ ...targetDefaults, url: item, source: "explicit", targetGroupId: `target-${targetIndex + 1}` });
+      }
       else if (item && typeof item === "object" && typeof item.url === "string") {
         if (item.allowFailure !== undefined && (typeof item.allowFailure !== "string" || !item.allowFailure.trim())) {
           throw new Error("target.allowFailure must be a non-empty reason string");
@@ -887,6 +1220,16 @@ function normalizeTargets(config, cli) {
           sourceBinding: item.sourceBinding === undefined
             ? undefined
             : normalizeSourceBinding(item.sourceBinding, `targets[${targetIndex}].sourceBinding`),
+          waitFor: normalizeWaitFor(item.waitFor, `targets[${targetIndex}].waitFor`),
+          execution: normalizeExecution(
+            item.execution,
+            `targets[${targetIndex}].execution`,
+            targetDefaults.execution,
+          ),
+          authProfile: item.authProfile === undefined
+            ? targetDefaults.authProfile
+            : normalizeAuthProfileName(item.authProfile, `targets[${targetIndex}].authProfile`),
+          targetGroupId: `target-${targetIndex + 1}`,
           includeBase: item.includeBase === undefined ? true : item.includeBase,
           source: item.source || "explicit",
         });
@@ -894,7 +1237,14 @@ function normalizeTargets(config, cli) {
       else throw new Error("targets entries must be strings or objects with url");
     }
   }
-  for (const url of cli.urls) targets.push({ ...targetDefaults, url, source: "explicit" });
+  for (const [urlIndex, url] of cli.urls.entries()) {
+    targets.push({
+      ...targetDefaults,
+      url,
+      source: "explicit",
+      targetGroupId: `cli-target-${urlIndex + 1}`,
+    });
+  }
   return targets;
 }
 
@@ -927,6 +1277,61 @@ function normalizeViewports(config, cli) {
   return viewports.length ? viewports : DEFAULT_VIEWPORTS;
 }
 
+function normalizeChangedPaths(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("development.changedPaths must be an array");
+  return [...new Set(value.map((item, index) => {
+    if (typeof item !== "string" || !item.trim()) {
+      throw new Error(`development.changedPaths[${index}] must be a non-empty repository-relative path`);
+    }
+    const normalized = item.trim().replaceAll("\\", "/").replace(/^\.\//, "");
+    if (path.posix.isAbsolute(normalized) || normalized.split("/").includes("..")) {
+      throw new Error(`development.changedPaths[${index}] must stay repository-relative`);
+    }
+    return normalized;
+  }))].sort();
+}
+
+function normalizeDevelopment(config, cli, repoRoot) {
+  const value = config.development === undefined ? {} : config.development;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("development must be an object");
+  }
+  const configuredChanged = normalizeChangedPaths(value.changedPaths);
+  const changedPaths = normalizeChangedPaths([...configuredChanged, ...cli.changedPaths]);
+  const cacheValue = value.cache === undefined ? {} : value.cache;
+  if (!cacheValue || typeof cacheValue !== "object" || Array.isArray(cacheValue)) {
+    throw new Error("development.cache must be an object");
+  }
+  const cacheDirectoryValue = cli.cacheDir ?? cacheValue.directory;
+  const dataRevisionValue = cli.dataRevision ?? cacheValue.dataRevision;
+  let cache = null;
+  if (cacheDirectoryValue !== undefined) {
+    if (typeof cacheDirectoryValue !== "string" || !cacheDirectoryValue.trim() || !path.isAbsolute(cacheDirectoryValue)) {
+      throw new Error("development cache directory must be an explicit absolute path");
+    }
+    if (typeof dataRevisionValue !== "string" || !dataRevisionValue.trim()) {
+      throw new Error("development cache requires a non-empty dataRevision");
+    }
+    const mode = cacheValue.mode === undefined ? "read-write" : cacheValue.mode;
+    if (!["read", "write", "read-write"].includes(mode)) {
+      throw new Error("development.cache.mode must be read, write, or read-write");
+    }
+    const directory = path.resolve(cacheDirectoryValue);
+    if (repoRoot && pathIsWithin(directory, path.resolve(repoRoot))) {
+      throw new Error("development cache directory must stay outside repoRoot");
+    }
+    cache = { directory, dataRevision: dataRevisionValue.trim(), mode };
+  } else if (dataRevisionValue !== undefined) {
+    throw new Error("dataRevision requires a development cache directory");
+  }
+  return {
+    enabled: Boolean(changedPaths.length || cache),
+    changedPaths,
+    cache,
+  };
+}
+
 function normalizeConfig(config, cli, artifacts) {
   const rules = config.rules && typeof config.rules === "object" ? config.rules : {};
   const failOn = cli.failOn || rules.failOn || "critical";
@@ -938,6 +1343,14 @@ function normalizeConfig(config, cli, artifacts) {
   const maxPageCount = Number(cli.maxPageCount ?? config.maxPageCount ?? DEFAULT_MAX_PAGE_COUNT);
   if (!Number.isInteger(maxPageCount) || maxPageCount <= 0) {
     throw new Error("maxPageCount must be a positive integer");
+  }
+  const executionValue = config.execution === undefined ? {} : config.execution;
+  if (!executionValue || typeof executionValue !== "object" || Array.isArray(executionValue)) {
+    throw new Error("execution must be an object");
+  }
+  const maxConcurrency = Number(cli.concurrency ?? executionValue.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY);
+  if (!Number.isInteger(maxConcurrency) || maxConcurrency <= 0 || maxConcurrency > 32) {
+    throw new Error("execution.maxConcurrency must be an integer from 1 through 32");
   }
   const areas = [
     ...(Array.isArray(config.areas) ? config.areas : []),
@@ -960,7 +1373,7 @@ function normalizeConfig(config, cli, artifacts) {
   )) {
     throw new Error("playwrightModuleDir must be a non-empty path string");
   }
-  const artifactFiles = [artifacts.jsonOut, artifacts.markdownOut, artifacts.reviewQueueOut];
+  const artifactFiles = [artifacts.jsonOut, artifacts.markdownOut, artifacts.reviewQueueOut, artifacts.progressOut];
   if (new Set(artifactFiles).size !== artifactFiles.length) {
     throw new Error("JSON, Markdown, and review-queue artifact paths must be distinct");
   }
@@ -971,7 +1384,7 @@ function normalizeConfig(config, cli, artifacts) {
     targets: normalizeTargets(config, cli),
     targetDefaults: normalizeTargetDefaults(config.targetDefaults),
     viewports: normalizeViewports(config, cli),
-    waitFor: config.waitFor,
+    waitFor: normalizeWaitFor(config.waitFor, "waitFor"),
     areas,
     contentInsets: normalizeContentInsetList(config.contentInsets, "contentInsets"),
     ignore: [...normalizeSelectorReasonList(config.ignore, "ignore"), ...cli.ignore],
@@ -987,6 +1400,7 @@ function normalizeConfig(config, cli, artifacts) {
     jsonOut: artifacts.jsonOut,
     markdownOut: artifacts.markdownOut,
     reviewQueueOut: artifacts.reviewQueueOut,
+    progressOut: artifacts.progressOut,
     humanReadableStdout: cli.humanReadableStdout,
     browserExecutable: cli.browserExecutable || config.browserExecutable,
     playwrightModuleDir: playwrightModuleDirValue
@@ -1000,12 +1414,15 @@ function normalizeConfig(config, cli, artifacts) {
       cli.allowDiscoveredTargetFailures || Boolean(config.allowDiscoveredTargetFailures),
     minCheckedPages,
     maxPageCount,
+    execution: { maxConcurrency },
     screenshotDir: artifacts.screenshotDir,
     scroll: cli.noScroll ? false : (config.scroll === undefined ? true : Boolean(config.scroll)),
     cookies: [...normalizeCookieList(config.cookies), ...cli.cookies],
     ignoreHttpsErrors: cli.ignoreHttpsErrors || Boolean(config.ignoreHttpsErrors),
     sourceBinding: normalizeSourceBinding(config.sourceBinding, "sourceBinding"),
     repoRoot: cli.repoRoot || config.repoRoot || null,
+    development: normalizeDevelopment(config, cli, cli.repoRoot || config.repoRoot || null),
+    authProfiles: normalizeAuthProfiles(config.authProfiles),
     priorReview: loadPriorManualReview(cli.reviewAgainst || config.reviewAgainst),
     reviewRemovedCells: normalizeRemovedReviewCells(config.reviewRemovedCells),
   };
@@ -1065,8 +1482,13 @@ function sha256(value) {
 }
 
 function privacySafeConfigContract(config) {
+  const redactWaitFor = (waitFor) => waitFor?.readback && Object.hasOwn(waitFor.readback, "equals")
+    ? { ...waitFor, readback: { ...waitFor.readback, equals: "<redacted>" } }
+    : waitFor;
   const redactActions = (states) => (states || []).map((state) => ({
     ...state,
+    waitFor: redactWaitFor(state.waitFor),
+    afterFailureWaitFor: redactWaitFor(state.afterFailureWaitFor),
     actions: (state.actions || []).map((action) => ({
       ...action,
       ...(Object.hasOwn(action, "value") ? { value: "<redacted>" } : {}),
@@ -1074,6 +1496,7 @@ function privacySafeConfigContract(config) {
   }));
   const targets = (config.targets || []).map((target) => ({
     ...target,
+    waitFor: redactWaitFor(target.waitFor),
     states: redactActions(target.states),
   }));
   const cookies = (config.cookies || []).map((cookie) => ({
@@ -1102,6 +1525,16 @@ function privacySafeConfigContract(config) {
     maxPageCount: config.maxPageCount,
     scroll: config.scroll,
     cookies,
+    authProfiles: (config.authProfiles || []).map((profile) => ({
+      ...profile,
+      waitFor: redactWaitFor(profile.waitFor),
+      actions: (profile.actions || []).map((action) => ({
+        ...action,
+        ...(Object.hasOwn(action, "value") ? { value: "<redacted>" } : {}),
+      })),
+    })),
+    execution: config.execution,
+    development: config.development,
     ignoreHttpsErrors: config.ignoreHttpsErrors,
     sourceBinding: config.sourceBinding,
     repoRoot: config.repoRoot ? path.resolve(config.repoRoot) : null,
@@ -1202,6 +1635,15 @@ function viewportsForTarget(target, configuredViewports) {
   return viewports;
 }
 
+function executionPriorityForTarget(target) {
+  if (target.execution?.priority !== null && target.execution?.priority !== undefined) {
+    return target.execution.priority;
+  }
+  const journey = (target.journeys || []).find((item) => item.id === target.primaryJourney);
+  const riskWeight = { critical: 40000, high: 30000, normal: 20000, low: 10000 };
+  return (riskWeight[journey?.risk] || riskWeight.normal) + (journey?.frequencyPercent || 0);
+}
+
 function buildExecutionPlan(targets, configuredViewports, maxPageCount) {
   const cells = [];
   for (const target of targets) {
@@ -1210,6 +1652,8 @@ function buildExecutionPlan(targets, configuredViewports, maxPageCount) {
       const requestedRoute = routeEvidence(target.url);
       cells.push({
         cellId,
+        planIndex: cells.length,
+        executionPriority: executionPriorityForTarget(target),
         target,
         viewport,
         requestedPath: requestedRoute.path,
@@ -1224,14 +1668,77 @@ function buildExecutionPlan(targets, configuredViewports, maxPageCount) {
   return cells;
 }
 
-function publicExecutionPlan(cells, maxPageCount) {
+function changedPathMatchesFile(changedPath, filePath) {
+  return changedPath === filePath ||
+    filePath.startsWith(`${changedPath}/`) ||
+    changedPath.startsWith(`${filePath}/`);
+}
+
+function selectExecutionCells(fullPlan, development) {
+  const base = {
+    mode: development.enabled ? "development" : "complete",
+    readinessEligible: !development.enabled,
+    changedPaths: development.changedPaths,
+    fullPlanCount: fullPlan.length,
+    selectedCount: fullPlan.length,
+    fallbackToFull: false,
+    unmappedPaths: [],
+    selectedTargetGroups: [...new Set(fullPlan.map((cell) => cell.target.targetGroupId))],
+  };
+  if (!development.changedPaths.length) {
+    return { cells: fullPlan, selection: base };
+  }
+  const matchedGroups = new Set();
+  const unmappedPaths = [];
+  for (const changedPath of development.changedPaths) {
+    const groups = new Set();
+    for (const cell of fullPlan) {
+      const files = cell.target.reviewEvidence?.files || [];
+      if (files.some((file) => changedPathMatchesFile(changedPath, file.path))) {
+        groups.add(cell.target.targetGroupId);
+      }
+    }
+    if (!groups.size) unmappedPaths.push(changedPath);
+    for (const group of groups) matchedGroups.add(group);
+  }
+  if (unmappedPaths.length || !matchedGroups.size) {
+    return {
+      cells: fullPlan,
+      selection: {
+        ...base,
+        fallbackToFull: true,
+        unmappedPaths,
+      },
+    };
+  }
+  const cells = fullPlan.filter((cell) => matchedGroups.has(cell.target.targetGroupId));
+  return {
+    cells,
+    selection: {
+      ...base,
+      selectedCount: cells.length,
+      selectedTargetGroups: [...matchedGroups].sort(),
+    },
+  };
+}
+
+function publicExecutionPlan(cells, maxPageCount, selection = null) {
   return {
     pageBudget: maxPageCount,
     plannedPageCount: cells.length,
+    fullDeclaredPageCount: selection?.fullPlanCount ?? cells.length,
+    selection: selection || {
+      mode: "complete",
+      readinessEligible: true,
+      fullPlanCount: cells.length,
+      selectedCount: cells.length,
+    },
     widthCoverage: "sampled-only",
     widthCoverageNote: "Only the listed viewport widths were checked; widths between samples were not inspected.",
     cells: cells.map((cell) => ({
       cellId: cell.cellId,
+      planIndex: cell.planIndex,
+      executionPriority: cell.executionPriority,
       targetName: cell.target.name || cell.target.url,
       requestedPath: cell.requestedPath,
       stateName: cell.target.stateName || "base",
@@ -1241,7 +1748,7 @@ function publicExecutionPlan(cells, maxPageCount) {
 }
 
 function publicTarget(target) {
-  const { states, verificationState, includeBase, repositoryRoot, ...safe } = target;
+  const { states, verificationState, includeBase, repositoryRoot, targetGroupId, ...safe } = target;
   return safe;
 }
 
@@ -1261,6 +1768,7 @@ function expandTargetStates(targets) {
         name: baseName,
         stateName: "base",
         continuation: null,
+        execution: normalizeExecution(target.execution, "target.execution"),
       });
     }
     for (const state of states) {
@@ -1280,6 +1788,9 @@ function expandTargetStates(targets) {
           ...(state.reviewInputs || []),
         ],
         continuation: state.continuation,
+        afterFailureWaitFor: state.afterFailureWaitFor,
+        execution: normalizeExecution(state.execution, `state ${state.name}.execution`, target.execution),
+        authProfile: state.authProfile ?? target.authProfile,
       });
     }
   }
@@ -1409,7 +1920,10 @@ function journeyContractErrors(target) {
     errors.push("reviewInputs must declare the UI implementation inputs for this target/state");
   }
   const actions = target.verificationState?.actions || [];
-  const activating = actions.some((action) => ["click", "press", "check", "uncheck", "selectOption"].includes(action.action));
+  const activating = actions.some((action) =>
+    ["click", "press", "check", "uncheck", "selectOption"].includes(action.action) &&
+    (!action.ownerState || action.ownerState === target.stateName)
+  );
   if (activating && !target.continuation) {
     errors.push("an activating interaction state requires a continuation checkpoint");
   }
@@ -1419,7 +1933,7 @@ function journeyContractErrors(target) {
 function prepareTargetContracts(targets, config) {
   const repo = resolveRepositoryRoot(config.repoRoot);
   const reviewCache = new Map();
-  return targets.map((target) => {
+  const prepared = targets.map((target) => {
     const contractErrors = journeyContractErrors(target);
     let reviewEvidence = null;
     if (target.reviewInputs?.length) {
@@ -1449,8 +1963,13 @@ function prepareTargetContracts(targets, config) {
         action: action.action,
         selector: action.selector,
         timeoutMs: action.timeoutMs,
+        ownerJourney: action.ownerJourney,
+        ownerState: action.ownerState,
         ...(Object.hasOwn(action, "value") ? { value: "<redacted>" } : {}),
       })),
+      afterFailureWaitFor: target.afterFailureWaitFor || null,
+      execution: target.execution,
+      authProfile: target.authProfile || null,
     };
     return {
       ...target,
@@ -1460,19 +1979,99 @@ function prepareTargetContracts(targets, config) {
       repositoryRoot: repo.root,
     };
   });
+  const authNames = new Set(config.authProfiles.map((profile) => profile.name));
+  for (const target of prepared) {
+    if (target.authProfile && !authNames.has(target.authProfile)) {
+      target.contractErrors.push(`authProfile references unknown profile ${target.authProfile}`);
+    }
+    const journeyIds = new Set((target.journeys || []).map((journey) => journey.id));
+    for (const action of target.verificationState?.actions || []) {
+      if (!action.ownerJourney) continue;
+      if (!journeyIds.has(action.ownerJourney)) {
+        target.contractErrors.push(`conditional action ownerJourney ${action.ownerJourney} is not declared`);
+      }
+      const owners = prepared.filter((candidate) =>
+        candidate.targetGroupId === target.targetGroupId &&
+        candidate.stateName === action.ownerState &&
+        candidate.primaryJourney === action.ownerJourney
+      );
+      if (owners.length !== 1) {
+        target.contractErrors.push(
+          `conditional action owner ${action.ownerJourney}/${action.ownerState} must resolve to exactly one state`,
+        );
+      }
+    }
+    target.contractErrors = [...new Set(target.contractErrors)];
+  }
+  return prepared;
 }
 
-async function applyInteractionState(page, state) {
-  if (!state) return { beforeContinuation: null };
+async function applyInteractionState(page, state, target = null) {
+  if (!state) return { beforeContinuation: null, waitEvidence: [], actionTimings: [], handoff: null, failure: null };
   const triggerActionIndex = state.continuation
     ? (state.continuation.triggerActionIndex ?? state.actions.length - 1)
-    : -1;
+    : state.actions.length - 1;
   let beforeContinuation = null;
+  const actionTimings = [];
+  const waitEvidence = [];
+  let armed = null;
+  const failureArmed = Object.keys(state.afterFailureWaitFor || {}).length
+    ? armWaitFor(page, state.afterFailureWaitFor)
+    : null;
   for (const [index, action] of state.actions.entries()) {
     const locator = page.locator(action.selector);
     const options = { timeout: action.timeoutMs };
+    const actionStarted = Date.now();
     try {
+      const count = await locator.count();
+      const controlVisible = count > 0 && await locator.first().isVisible();
+      const isOwnerState = Boolean(
+        action.ownerState && target &&
+        action.ownerState === target.stateName &&
+        action.ownerJourney === target.primaryJourney,
+      );
+      if (action.ownerState && !isOwnerState && controlVisible) {
+        actionTimings.push({
+          index,
+          action: action.action,
+          selector: action.selector,
+          durationMs: Date.now() - actionStarted,
+          outcome: "ownership-contradiction",
+        });
+        return {
+          beforeContinuation,
+          waitEvidence,
+          actionTimings,
+          handoff: null,
+          failure: {
+            kind: "conditional-ownership-contradiction",
+            message: `${action.selector} is visible outside its declared owner ${action.ownerJourney}/${action.ownerState}`,
+          },
+        };
+      }
+      if (action.ownerState && !isOwnerState && !controlVisible) {
+          actionTimings.push({
+            index,
+            action: action.action,
+            selector: action.selector,
+            durationMs: Date.now() - actionStarted,
+            outcome: "handed-off",
+          });
+          return {
+            beforeContinuation,
+            waitEvidence,
+            actionTimings,
+            failure: null,
+            handoff: {
+              selector: action.selector,
+              ownerJourney: action.ownerJourney,
+              ownerState: action.ownerState,
+              locatorWaitMs: 0,
+            },
+          };
+      }
       if (index === triggerActionIndex) {
+        armed = armWaitFor(page, state.waitFor || {});
         await locator.scrollIntoViewIfNeeded(options);
         beforeContinuation = await page.evaluate(() => ({
           scrollX: window.scrollX,
@@ -1489,18 +2088,65 @@ async function applyInteractionState(page, state) {
       else if (action.action === "uncheck") await locator.uncheck(options);
       else if (action.action === "press") await locator.press(action.value, options);
       else if (action.action === "selectOption") await locator.selectOption(action.value, options);
+      actionTimings.push({
+        index,
+        action: action.action,
+        selector: action.selector,
+        durationMs: Date.now() - actionStarted,
+        outcome: "completed",
+      });
     } catch (error) {
       // Playwright call logs may echo entered values. Keep reports actionable
       // without copying action payloads (which can be credentials or PII).
-      throw new Error(`${action.action} failed for ${action.selector} (${error.name || "interaction error"})`);
+      let afterFailureObservation = null;
+      if (Object.keys(state.afterFailureWaitFor || {}).length) {
+        try {
+          afterFailureObservation = {
+            checked: true,
+            waitEvidence: await applyWaitFor(page, state.afterFailureWaitFor, failureArmed),
+          };
+        } catch (observationError) {
+          afterFailureObservation = {
+            checked: false,
+            error: String(observationError?.message || observationError).slice(0, 512),
+          };
+        }
+      }
+      actionTimings.push({
+        index,
+        action: action.action,
+        selector: action.selector,
+        durationMs: Date.now() - actionStarted,
+        outcome: "failed",
+      });
+      return {
+        beforeContinuation,
+        waitEvidence,
+        actionTimings,
+        handoff: null,
+        failure: {
+          kind: "interaction-action-failed",
+          message: `${action.action} failed for ${action.selector} (${error.name || "interaction error"})`,
+          afterFailureObservation,
+        },
+      };
     }
   }
-  if (Object.keys(state.waitFor || {}).length) {
-    await applyWaitFor(page, state.waitFor);
-  } else {
-    await page.waitForTimeout(50);
+  try {
+    waitEvidence.push(...await applyWaitFor(page, state.waitFor || {}, armed));
+  } catch (error) {
+    return {
+      beforeContinuation,
+      waitEvidence,
+      actionTimings,
+      handoff: null,
+      failure: {
+        kind: "interaction-readiness-failed",
+        message: `interaction readiness failed (${error.name || "wait error"})`,
+      },
+    };
   }
-  return { beforeContinuation };
+  return { beforeContinuation, waitEvidence, actionTimings, handoff: null, failure: null };
 }
 
 async function verifyContinuation(page, continuation, beforeContinuation) {
@@ -1768,9 +2414,9 @@ function sanitizeFilePart(value) {
 }
 
 // Runs a full-page scroll pass in viewport-height steps so lazy-loaded content and
-// IntersectionObservers fire before measurement. `page.evaluate` handles the settle
-// wait between steps. Robust to pages that grow while scrolling via a hard iteration cap.
-async function scrollThroughPage(page, { maxIterations = 30, settleMs = 120 } = {}) {
+// IntersectionObservers and layout paint across two animation frames between
+// steps. Robust to pages that grow while scrolling via a hard iteration cap.
+async function scrollThroughPage(page, { maxIterations = 30 } = {}) {
   const metrics = { scrollPasses: 0, scrolledTo: 0, maxScrollHeight: 0, capped: false };
   const originalY = await page.evaluate(() => window.scrollY).catch(() => 0);
   for (let i = 0; i < maxIterations; i += 1) {
@@ -1794,12 +2440,12 @@ async function scrollThroughPage(page, { maxIterations = 30, settleMs = 120 } = 
     metrics.scrollPasses += 1;
     metrics.scrolledTo = Math.max(metrics.scrolledTo, Math.round(state.scrollY));
     metrics.maxScrollHeight = Math.max(metrics.maxScrollHeight, Math.round(state.scrollHeight));
-    await page.waitForTimeout(settleMs);
+    await waitForRenderFrames(page, 2);
     if (state.atBottom) break;
     if (i === maxIterations - 1) metrics.capped = true;
   }
   await page.evaluate((y) => window.scrollTo(0, y), originalY).catch(() => {});
-  await page.waitForTimeout(settleMs).catch(() => {});
+  await waitForRenderFrames(page, 2).catch(() => {});
   return metrics;
 }
 
@@ -3542,12 +4188,16 @@ async function screenshotMasks(page, target, config) {
   return masks;
 }
 
-async function captureEvidenceScreenshot(page, target, viewport, config, cellId, kind) {
-  fs.mkdirSync(config.screenshotDir, { recursive: true, mode: 0o700 });
-  const file = path.join(
+function screenshotArtifactPath(config, cellId, target, viewport, kind) {
+  return path.join(
     config.screenshotDir,
     `${cellId}-${sanitizeFilePart(target.name || target.url)}-${sanitizeFilePart(viewport.name)}-${kind}.png`,
   );
+}
+
+async function captureEvidenceScreenshot(page, target, viewport, config, cellId, kind) {
+  fs.mkdirSync(config.screenshotDir, { recursive: true, mode: 0o700 });
+  const file = screenshotArtifactPath(config, cellId, target, viewport, kind);
   const masks = await screenshotMasks(page, target, config);
   const buffer = await page.screenshot({
     path: file,
@@ -3612,6 +4262,10 @@ async function verifyTarget(page, target, viewport, config, cellId) {
     screenshots: { viewport: null, fullPage: null },
     evidenceErrors: [],
     continuation: { checked: false, evidence: null },
+    handoffs: [],
+    waitEvidence: [],
+    actionTimings: [],
+    timings: { stages: [] },
     review: {
       reviewCellKey,
       sourceFingerprint: target.reviewEvidence?.fingerprint || null,
@@ -3622,7 +4276,19 @@ async function verifyTarget(page, target, viewport, config, cellId) {
     const endedMs = Date.now();
     result.endedAt = new Date(endedMs).toISOString();
     result.durationMs = Math.max(0, endedMs - cellStartedMs);
+    result.timings.totalMs = result.durationMs;
     return result;
+  };
+  const stage = async (name, operation) => {
+    const started = Date.now();
+    try {
+      const value = await operation();
+      result.timings.stages.push({ name, durationMs: Date.now() - started, outcome: "completed" });
+      return value;
+    } catch (error) {
+      result.timings.stages.push({ name, durationMs: Date.now() - started, outcome: "failed" });
+      throw error;
+    }
   };
   if (target.contractErrors?.length) {
     result.skipped = true;
@@ -3631,9 +4297,17 @@ async function verifyTarget(page, target, viewport, config, cellId) {
     return finish();
   }
   let response;
+  const initialWait = mergeWaitFor(config.waitFor, target.waitFor);
+  const initialArmed = armWaitFor(page, initialWait);
   try {
-    response = await page.goto(target.url, { waitUntil: "domcontentloaded", timeout: 15000 });
-    await applyWaitFor(page, mergeWaitFor(config.waitFor, target.waitFor));
+    response = await stage("navigation", () => page.goto(
+      target.url,
+      { waitUntil: "domcontentloaded", timeout: 15000 },
+    ));
+    result.waitEvidence.push(...await stage(
+      "initial-readiness",
+      () => applyWaitFor(page, initialWait, initialArmed),
+    ));
   } catch (error) {
     result.skipped = true;
     result.outcome = "navigation_error";
@@ -3686,15 +4360,40 @@ async function verifyTarget(page, target, viewport, config, cellId) {
     result.title = await page.title().catch(() => "");
     return finish();
   }
-  let stateExecution = { beforeContinuation: null };
+  let stateExecution = {
+    beforeContinuation: null,
+    waitEvidence: [],
+    actionTimings: [],
+    handoff: null,
+    failure: null,
+  };
   if (target.verificationState) {
-    try {
-      stateExecution = await applyInteractionState(page, target.verificationState);
-    } catch (error) {
+    stateExecution = await stage(
+      "interaction-state",
+      () => applyInteractionState(page, target.verificationState, target),
+    );
+    result.waitEvidence.push(...stateExecution.waitEvidence);
+    result.actionTimings.push(...stateExecution.actionTimings);
+    if (stateExecution.handoff) result.handoffs.push(stateExecution.handoff);
+    if (stateExecution.failure) {
       result.skipped = true;
       result.outcome = "interaction_error";
-      result.skipReason = `interaction-state-${target.verificationState.name}-failed: ${error.message}`;
+      result.skipReason = `interaction-state-${target.verificationState.name}-failed: ${stateExecution.failure.message}`;
+      result.interactionFailure = stateExecution.failure;
       result.title = await page.title().catch(() => "");
+      try {
+        result.screenshots.viewport = await captureEvidenceScreenshot(
+          page,
+          target,
+          viewport,
+          config,
+          cellId,
+          "viewport",
+        );
+        result.screenshot = result.screenshots.viewport.path;
+      } catch (error) {
+        result.evidenceErrors.push(`failure viewport screenshot failed: ${error.message}`);
+      }
       return finish();
     }
   }
@@ -3714,7 +4413,7 @@ async function verifyTarget(page, target, viewport, config, cellId) {
     result.title = await page.title().catch(() => "");
     return finish();
   }
-  if (target.continuation) {
+  if (target.continuation && !stateExecution.handoff) {
     const continuation = await verifyContinuation(
       page,
       target.continuation,
@@ -4074,7 +4773,9 @@ function buildChangedReviewQueue(pages, config, runId) {
     entries.push({ ...common, reasons });
   }
   const disposed = new Map(config.reviewRemovedCells.map((item) => [item.reviewCellKey, item.reason]));
-  const removed = [...priorDecisions.keys()].filter((key) => !currentKeys.has(key)).sort();
+  const removed = config.development.enabled
+    ? []
+    : [...priorDecisions.keys()].filter((key) => !currentKeys.has(key)).sort();
   const undisposedRemoved = removed.filter((key) => !disposed.has(key));
   const invalidDispositions = [...disposed.keys()].filter((key) => !removed.includes(key)).sort();
   const removedDispositions = removed
@@ -4132,7 +4833,7 @@ function writeReviewQueueArtifact(queue, reviewQueueOut) {
   return sha256(bytes);
 }
 
-function summarizeCoverage(pages, config, planCells, review) {
+function summarizeCoverage(pages, config, planCells, review, selection = null) {
   const checkedPages = pages.filter((page) => page.outcome === "checked");
   const failures = [];
   const tolerated = [];
@@ -4163,14 +4864,20 @@ function summarizeCoverage(pages, config, planCells, review) {
       failures.push(row);
     }
   }
-  const minimumFailure = checkedPages.length < config.minCheckedPages
-    ? `checked ${checkedPages.length} page(s), below required minimum ${config.minCheckedPages}`
+  const requiredCheckedPages = config.development.enabled
+    ? Math.min(config.minCheckedPages, planCells.length)
+    : config.minCheckedPages;
+  const minimumFailure = checkedPages.length < requiredCheckedPages
+    ? `checked ${checkedPages.length} page(s), below required minimum ${requiredCheckedPages}`
     : null;
   return {
     failed: failures.length > 0 || Boolean(minimumFailure) || Boolean(review?.coverageFailures?.length),
     checkedPages: checkedPages.length,
     plannedPages: planCells.length,
-    requiredCheckedPages: config.minCheckedPages,
+    requiredCheckedPages,
+    readinessEligible: selection?.readinessEligible ?? true,
+    coverageMode: selection?.mode || "complete",
+    fullDeclaredPages: selection?.fullPlanCount ?? planCells.length,
     pageBudget: config.maxPageCount,
     widthCoverageMode: "sampled-only",
     widthCoverageNote: "Only the listed viewport widths were checked; widths between samples were not inspected.",
@@ -4188,6 +4895,9 @@ function summarizeCoverage(pages, config, planCells, review) {
       startedAt: page.startedAt,
       endedAt: page.endedAt,
       durationMs: page.durationMs,
+      execution: page.execution || null,
+      cacheHit: Boolean(page.cache?.hit),
+      cleanupStatus: page.cleanup?.status || "unknown",
     })),
     failures,
     tolerated,
@@ -4209,7 +4919,11 @@ function markdownReport(report) {
   lines.push(`- Duration: ${report.durationMs} ms`);
   lines.push(`- Browser: ${report.browser}`);
   lines.push(`- Targets: ${report.targets.length}`);
-  lines.push(`- Planned page cells: ${report.plan.plannedPageCount}/${report.plan.pageBudget}`);
+  lines.push(`- Selected page cells: ${report.plan.plannedPageCount}/${report.plan.fullDeclaredPageCount} declared (${report.plan.pageBudget} budget)`);
+  lines.push(`- Execution mode: ${report.plan.selection.mode}`);
+  lines.push(`- Readiness eligible: ${report.coverage.readinessEligible ? "yes" : "no — development acceleration only"}`);
+  lines.push(`- Maximum concurrency: ${report.execution.maxConcurrency}`);
+  lines.push(`- Cache hits: ${report.pages.filter((page) => page.cache?.hit).length}`);
   lines.push(`- Pages checked: ${report.pages.filter((page) => page.outcome === "checked").length}`);
   lines.push(`- Pages skipped: ${report.pages.filter((page) => page.skipped).length}`);
   lines.push(`- Coverage gate: ${report.coverage.failed ? "failed" : "passed"}`);
@@ -4224,11 +4938,29 @@ function markdownReport(report) {
   lines.push(`- Config hash scope: ${report.evidence.config.scope}`);
   lines.push(`- Width coverage: sampled-only — ${report.plan.widthCoverageNote}`, "");
   lines.push("## Pages", "");
-  lines.push("| Cell | Target | Requested path | Final path | State | Viewport | HTTP | Source binding | Result | Findings | Initial viewport | Full page |");
-  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("| Cell | Plan/exec | Priority | Target | Requested path | Final path | State | Viewport | HTTP | Source binding | Cache | Cleanup | Duration | Result | Findings | Initial viewport | Full page |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const page of report.pages) {
     const result = page.skipped ? `${page.outcome}: ${page.skipReason}` : "checked";
-    lines.push(`| ${escapeMd(page.cellId)} | ${escapeMd(page.target.name || page.target.url)} | ${escapeMd(page.requestedPath || "")} | ${escapeMd(page.finalPath || "")} | ${escapeMd(page.target.stateName || "base")} | ${escapeMd(page.viewport.name)} ${page.viewport.width}x${page.viewport.height} | ${page.status ?? ""} | ${escapeMd(page.sourceBinding?.status || "unbound")} | ${escapeMd(result)} | ${(page.findings || []).length} | ${page.screenshots?.viewport ? escapeMd(page.screenshots.viewport.path) : ""} | ${page.screenshots?.fullPage ? escapeMd(page.screenshots.fullPage.path) : ""} |`);
+    lines.push(`| ${escapeMd(page.cellId)} | ${(page.execution?.planIndex ?? 0) + 1}/${page.execution?.executionIndex ?? "-"} | ${page.execution?.priority ?? ""} | ${escapeMd(page.target.name || page.target.url)} | ${escapeMd(page.requestedPath || "")} | ${escapeMd(page.finalPath || "")} | ${escapeMd(page.target.stateName || "base")} | ${escapeMd(page.viewport.name)} ${page.viewport.width}x${page.viewport.height} | ${page.status ?? ""} | ${escapeMd(page.sourceBinding?.status || "unbound")} | ${page.cache?.hit ? "hit" : "miss"} | ${escapeMd(page.cleanup?.status || "unknown")} | ${page.durationMs ?? 0} ms | ${escapeMd(result)} | ${(page.findings || []).length} | ${page.screenshots?.viewport ? escapeMd(page.screenshots.viewport.path) : ""} | ${page.screenshots?.fullPage ? escapeMd(page.screenshots.fullPage.path) : ""} |`);
+  }
+  lines.push("", "## Execution & Timing", "");
+  if (report.authentication.length) {
+    lines.push("| Authentication profile | Status | Duration | Error |");
+    lines.push("| --- | --- | --- | --- |");
+    for (const profile of report.authentication) {
+      lines.push(`| ${escapeMd(profile.name)} | ${escapeMd(profile.status)} | ${profile.durationMs} ms | ${escapeMd(profile.error || "")} |`);
+    }
+    lines.push("");
+  }
+  lines.push("| Cell | Wait evidence | Actions | Handoffs | Stage timing |");
+  lines.push("| --- | --- | --- | --- | --- |");
+  for (const page of report.pages) {
+    const waits = (page.waitEvidence || []).map((item) => `${item.kind}:${item.durationMs}ms`).join(", ");
+    const actions = (page.actionTimings || []).map((item) => `${item.action}:${item.outcome}:${item.durationMs}ms`).join(", ");
+    const handoffs = (page.handoffs || []).map((item) => `${item.ownerJourney}/${item.ownerState}`).join(", ");
+    const stages = (page.timings?.stages || []).map((item) => `${item.name}:${item.outcome}:${item.durationMs}ms`).join(", ");
+    lines.push(`| ${escapeMd(page.cellId)} | ${escapeMd(waits)} | ${escapeMd(actions)} | ${escapeMd(handoffs)} | ${escapeMd(stages)} |`);
   }
   lines.push("", "## Visible Scrollbars", "");
   const scrollbarRows = [];
@@ -4359,7 +5091,12 @@ function ensureTargets(config) {
     });
     if (seen.has(signature)) continue;
     seen.add(signature);
-    unique.push(target);
+    unique.push({
+      ...target,
+      targetGroupId: target.targetGroupId || `discovered-target-${unique.length + 1}`,
+      execution: normalizeExecution(target.execution, "target.execution", config.targetDefaults.execution),
+      authProfile: target.authProfile ?? config.targetDefaults.authProfile,
+    });
   }
   if (!unique.length) throw new Error("No targets to verify. Provide --url, --config targets, or --from-coordinator.");
   return unique;
@@ -4388,6 +5125,9 @@ function artifactReceipt(artifacts) {
     if (artifacts.screenshotDir && fs.existsSync(artifacts.screenshotDir)) {
       receipt.screenshots = path.relative(jsonDirectory, artifacts.screenshotDir) || path.basename(artifacts.screenshotDir);
     }
+    if (artifacts.progressOut && fs.existsSync(artifacts.progressOut)) {
+      receipt.progress = path.relative(jsonDirectory, artifacts.progressOut) || path.basename(artifacts.progressOut);
+    }
     return receipt;
   }
   return {
@@ -4398,6 +5138,9 @@ function artifactReceipt(artifacts) {
       : {}),
     ...(artifacts.screenshotDir && fs.existsSync(artifacts.screenshotDir)
       ? { screenshots: artifacts.screenshotDir }
+      : {}),
+    ...(artifacts.progressOut && fs.existsSync(artifacts.progressOut)
+      ? { progress: artifacts.progressOut }
       : {}),
   };
 }
@@ -4411,6 +5154,7 @@ function emitReceipt(receipt) {
           markdown: path.basename(receipt.artifacts.markdown || "report.md"),
           reviewQueue: path.basename(receipt.artifacts.reviewQueue || "review-queue.json"),
           screenshots: path.basename(receipt.artifacts.screenshots || "screenshots"),
+          progress: path.basename(receipt.artifacts.progress || "progress.jsonl"),
           pathOmittedForBound: true,
         }
       : undefined;
@@ -4429,7 +5173,9 @@ function resultReceipt(report, exitCode, config, blocking) {
   return {
     tool: "formal-web-ui-verification",
     runId: report.runId,
-    status: exitCode === 0 ? "passed" : (exitCode === 1 ? "blocking-findings" : "coverage-failed"),
+    status: exitCode === 0
+      ? (report.coverage.readinessEligible ? "passed" : "development-passed")
+      : (exitCode === 1 ? "blocking-findings" : "coverage-failed"),
     exitCode,
     failOn: config.rules.failOn,
     counts: {
@@ -4440,8 +5186,11 @@ function resultReceipt(report, exitCode, config, blocking) {
       skippedPages: report.pages.filter((page) => page.skipped).length,
       reviewPending: report.review.pendingCount,
       carriedReviewGaps: report.review.carriedGapCount + report.review.carriedBlockedCount,
+      cacheHits: report.pages.filter((page) => page.cache?.hit).length,
+      executedCells: report.execution.executedCount,
     },
     coverage: report.coverage.failed ? "failed" : "passed",
+    readinessEligible: report.coverage.readinessEligible,
     artifacts: artifactReceipt(activeArtifacts),
   };
 }
@@ -4475,7 +5224,7 @@ function setupFailureArtifacts(error, preferred, fallback) {
         ? {
             algorithm: "sha256",
             sha256: activeConfigSha256,
-            scope: "privacy-safe normalized effective config; action and cookie values redacted",
+            scope: "privacy-safe normalized effective config; action, cookie, auth, and readback values redacted",
           }
         : null,
     },
@@ -4525,6 +5274,514 @@ function setupFailureArtifacts(error, preferred, fallback) {
   return { report, artifacts: undefined, writeError };
 }
 
+function applyConfiguredCookies(context, cookies, targetUrl) {
+  if (!cookies.length) return Promise.resolve();
+  return context.addCookies(cookies.map((cookie) => ({
+    name: cookie.name,
+    value: cookie.value,
+    ...(cookie.domain
+      ? { domain: cookie.domain, path: cookie.path || "/" }
+      : { url: cookie.url || targetUrl }),
+  })));
+}
+
+async function prepareAuthentication(browser, config) {
+  const states = new Map();
+  const report = [];
+  for (const profile of config.authProfiles) {
+    const started = Date.now();
+    let context = null;
+    try {
+      context = await browser.newContext({
+        ...(config.ignoreHttpsErrors ? { ignoreHTTPSErrors: true } : {}),
+      });
+      await applyConfiguredCookies(context, config.cookies, profile.url);
+      const page = await context.newPage();
+      await page.goto(profile.url, { waitUntil: "domcontentloaded", timeout: 15000 });
+      const execution = await applyInteractionState(page, {
+        name: `auth:${profile.name}`,
+        actions: profile.actions,
+        waitFor: profile.waitFor,
+        afterFailureWaitFor: {},
+        continuation: null,
+      });
+      if (execution.failure || execution.handoff) {
+        throw new Error(execution.failure?.message || "authentication action unexpectedly handed off");
+      }
+      const storageState = await context.storageState();
+      states.set(profile.name, { ok: true, storageState });
+      report.push({ name: profile.name, status: "ready", durationMs: Date.now() - started });
+    } catch (error) {
+      const message = String(error?.message || error).slice(0, 512);
+      states.set(profile.name, { ok: false, error: message });
+      report.push({ name: profile.name, status: "failed", durationMs: Date.now() - started, error: message });
+    } finally {
+      if (context) await context.close().catch(() => {});
+    }
+  }
+  return { states, report };
+}
+
+function cacheSecretDigest(config, target) {
+  const authProfile = config.authProfiles.find((profile) => profile.name === target.authProfile);
+  return sha256(stableJson({
+    cookies: config.cookies.map((cookie) => ({ ...cookie })),
+    stateActions: (target.verificationState?.actions || []).map((action) => ({
+      action: action.action,
+      selector: action.selector,
+      value: action.value,
+    })),
+    authActions: (authProfile?.actions || []).map((action) => ({
+      action: action.action,
+      selector: action.selector,
+      value: action.value,
+    })),
+    readbackExpectations: [
+      config.waitFor?.readback?.equals,
+      target.waitFor?.readback?.equals,
+      target.verificationState?.waitFor?.readback?.equals,
+      target.verificationState?.afterFailureWaitFor?.readback?.equals,
+      authProfile?.waitFor?.readback?.equals,
+    ],
+  }));
+}
+
+function ensureExplicitCacheRoot(config) {
+  const cache = config.development.cache;
+  if (!cache) return null;
+  if (!fs.existsSync(cache.directory)) {
+    throw new Error("development cache directory must already exist");
+  }
+  if (pathHasSymlinkComponent(cache.directory)) {
+    throw new Error("development cache directory must not contain symlinked path components");
+  }
+  const stat = fs.lstatSync(cache.directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error("development cache directory must be a regular non-symlink directory");
+  }
+  const real = fs.realpathSync.native(cache.directory);
+  if (config.repoRoot && pathIsWithin(real, fs.realpathSync.native(path.resolve(config.repoRoot)))) {
+    throw new Error("development cache directory must stay outside repoRoot");
+  }
+  return real;
+}
+
+function cacheKeyForCell(cell, config, browserLabel) {
+  const binding = cell.target.sourceBinding || config.sourceBinding;
+  if (!binding?.expected) return { key: null, reason: "source-binding-required" };
+  if (!cell.target.reviewEvidence?.fingerprint) return { key: null, reason: "review-input-fingerprint-required" };
+  const cache = config.development.cache;
+  if (!cache) return { key: null, reason: "cache-disabled" };
+  return {
+    key: sha256(stableJson({
+      schema: 1,
+      verifierSha256,
+      browser: browserLabel,
+      configSha256: activeConfigSha256,
+      secretDigest: cacheSecretDigest(config, cell.target),
+      sourceExpected: binding.expected,
+      sourceFingerprint: cell.target.reviewEvidence.fingerprint,
+      intentFingerprint: cell.target.intentFingerprint,
+      dataRevision: cache.dataRevision,
+      target: publicTarget(cell.target),
+      viewport: publicViewport(cell.viewport),
+    })),
+    reason: null,
+  };
+}
+
+function cacheEntryPath(cacheRoot, key) {
+  return path.join(cacheRoot, "v1", key.slice(0, 2), key);
+}
+
+function readRegularCacheFile(file, cacheRoot) {
+  const resolved = path.resolve(file);
+  if (!pathIsWithin(resolved, cacheRoot) || !fs.existsSync(resolved)) {
+    throw new Error("cache entry file is missing or outside the cache root");
+  }
+  if (pathHasSymlinkComponent(resolved)) throw new Error("cache entry contains a symlink");
+  const stat = fs.lstatSync(resolved);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("cache entry must contain regular files");
+  return fs.readFileSync(resolved);
+}
+
+function readCachedCell(cell, config, browserLabel, cacheRoot) {
+  const cache = config.development.cache;
+  if (!cache || !["read", "read-write"].includes(cache.mode)) return { hit: false, reason: "cache-read-disabled" };
+  const identity = cacheKeyForCell(cell, config, browserLabel);
+  if (!identity.key) return { hit: false, reason: identity.reason };
+  const entry = cacheEntryPath(cacheRoot, identity.key);
+  if (!fs.existsSync(entry)) return { hit: false, reason: "not-found", key: identity.key };
+  try {
+    const manifestBytes = readRegularCacheFile(path.join(entry, "manifest.json"), cacheRoot);
+    const manifest = JSON.parse(manifestBytes.toString("utf8"));
+    const { integritySha256, ...payload } = manifest;
+    if (
+      manifest.schemaVersion !== 1 || manifest.key !== identity.key ||
+      !SHA256_RE.test(integritySha256 || "") || sha256(stableJson(payload)) !== integritySha256
+    ) {
+      throw new Error("cache manifest integrity mismatch");
+    }
+    fs.mkdirSync(config.screenshotDir, { recursive: true, mode: 0o700 });
+    const page = structuredClone(manifest.page);
+    for (const kind of ["viewport", "fullPage"]) {
+      const sourceName = kind === "viewport" ? "viewport.png" : "full-page.png";
+      const descriptor = page.screenshots?.[kind];
+      if (!descriptor || !SHA256_RE.test(descriptor.sha256 || "")) {
+        throw new Error(`cache ${kind} screenshot descriptor is invalid`);
+      }
+      const bytes = readRegularCacheFile(path.join(entry, sourceName), cacheRoot);
+      if (sha256(bytes) !== descriptor.sha256) throw new Error(`cache ${kind} screenshot hash mismatch`);
+      pngDimensions(bytes);
+      const destination = screenshotArtifactPath(
+        config,
+        cell.cellId,
+        cell.target,
+        cell.viewport,
+        kind === "viewport" ? "viewport" : "full-page",
+      );
+      fs.copyFileSync(path.join(entry, sourceName), destination, fs.constants.COPYFILE_EXCL);
+      descriptor.path = destination;
+    }
+    const now = new Date().toISOString();
+    page.cellId = cell.cellId;
+    page.target = publicTarget(cell.target);
+    page.viewport = publicViewport(cell.viewport);
+    page.startedAt = now;
+    page.endedAt = now;
+    page.durationMs = 0;
+    page.cachedEvidence = {
+      originalStartedAt: manifest.page.startedAt,
+      originalEndedAt: manifest.page.endedAt,
+      originalDurationMs: manifest.page.durationMs,
+      originalTimings: manifest.page.timings,
+    };
+    page.waitEvidence = [];
+    page.actionTimings = [];
+    page.timings = { stages: [{ name: "cache-reuse", durationMs: 0, outcome: "completed" }], totalMs: 0 };
+    page.screenshot = page.screenshots.viewport.path;
+    page.cache = { hit: true, key: identity.key, createdAt: manifest.createdAt };
+    return { hit: true, key: identity.key, page };
+  } catch (error) {
+    return { hit: false, reason: `rejected:${String(error?.message || error).slice(0, 240)}`, key: identity.key };
+  }
+}
+
+function writeCachedCell(cell, page, config, browserLabel, cacheRoot) {
+  const cache = config.development.cache;
+  if (!cache || !["write", "read-write"].includes(cache.mode)) return { written: false, reason: "cache-write-disabled" };
+  const identity = cacheKeyForCell(cell, config, browserLabel);
+  if (!identity.key) return { written: false, reason: identity.reason };
+  const failThreshold = SEVERITY_ORDER[config.rules.failOn];
+  if (
+    page.outcome !== "checked" || page.evidenceErrors?.length ||
+    page.sourceBinding?.status !== "matched" ||
+    (page.findings || []).some((finding) => SEVERITY_ORDER[finding.severity] >= failThreshold) ||
+    !page.screenshots?.viewport?.path || !page.screenshots?.fullPage?.path
+  ) {
+    return { written: false, reason: "cell-not-successful" };
+  }
+  const entry = cacheEntryPath(cacheRoot, identity.key);
+  if (fs.existsSync(entry)) return { written: false, reason: "already-present", key: identity.key };
+  const parent = path.dirname(entry);
+  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+  if (pathHasSymlinkComponent(parent)) throw new Error("cache entry parent contains a symlink");
+  const temporary = path.join(parent, `.${identity.key}.tmp-${process.pid}-${Date.now()}`);
+  fs.mkdirSync(temporary, { mode: 0o700 });
+  try {
+    const cachedPage = structuredClone(page);
+    delete cachedPage.cache;
+    delete cachedPage.execution;
+    cachedPage.screenshots.viewport.path = "viewport.png";
+    cachedPage.screenshots.fullPage.path = "full-page.png";
+    cachedPage.screenshot = "viewport.png";
+    fs.copyFileSync(page.screenshots.viewport.path, path.join(temporary, "viewport.png"), fs.constants.COPYFILE_EXCL);
+    fs.copyFileSync(page.screenshots.fullPage.path, path.join(temporary, "full-page.png"), fs.constants.COPYFILE_EXCL);
+    const payload = {
+      schemaVersion: 1,
+      key: identity.key,
+      createdAt: new Date().toISOString(),
+      page: cachedPage,
+    };
+    const manifest = { ...payload, integritySha256: sha256(stableJson(payload)) };
+    fs.writeFileSync(path.join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    fs.renameSync(temporary, entry);
+    return { written: true, key: identity.key };
+  } catch (error) {
+    fs.rmSync(temporary, { recursive: true, force: true });
+    if (fs.existsSync(entry)) return { written: false, reason: "concurrent-entry", key: identity.key };
+    throw error;
+  }
+}
+
+function syntheticCellResult(cell, outcome, reason) {
+  const now = new Date().toISOString();
+  const requested = routeEvidence(cell.target.url);
+  return {
+    cellId: cell.cellId,
+    target: publicTarget(cell.target),
+    viewport: publicViewport(cell.viewport),
+    skipped: true,
+    outcome,
+    skipReason: reason,
+    url: cell.target.url,
+    requestedPath: requested.path,
+    finalPath: null,
+    requestedOrigin: requested.origin,
+    finalOrigin: null,
+    redirected: false,
+    sourceBinding: { status: "unbound", expected: null, observed: null, observedFrom: null },
+    startedAt: now,
+    endedAt: now,
+    durationMs: 0,
+    status: null,
+    contentType: null,
+    title: "",
+    metrics: {},
+    findings: [],
+    screenshot: null,
+    screenshots: { viewport: null, fullPage: null },
+    evidenceErrors: [],
+    continuation: { checked: false, evidence: null },
+    handoffs: [],
+    waitEvidence: [],
+    actionTimings: [],
+    timings: { stages: [], totalMs: 0 },
+    review: {
+      reviewCellKey: null,
+      sourceFingerprint: cell.target.reviewEvidence?.fingerprint || null,
+      intentFingerprint: cell.target.intentFingerprint || null,
+    },
+  };
+}
+
+function initializeProgress(config, runId, selection) {
+  fs.mkdirSync(path.dirname(config.progressOut), { recursive: true });
+  fs.writeFileSync(config.progressOut, `${JSON.stringify({
+    kind: "run-start",
+    runId,
+    startedAt: runStartedAt,
+    selection: {
+      mode: selection.mode,
+      fullPlanCount: selection.fullPlanCount,
+      selectedCount: selection.selectedCount,
+      readinessEligible: selection.readinessEligible,
+    },
+  })}\n`, { encoding: "utf8", mode: 0o600 });
+}
+
+function appendProgress(config, page) {
+  const row = {
+    kind: "cell-complete",
+    cellId: page.cellId,
+    planIndex: page.execution?.planIndex,
+    executionIndex: page.execution?.executionIndex,
+    targetName: page.target.name || page.requestedPath || "target",
+    stateName: page.target.stateName || "base",
+    viewport: page.viewport.name,
+    outcome: page.outcome,
+    durationMs: page.durationMs,
+    cacheHit: Boolean(page.cache?.hit),
+    cleanup: page.cleanup?.status || "unknown",
+  };
+  fs.appendFileSync(config.progressOut, `${JSON.stringify(row)}\n`, "utf8");
+}
+
+function finalizeProgress(config, report) {
+  fs.appendFileSync(config.progressOut, `${JSON.stringify({
+    kind: "run-complete",
+    runId: report.runId,
+    endedAt: report.endedAt,
+    durationMs: report.durationMs,
+    checkedPages: report.coverage.checkedPages,
+    failed: report.coverage.failed,
+    readinessEligible: report.coverage.readinessEligible,
+    unsafeStop: report.execution.unsafeStop,
+  })}\n`, "utf8");
+}
+
+async function runVerificationCell(browser, cell, config, browserLabel, authStates, cacheRoot, executionIndex) {
+  const execution = {
+    planIndex: cell.planIndex,
+    executionIndex,
+    priority: cell.executionPriority,
+    parallelSafe: cell.target.execution.parallelSafe,
+    resourceLocks: cell.target.execution.resourceLocks,
+    stopOnFailure: cell.target.execution.stopOnFailure,
+    stopReason: cell.target.execution.stopReason,
+  };
+  const profile = cell.target.authProfile ? authStates.get(cell.target.authProfile) : null;
+  if (profile && !profile.ok) {
+    const page = syntheticCellResult(cell, "auth_setup_error", `authentication profile failed: ${profile.error}`);
+    page.execution = execution;
+    page.cleanup = { status: "not-required" };
+    return {
+      page,
+      unsafeStop: cell.target.execution.stopOnFailure
+        ? `declared-unsafe:${cell.target.execution.stopReason}`
+        : null,
+    };
+  }
+  let cacheRead = { hit: false, reason: "cache-disabled" };
+  if (cacheRoot) {
+    cacheRead = readCachedCell(cell, config, browserLabel, cacheRoot);
+    if (cacheRead.hit) {
+      cacheRead.page.execution = execution;
+      cacheRead.page.cleanup = { status: "not-required" };
+      return { page: cacheRead.page, unsafeStop: null };
+    }
+  }
+  let context = null;
+  let pageResult = null;
+  let cleanupError = null;
+  try {
+    context = await browser.newContext({
+      ...cell.viewport.contextOptions,
+      ...(profile?.storageState ? { storageState: profile.storageState } : {}),
+      ...(config.ignoreHttpsErrors ? { ignoreHTTPSErrors: true } : {}),
+    });
+    await applyConfiguredCookies(context, config.cookies, cell.target.url);
+    const page = await context.newPage();
+    pageResult = await verifyTarget(page, cell.target, cell.viewport, config, cell.cellId);
+  } catch (error) {
+    pageResult = syntheticCellResult(
+      cell,
+      "internal_cell_error",
+      `cell execution failed: ${String(error?.message || error).slice(0, 512)}`,
+    );
+  } finally {
+    if (context) {
+      try {
+        await context.close();
+      } catch (error) {
+        cleanupError = String(error?.message || error).slice(0, 512);
+      }
+    }
+  }
+  pageResult.execution = execution;
+  pageResult.cleanup = cleanupError
+    ? { status: "failed", error: cleanupError }
+    : { status: "completed" };
+  pageResult.cache = { hit: false, reason: cacheRead.reason, key: cacheRead.key || null };
+  if (cleanupError && pageResult.outcome === "checked") {
+    pageResult.skipped = true;
+    pageResult.outcome = "cleanup_error";
+    pageResult.skipReason = `isolated browser context cleanup failed: ${cleanupError}`;
+  }
+  if (cacheRoot) {
+    try {
+      pageResult.cache.write = writeCachedCell(cell, pageResult, config, browserLabel, cacheRoot);
+    } catch (error) {
+      pageResult.cache.write = { written: false, reason: `error:${String(error?.message || error).slice(0, 240)}` };
+    }
+  }
+  const declaredUnsafe = pageResult.outcome !== "checked" && cell.target.execution.stopOnFailure
+    ? `declared-unsafe:${cell.target.execution.stopReason}`
+    : null;
+  return {
+    page: pageResult,
+    unsafeStop: browser.isConnected() ? declaredUnsafe : "browser-authority-lost",
+  };
+}
+
+function canRunCell(cell, running) {
+  const execution = cell.target.execution;
+  if (!execution.parallelSafe) return running.length === 0;
+  if (running.some((entry) => !entry.cell.target.execution.parallelSafe)) return false;
+  const activeLocks = new Set(running.flatMap((entry) => entry.cell.target.execution.resourceLocks));
+  return !execution.resourceLocks.some((lock) => activeLocks.has(lock));
+}
+
+async function executePlan(
+  browser,
+  cells,
+  config,
+  browserLabel,
+  authStates,
+  cacheRoot,
+  cellRunner = runVerificationCell,
+) {
+  const pending = [...cells].sort((left, right) =>
+    right.executionPriority - left.executionPriority || left.planIndex - right.planIndex
+  );
+  const running = [];
+  const results = new Map();
+  let executionCounter = 0;
+  let unsafeStop = null;
+  const startCell = (cell) => {
+    executionCounter += 1;
+    const entry = { cell, promise: null };
+    entry.promise = cellRunner(
+      browser,
+      cell,
+      config,
+      browserLabel,
+      authStates,
+      cacheRoot,
+      executionCounter,
+    ).then((value) => ({ entry, value }));
+    running.push(entry);
+  };
+  while ((pending.length || running.length) && !unsafeStop) {
+    let launched = false;
+    for (let index = 0; index < pending.length && running.length < config.execution.maxConcurrency;) {
+      const cell = pending[index];
+      if (!canRunCell(cell, running)) {
+        index += 1;
+        continue;
+      }
+      pending.splice(index, 1);
+      startCell(cell);
+      launched = true;
+    }
+    if (!running.length && pending.length) {
+      startCell(pending.shift());
+      launched = true;
+    }
+    if (!running.length) break;
+    if (!launched || running.length >= config.execution.maxConcurrency || !pending.length) {
+      const completed = await Promise.race(running.map((entry) => entry.promise));
+      running.splice(running.indexOf(completed.entry), 1);
+      results.set(completed.entry.cell.planIndex, completed.value.page);
+      appendProgress(config, completed.value.page);
+      if (completed.value.unsafeStop) unsafeStop = completed.value.unsafeStop;
+    }
+  }
+  while (running.length) {
+    const completed = await Promise.race(running.map((entry) => entry.promise));
+    running.splice(running.indexOf(completed.entry), 1);
+    results.set(completed.entry.cell.planIndex, completed.value.page);
+    appendProgress(config, completed.value.page);
+    if (completed.value.unsafeStop && !unsafeStop) unsafeStop = completed.value.unsafeStop;
+  }
+  if (unsafeStop) {
+    for (const cell of pending) {
+      const page = syntheticCellResult(cell, "unsafe_stop_unexecuted", `not executed after ${unsafeStop}`);
+      page.execution = {
+        planIndex: cell.planIndex,
+        executionIndex: null,
+        priority: cell.executionPriority,
+        parallelSafe: cell.target.execution.parallelSafe,
+        resourceLocks: cell.target.execution.resourceLocks,
+        stopOnFailure: cell.target.execution.stopOnFailure,
+        stopReason: cell.target.execution.stopReason,
+      };
+      page.cleanup = { status: "not-required" };
+      results.set(cell.planIndex, page);
+      appendProgress(config, page);
+    }
+  }
+  return {
+    pages: [...results.entries()].sort(([left], [right]) => left - right).map(([, page]) => page),
+    unsafeStop,
+    executionCount: executionCounter,
+  };
+}
+
 async function main() {
   const rawArgs = process.argv.slice(2);
   if (rawArgs.includes("--help") || rawArgs.includes("-h")) {
@@ -4542,8 +5799,23 @@ async function main() {
   const targets = prepareTargetContracts(expandTargetStates(ensureTargets(config)), config);
   const { chromium, devices } = resolvePlaywright(config.playwrightModuleDir);
   config.viewports = resolveViewports(config.viewports, devices);
-  const planCells = buildExecutionPlan(targets, config.viewports, config.maxPageCount);
+  const fullPlanCells = buildExecutionPlan(targets, config.viewports, config.maxPageCount);
+  const selected = selectExecutionCells(fullPlanCells, config.development);
+  const planCells = selected.cells;
+  if (config.development.cache) {
+    const cacheIneligible = planCells.find((cell) =>
+      !((cell.target.sourceBinding || config.sourceBinding)?.expected) ||
+      !cell.target.reviewEvidence?.fingerprint
+    );
+    if (cacheIneligible) {
+      throw new Error(
+        `development cache requires sourceBinding.expected and valid reviewInputs for every selected cell (${cacheIneligible.cellId})`,
+      );
+    }
+  }
+  const cacheRoot = ensureExplicitCacheRoot(config);
   const { browser, browserLabel } = await launchBrowser(chromium, config.browserExecutable);
+  const authentication = await prepareAuthentication(browser, config);
   const report = {
     schemaVersion: REPORT_SCHEMA_VERSION,
     runId: `formal-web-ui-${Date.now().toString(36)}`,
@@ -4553,49 +5825,40 @@ async function main() {
     durationMs: null,
     browser: browserLabel,
     targets: targets.map(publicTarget),
-    plan: publicExecutionPlan(planCells, config.maxPageCount),
+    plan: publicExecutionPlan(planCells, config.maxPageCount, selected.selection),
     evidence: {
       verifier: { algorithm: "sha256", sha256: verifierSha256 },
       config: {
         algorithm: "sha256",
         sha256: activeConfigSha256,
-        scope: "privacy-safe normalized effective config; action and cookie values redacted",
+        scope: "privacy-safe normalized effective config; action, cookie, auth, and readback values redacted",
       },
     },
     pages: [],
     findings: [],
     review: null,
+    authentication: authentication.report,
+    execution: {
+      maxConcurrency: config.execution.maxConcurrency,
+      readinessEligible: selected.selection.readinessEligible,
+      progressPath: config.progressOut,
+      unsafeStop: null,
+      executedCount: 0,
+    },
   };
+  initializeProgress(config, report.runId, selected.selection);
   try {
-    for (const cell of planCells) {
-      const context = await browser.newContext({
-          ...cell.viewport.contextOptions,
-          ...(config.ignoreHttpsErrors ? { ignoreHTTPSErrors: true } : {}),
-        });
-      const page = await context.newPage();
-      try {
-        if (config.cookies.length) {
-          await page.context().addCookies(
-            config.cookies.map((cookie) => ({
-              name: cookie.name,
-              value: cookie.value,
-              ...(cookie.domain
-                ? { domain: cookie.domain, path: cookie.path || "/" }
-                : { url: cookie.url || cell.target.url }),
-            })),
-          );
-        }
-        report.pages.push(await verifyTarget(
-          page,
-          cell.target,
-          cell.viewport,
-          config,
-          cell.cellId,
-        ));
-      } finally {
-        await context.close().catch(() => {});
-      }
-    }
+    const execution = await executePlan(
+      browser,
+      planCells,
+      config,
+      browserLabel,
+      authentication.states,
+      cacheRoot,
+    );
+    report.pages = execution.pages;
+    report.execution.unsafeStop = execution.unsafeStop;
+    report.execution.executedCount = execution.executionCount;
   } finally {
     await browser.close().catch(() => {});
   }
@@ -4608,10 +5871,17 @@ async function main() {
     trigger: changedReview.queue.trigger,
   };
   report.findings = [...summarizeFindings(report.pages), ...changedReview.blockingFindings];
-  report.coverage = summarizeCoverage(report.pages, config, planCells, report.review);
+  report.coverage = summarizeCoverage(
+    report.pages,
+    config,
+    planCells,
+    report.review,
+    selected.selection,
+  );
   report.endedAt = new Date().toISOString();
   report.generatedAt = report.endedAt;
   report.durationMs = Math.max(0, Date.parse(report.endedAt) - Date.parse(report.startedAt));
+  finalizeProgress(config, report);
   const markdown = markdownReport(report);
   writeReportArtifacts(report, markdown, activeArtifacts);
   const failThreshold = SEVERITY_ORDER[config.rules.failOn];
@@ -4626,17 +5896,29 @@ async function main() {
   process.exit(exitCode);
 }
 
-main().catch((error) => {
-  const failure = setupFailureArtifacts(error, activeArtifacts, fallbackArtifacts);
-  activeArtifacts = failure.artifacts;
-  emitReceipt({
-    tool: "formal-web-ui-verification",
-    runId: failure.report.runId,
-    status: "setup-failure",
-    exitCode: 2,
-    artifacts: artifactReceipt(failure.artifacts),
-    artifactStatus: failure.artifacts ? "written" : "unavailable",
+export { executePlan };
+
+let isEntrypoint = false;
+if (process.argv[1]) {
+  try {
+    isEntrypoint = fs.realpathSync.native(process.argv[1]) === fs.realpathSync.native(VERIFIER_PATH);
+  } catch {
+    isEntrypoint = path.resolve(process.argv[1]) === path.resolve(VERIFIER_PATH);
+  }
+}
+if (isEntrypoint) {
+  main().catch((error) => {
+    const failure = setupFailureArtifacts(error, activeArtifacts, fallbackArtifacts);
+    activeArtifacts = failure.artifacts;
+    emitReceipt({
+      tool: "formal-web-ui-verification",
+      runId: failure.report.runId,
+      status: "setup-failure",
+      exitCode: 2,
+      artifacts: artifactReceipt(failure.artifacts),
+      artifactStatus: failure.artifacts ? "written" : "unavailable",
+    });
+    if (failure.artifacts) removeUnusedDefaultArtifacts(fallbackArtifacts, failure.artifacts);
+    process.exit(2);
   });
-  if (failure.artifacts) removeUnusedDefaultArtifacts(fallbackArtifacts, failure.artifacts);
-  process.exit(2);
-});
+}
