@@ -8,10 +8,13 @@ import hashlib
 import os
 import shutil
 import ssl
+import struct
 import subprocess
 import sys
 import tempfile
 import threading
+import urllib.request
+import zlib
 from http.server import BaseHTTPRequestHandler, SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
@@ -239,6 +242,59 @@ class ConcurrencyHandler(BaseHTTPRequestHandler):
         with self.condition:
             type(self).active -= 1
             self.condition.notify_all()
+
+
+class RenderPerformanceHandler(BaseHTTPRequestHandler):
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def do_GET(self) -> None:
+        route = self.path.partition("?")[0]
+        if route == "/lcp.png":
+            width = 256
+            height = 256
+            raw = b"".join(
+                b"\x00" + bytes(
+                    component
+                    for x in range(width)
+                    for component in (x, y, (x + y) % 256, 255)
+                )
+                for y in range(height)
+            )
+
+            def chunk(kind: bytes, payload: bytes) -> bytes:
+                return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload))
+
+            data = (
+                b"\x89PNG\r\n\x1a\n"
+                + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(raw))
+                + chunk(b"IEND", b"")
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        if route == "/slow-ttfb":
+            threading.Event().wait(0.03)
+            body = page("<h1>Slow response</h1><p>The document paints quickly after its delayed first byte.</p>")
+        elif route == "/slow-lcp":
+            body = page(
+                "<p>Initial content</p><img id='late-lcp' width='1000' height='420' alt='Late largest image'>"
+                "<script>setTimeout(()=>{document.querySelector('#late-lcp').src='/lcp.png'},900)</script>",
+            )
+        elif route == "/no-lcp":
+            body = page("<input aria-label='Name' style='width:320px;height:52px'>")
+        else:
+            body = page("<h1>Fast performance</h1><p>Immediate local content.</p>")
+        data = body.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
 
 class DynamicServer:
@@ -515,6 +571,10 @@ def default_target_contract() -> dict:
 def with_target_contract(config: dict) -> dict:
     prepared = json.loads(json.dumps(config))
     prepared.setdefault("repoRoot", str(ROOT.resolve()))
+    prepared.setdefault(
+        "performance",
+        {"ttfbMs": 10000, "lcpMs": 10000, "ttfbLocalOnly": False},
+    )
     defaults = default_target_contract()
     target_defaults = prepared.setdefault("targetDefaults", {})
     if isinstance(target_defaults, dict):
@@ -1369,6 +1429,153 @@ document.querySelector('#open-add').addEventListener('click', () => {
             ),
         )
         server = Server(fixtures)
+        performance_server = DynamicServer(RenderPerformanceHandler).start()
+        try:
+            with urllib.request.urlopen(f"{performance_server.base_url}/fast", timeout=2) as warm_response:
+                warm_response.read()
+
+            def performance_config(route: str, **target_overrides: object) -> dict:
+                return {
+                    "repoRoot": str(ROOT.resolve()),
+                    "targets": [{
+                        **default_target_contract(),
+                        "url": f"{performance_server.base_url}{route}",
+                        **target_overrides,
+                    }],
+                    "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+                    "maxPageCount": 1,
+                }
+
+            fast_performance = run_verify_config(
+                performance_config("/fast"),
+                tmp / "performance-fast-defaults",
+                expect=0,
+                apply_contract_defaults=False,
+            )
+            fast_metrics = fast_performance.get("pages", [{}])[0].get("metrics", {}).get("performance", {})
+            if (
+                fast_metrics.get("ttfb", {}).get("thresholdMs") != 10
+                or fast_metrics.get("lcp", {}).get("thresholdMs") != 800
+                or fast_metrics.get("ttfb", {}).get("status") != "pass"
+                or fast_metrics.get("lcp", {}).get("status") != "pass"
+                or fast_metrics.get("ttfb", {}).get("comparison") != "<"
+                or fast_metrics.get("lcp", {}).get("comparison") != "<"
+            ):
+                raise AssertionError(f"Default rendered-performance thresholds did not pass a fast local page: {fast_metrics}")
+            performance_markdown = (tmp / "performance-fast-defaults" / "report.md").read_text(encoding="utf-8")
+            if "## Rendered Performance" not in performance_markdown or "< 10 ms" not in performance_markdown or "< 800 ms" not in performance_markdown:
+                raise AssertionError("Markdown report omitted formal TTFB/LCP thresholds")
+
+            slow_ttfb = run_verify_config(
+                performance_config("/slow-ttfb"),
+                tmp / "performance-slow-ttfb",
+                expect=1,
+                apply_contract_defaults=False,
+            )
+            assert_critical_rule(slow_ttfb, "ttfb-above-threshold")
+            slow_ttfb_metrics = slow_ttfb.get("pages", [{}])[0].get("metrics", {}).get("performance", {})
+            if slow_ttfb_metrics.get("ttfb", {}).get("valueMs", 0) < 10:
+                raise AssertionError(f"Slow-TTFB fixture did not exceed the default: {slow_ttfb_metrics}")
+
+            slow_lcp = run_verify_config(
+                performance_config(
+                    "/slow-lcp",
+                    waitFor={
+                        "selector": "#late-lcp[src]",
+                        "responseUrl": "**/lcp.png",
+                        "timeoutMs": 2000,
+                    },
+                ),
+                tmp / "performance-slow-lcp",
+                expect=1,
+                apply_contract_defaults=False,
+            )
+            assert_critical_rule(slow_lcp, "lcp-above-threshold")
+            slow_lcp_metrics = slow_lcp.get("pages", [{}])[0].get("metrics", {}).get("performance", {})
+            if slow_lcp_metrics.get("lcp", {}).get("valueMs", 0) < 800:
+                raise AssertionError(f"Slow-LCP fixture did not exceed the default: {slow_lcp_metrics}")
+
+            prescribed = run_verify_config(
+                {
+                    "repoRoot": str(ROOT.resolve()),
+                    "targets": [
+                        {
+                            **default_target_contract(),
+                            "url": f"{performance_server.base_url}/slow-ttfb",
+                            "performance": {"ttfbMs": 100, "lcpMs": 2000},
+                        },
+                        {
+                            **default_target_contract(),
+                            "url": f"{performance_server.base_url}/slow-lcp",
+                            "waitFor": {
+                                "selector": "#late-lcp[src]",
+                                "responseUrl": "**/lcp.png",
+                                "timeoutMs": 2000,
+                            },
+                            "performance": {"ttfbMs": 100, "lcpMs": 2000},
+                        },
+                    ],
+                    "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+                    "maxPageCount": 2,
+                },
+                tmp / "performance-prescribed-thresholds",
+                expect=0,
+                apply_contract_defaults=False,
+            )
+            assert_no_critical(prescribed)
+            if any(
+                page_report.get("metrics", {}).get("performance", {}).get("ttfb", {}).get("thresholdMs") != 100
+                or page_report.get("metrics", {}).get("performance", {}).get("lcp", {}).get("thresholdMs") != 2000
+                for page_report in prescribed.get("pages", [])
+            ):
+                raise AssertionError("Per-target performance thresholds did not override defaults")
+
+            unavailable_lcp = run_verify_config(
+                performance_config("/no-lcp"),
+                tmp / "performance-lcp-unavailable",
+                expect=0,
+                apply_contract_defaults=False,
+            )
+            unavailable_findings = [
+                finding
+                for finding in unavailable_lcp.get("findings", [])
+                if finding.get("rule") == "performance-metric-unavailable"
+                and finding.get("evidence", {}).get("metric") == "LCP"
+            ]
+            if not unavailable_findings:
+                raise AssertionError("Unavailable LCP was silently treated as a pass")
+
+            private_performance = {
+                "metrics": slow_lcp_metrics,
+                "findings": [
+                    finding.get("evidence", {})
+                    for finding in slow_lcp.get("findings", [])
+                    if finding.get("rule") in {"lcp-above-threshold", "ttfb-above-threshold", "performance-metric-unavailable"}
+                ],
+            }
+            serialized_performance = json.dumps(private_performance)
+            if "late-lcp" in serialized_performance or "Late largest image" in serialized_performance or performance_server.base_url in serialized_performance:
+                raise AssertionError("Performance evidence leaked an element selector, text, or URL")
+
+            local_scope_probe = subprocess.run(
+                [
+                    node_binary(),
+                    "--input-type=module",
+                    "--eval",
+                    f"import {{ isLocalServerUrl, performanceThresholdStatus }} from {json.dumps(VERIFY.as_uri())};"
+                    "if (!isLocalServerUrl('http://127.0.0.1:3000/') || !isLocalServerUrl('http://localhost:3000/') || isLocalServerUrl('https://example.test/') || performanceThresholdStatus(10,10)!=='fail' || performanceThresholdStatus(9.99,10)!=='pass' || performanceThresholdStatus(null,10)!=='unavailable' || performanceThresholdStatus(20,10,false)!=='not-applicable') process.exit(9);",
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=TIMEOUT_SECONDS,
+                env=verifier_env(),
+            )
+            if local_scope_probe.returncode != 0:
+                raise AssertionError(f"Local-only TTFB scope probe failed: {local_scope_probe.stderr}")
+        finally:
+            performance_server.close()
+
         unsafe_progress = tmp / "unsafe-scheduler-progress.jsonl"
         scheduler_probe = f"""
 import {{ executePlan }} from {json.dumps(VERIFY.as_uri())};
@@ -2197,6 +2404,17 @@ if (result.executionCount !== 1 || result.unsafeStop !== 'browser-authority-lost
         )
         if "must not exceed 100 ms" not in excessive_delay.get("error", {}).get("message", ""):
             raise AssertionError("A deliberate delay above 100 ms was accepted")
+        invalid_performance = run_verify_config(
+            {
+                "targets": [{"url": f"{server.base_url}/clean.html"}],
+                "viewports": [{"name": "desktop", "width": 1280, "height": 800}],
+                "performance": {"ttfbMs": 0, "lcpMs": 800},
+            },
+            tmp / "invalid-performance-threshold",
+            expect=2,
+        )
+        if "performance.ttfbMs must be a positive number" not in invalid_performance.get("error", {}).get("message", ""):
+            raise AssertionError("A non-positive rendered-performance threshold was accepted")
         verifier_source = VERIFY.read_text(encoding="utf-8")
         if "settleMs = 120" in verifier_source or "waitForTimeout(120" in verifier_source:
             raise AssertionError("The verifier retained a deliberate delay above 100 ms")

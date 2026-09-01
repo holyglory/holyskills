@@ -72,7 +72,8 @@ fails target coverage.
   "viewports": [
     {"name": "mobile", "width": 390, "height": 844},
     {"name": "desktop", "width": 1440, "height": 900}
-  ]
+  ],
+  "performance": {"ttfbMs": 10, "lcpMs": 800, "ttfbLocalOnly": true}
 }
 ```
 
@@ -253,6 +254,44 @@ hidden baseline and never makes a run readiness-eligible.
 - High-chroma surface coverage, four or more prominent accent-hue clusters,
   gradients, media, and unmeasurable compositing are warnings for screenshot
   review. They are not automatic claims that a palette is ugly.
+
+## Rendered Navigation Performance
+
+The verifier installs a buffered Largest Contentful Paint observer before each
+document navigation. After the declared readiness contract and document load
+boundary, it lets visible images decode and waits for paint/observer delivery,
+then captures performance before the verifier's own full-page scroll.
+
+Defaults are strict:
+
+- local `localhost`, `*.localhost`, `127.0.0.1`, or `::1` navigation TTFB must
+  be `< 10 ms`;
+- final main-document LCP must be `< 800 ms`.
+
+Equality fails. TTFB is `PerformanceNavigationTiming.responseStart -
+requestStart`; LCP is the last buffered `LargestContentfulPaint.startTime` for
+the final main document. This LCP does not measure the latency of an in-page
+interaction after user input.
+
+Set global thresholds or override them for a target/state:
+
+```json
+{
+  "performance": {"ttfbMs": 10, "lcpMs": 800, "ttfbLocalOnly": true},
+  "targets": [{
+    "url": "http://127.0.0.1:3000/report",
+    "performance": {"ttfbMs": 8, "lcpMs": 650}
+  }]
+}
+```
+
+`ttfbLocalOnly` defaults to `true`; set it to `false` when an explicit TTFB
+threshold must also govern preview or remote targets. Non-local TTFB under the
+default scope is reported as `not-applicable`, not passed. A required metric
+that Chromium cannot expose raises `performance-metric-unavailable`. Evidence
+contains values, thresholds, comparison, status, navigation type, LCP size,
+local-target flag, and timing source only—never the LCP element, its text, or a
+resource URL.
 
 ## Review Inputs And Evidence
 

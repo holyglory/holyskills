@@ -17,6 +17,11 @@ const DEFAULT_VIEWPORTS = [
 const DEFAULT_MAX_PAGE_COUNT = 60;
 const DEFAULT_MAX_CONCURRENCY = 4;
 const MAX_DELAY_INTERVAL_MS = 100;
+const DEFAULT_RENDERED_PERFORMANCE = Object.freeze({
+  ttfbMs: 10,
+  lcpMs: 800,
+  ttfbLocalOnly: true,
+});
 const RECEIPT_MAX_BYTES = 2048;
 const DEFAULT_ARTIFACT_PREFIX = "formal-web-ui-verification-";
 const REPORT_SCHEMA_VERSION = 2;
@@ -1082,6 +1087,33 @@ function normalizeAuthProfiles(value) {
   });
 }
 
+function normalizeRenderedPerformanceOverride(value, name) {
+  if (value === undefined || value === null) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${name} must be an object`);
+  }
+  const normalized = {};
+  for (const key of ["ttfbMs", "lcpMs"]) {
+    if (value[key] === undefined) continue;
+    const threshold = Number(value[key]);
+    if (!Number.isFinite(threshold) || threshold <= 0) {
+      throw new Error(`${name}.${key} must be a positive number`);
+    }
+    normalized[key] = threshold;
+  }
+  if (value.ttfbLocalOnly !== undefined) {
+    if (typeof value.ttfbLocalOnly !== "boolean") {
+      throw new Error(`${name}.ttfbLocalOnly must be a boolean`);
+    }
+    normalized.ttfbLocalOnly = value.ttfbLocalOnly;
+  }
+  return normalized;
+}
+
+function resolveRenderedPerformance(...values) {
+  return Object.assign({}, DEFAULT_RENDERED_PERFORMANCE, ...values.filter(Boolean));
+}
+
 function normalizeTargetDefaults(value) {
   if (value === undefined || value === null) return {};
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -1103,6 +1135,10 @@ function normalizeTargetDefaults(value) {
     screenshotMasks: normalizeSelectorReasonList(value.screenshotMasks, "targetDefaults.screenshotMasks"),
     execution: normalizeExecution(value.execution, "targetDefaults.execution"),
     authProfile: normalizeAuthProfileName(value.authProfile, "targetDefaults.authProfile"),
+    performance: normalizeRenderedPerformanceOverride(
+      value.performance,
+      "targetDefaults.performance",
+    ),
   };
 }
 
@@ -1167,6 +1203,12 @@ function normalizeTargets(config, cli) {
         authProfile: state.authProfile === undefined
           ? undefined
           : normalizeAuthProfileName(state.authProfile, `target.states[${stateIndex}].authProfile`),
+        performance: state.performance === undefined
+          ? undefined
+          : normalizeRenderedPerformanceOverride(
+              state.performance,
+              `target.states[${stateIndex}].performance`,
+            ),
       };
     });
   };
@@ -1229,6 +1271,13 @@ function normalizeTargets(config, cli) {
           authProfile: item.authProfile === undefined
             ? targetDefaults.authProfile
             : normalizeAuthProfileName(item.authProfile, `targets[${targetIndex}].authProfile`),
+          performance: {
+            ...(targetDefaults.performance || {}),
+            ...normalizeRenderedPerformanceOverride(
+              item.performance,
+              `targets[${targetIndex}].performance`,
+            ),
+          },
           targetGroupId: `target-${targetIndex + 1}`,
           includeBase: item.includeBase === undefined ? true : item.includeBase,
           source: item.source || "explicit",
@@ -1415,6 +1464,9 @@ function normalizeConfig(config, cli, artifacts) {
     minCheckedPages,
     maxPageCount,
     execution: { maxConcurrency },
+    performance: resolveRenderedPerformance(
+      normalizeRenderedPerformanceOverride(config.performance, "performance"),
+    ),
     screenshotDir: artifacts.screenshotDir,
     scroll: cli.noScroll ? false : (config.scroll === undefined ? true : Boolean(config.scroll)),
     cookies: [...normalizeCookieList(config.cookies), ...cli.cookies],
@@ -1534,6 +1586,7 @@ function privacySafeConfigContract(config) {
       })),
     })),
     execution: config.execution,
+    performance: config.performance,
     development: config.development,
     ignoreHttpsErrors: config.ignoreHttpsErrors,
     sourceBinding: config.sourceBinding,
@@ -1791,6 +1844,10 @@ function expandTargetStates(targets) {
         afterFailureWaitFor: state.afterFailureWaitFor,
         execution: normalizeExecution(state.execution, `state ${state.name}.execution`, target.execution),
         authProfile: state.authProfile ?? target.authProfile,
+        performance: {
+          ...(target.performance || {}),
+          ...(state.performance || {}),
+        },
       });
     }
   }
@@ -1973,6 +2030,7 @@ function prepareTargetContracts(targets, config) {
     };
     return {
       ...target,
+      performance: resolveRenderedPerformance(config.performance, target.performance),
       contractErrors: [...new Set(contractErrors)],
       reviewEvidence,
       intentFingerprint: sha256(stableJson(intentContract)),
@@ -4220,8 +4278,206 @@ async function captureEvidenceScreenshot(page, target, viewport, config, cellId,
   };
 }
 
+function isLocalServerUrl(value) {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === "localhost" || hostname.endsWith(".localhost") ||
+      hostname === "127.0.0.1" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
+function performanceThresholdStatus(value, threshold, assessed = true) {
+  if (!assessed) return "not-applicable";
+  if (!Number.isFinite(value)) return "unavailable";
+  return value < threshold ? "pass" : "fail";
+}
+
+async function installRenderedPerformanceObserver(page) {
+  await page.addInitScript(() => {
+    const state = {
+      lcpSupported: false,
+      lcp: null,
+      entryCount: 0,
+      observer: null,
+    };
+    Object.defineProperty(globalThis, "__FORMAL_WEB_UI_PERFORMANCE__", {
+      value: state,
+      configurable: true,
+    });
+    try {
+      state.lcpSupported = Array.isArray(PerformanceObserver.supportedEntryTypes) &&
+        PerformanceObserver.supportedEntryTypes.includes("largest-contentful-paint");
+      if (!state.lcpSupported) return;
+      state.observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          state.entryCount += 1;
+          state.lcp = {
+            startTime: entry.startTime,
+            renderTime: entry.renderTime || 0,
+            loadTime: entry.loadTime || 0,
+            size: entry.size || 0,
+          };
+        }
+      });
+      state.observer.observe({ type: "largest-contentful-paint", buffered: true });
+    } catch {
+      state.lcpSupported = false;
+      state.observer = null;
+    }
+  });
+}
+
+async function waitForLcpObserverDelivery(page) {
+  await page.evaluate(async () => {
+    const images = [...document.images].filter((image) => {
+      const rect = image.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+    const decodeVisibleImages = Promise.allSettled(images.map(async (image) => {
+      if (!image.complete) {
+        await new Promise((resolve) => {
+          image.addEventListener("load", resolve, { once: true });
+          image.addEventListener("error", resolve, { once: true });
+        });
+      }
+      if (typeof image.decode === "function") await image.decode().catch(() => {});
+    }));
+    await Promise.race([
+      decodeVisibleImages,
+      new Promise((resolve) => setTimeout(resolve, 100)),
+    ]);
+    await new Promise((resolve) => {
+      let frames = 0;
+      let stableFrames = 0;
+      let lastCount = -1;
+      const check = () => {
+        frames += 1;
+        const count = globalThis.__FORMAL_WEB_UI_PERFORMANCE__?.entryCount || 0;
+        if (count === lastCount) stableFrames += 1;
+        else stableFrames = 0;
+        lastCount = count;
+        if (frames >= 3 && stableFrames >= 2) resolve();
+        else requestAnimationFrame(check);
+      };
+      requestAnimationFrame(check);
+    });
+  });
+}
+
+async function assessRenderedPerformance(page, thresholds) {
+  let loadState = "complete";
+  try {
+    await page.waitForLoadState("load", { timeout: 5000 });
+  } catch {
+    loadState = "deadline";
+  }
+  await waitForLcpObserverDelivery(page).catch(() => {});
+  let observed = null;
+  try {
+    observed = await page.evaluate(() => {
+      const navigation = performance.getEntriesByType("navigation")[0] || null;
+      const state = globalThis.__FORMAL_WEB_UI_PERFORMANCE__ || null;
+      const ttfb = navigation && Number.isFinite(navigation.responseStart) &&
+        Number.isFinite(navigation.requestStart) && navigation.responseStart >= navigation.requestStart
+        ? navigation.responseStart - navigation.requestStart
+        : null;
+      return {
+        ttfb,
+        navigationType: navigation?.type || null,
+        lcpSupported: Boolean(state?.lcpSupported),
+        lcp: state?.lcp || null,
+      };
+    });
+  } catch {
+    observed = null;
+  }
+  const roundMetric = (value) => Number.isFinite(value) ? Math.round(value * 100) / 100 : null;
+  const localServer = isLocalServerUrl(page.url());
+  const ttfbAssessed = !thresholds.ttfbLocalOnly || localServer;
+  const ttfbValue = roundMetric(observed?.ttfb);
+  const lcpValue = roundMetric(observed?.lcp?.startTime);
+  const ttfbStatus = performanceThresholdStatus(ttfbValue, thresholds.ttfbMs, ttfbAssessed);
+  const lcpStatus = performanceThresholdStatus(lcpValue, thresholds.lcpMs);
+  const metrics = {
+    scope: "final main document before verifier full-page scrolling; document navigation LCP, not post-interaction latency",
+    loadState,
+    localServer,
+    ttfb: {
+      valueMs: ttfbValue,
+      thresholdMs: thresholds.ttfbMs,
+      comparison: "<",
+      assessed: ttfbAssessed,
+      status: ttfbStatus,
+      source: "PerformanceNavigationTiming.responseStart-requestStart",
+      navigationType: observed?.navigationType || null,
+      ...(ttfbAssessed ? {} : { reason: "default local-server-only scope" }),
+    },
+    lcp: {
+      valueMs: lcpValue,
+      thresholdMs: thresholds.lcpMs,
+      comparison: "<",
+      assessed: true,
+      status: lcpStatus,
+      source: "LargestContentfulPaint.startTime",
+      supported: Boolean(observed?.lcpSupported),
+      size: roundMetric(observed?.lcp?.size),
+    },
+  };
+  const findings = [];
+  if (ttfbStatus === "fail") {
+    findings.push({
+      severity: "critical",
+      rule: "ttfb-above-threshold",
+      message: `Navigation TTFB must be below ${thresholds.ttfbMs} ms.`,
+      selector: "document",
+      textSnippet: "",
+      rect: null,
+      area: null,
+      evidence: { ...metrics.ttfb, localServer },
+    });
+  } else if (ttfbStatus === "unavailable") {
+    findings.push({
+      severity: "warning",
+      rule: "performance-metric-unavailable",
+      message: "Required navigation TTFB could not be measured.",
+      selector: "document",
+      textSnippet: "",
+      rect: null,
+      area: null,
+      evidence: { metric: "TTFB", ...metrics.ttfb, localServer },
+    });
+  }
+  if (lcpStatus === "fail") {
+    findings.push({
+      severity: "critical",
+      rule: "lcp-above-threshold",
+      message: `Largest Contentful Paint must be below ${thresholds.lcpMs} ms.`,
+      selector: "document",
+      textSnippet: "",
+      rect: null,
+      area: null,
+      evidence: metrics.lcp,
+    });
+  } else if (lcpStatus === "unavailable") {
+    findings.push({
+      severity: "warning",
+      rule: "performance-metric-unavailable",
+      message: "Required Largest Contentful Paint could not be measured.",
+      selector: "document",
+      textSnippet: "",
+      rect: null,
+      area: null,
+      evidence: { metric: "LCP", ...metrics.lcp },
+    });
+  }
+  return { metrics, findings };
+}
+
 async function verifyTarget(page, target, viewport, config, cellId) {
   const cellStartedMs = Date.now();
+  await installRenderedPerformanceObserver(page);
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
   const requestedRoute = routeEvidence(target.url);
   const reviewCellKey = sha256(stableJson({
@@ -4422,7 +4678,12 @@ async function verifyTarget(page, target, viewport, config, cellId) {
     result.continuation = { checked: continuation.checked, evidence: continuation.evidence };
     result.findings.push(...continuation.findings);
   }
-  await page.addInitScript(() => {});
+  const renderedPerformance = await stage(
+    "rendered-performance",
+    () => assessRenderedPerformance(page, target.performance),
+  );
+  result.metrics.performance = renderedPerformance.metrics;
+  result.findings.push(...renderedPerformance.findings);
   const pageConfig = {
     areas: [...config.areas, ...(Array.isArray(target.areas) ? target.areas : [])],
     contentInsets: [...config.contentInsets, ...(Array.isArray(target.contentInsets) ? target.contentInsets : [])],
@@ -4502,6 +4763,7 @@ async function verifyTarget(page, target, viewport, config, cellId) {
     ...evaluated.metrics,
     journey: journeyEvaluation,
     continuation: result.continuation,
+    performance: result.metrics.performance,
     scroll: scrollMetrics,
     frames: [],
     frameDocuments: [],
@@ -4944,6 +5206,16 @@ function markdownReport(report) {
     const result = page.skipped ? `${page.outcome}: ${page.skipReason}` : "checked";
     lines.push(`| ${escapeMd(page.cellId)} | ${(page.execution?.planIndex ?? 0) + 1}/${page.execution?.executionIndex ?? "-"} | ${page.execution?.priority ?? ""} | ${escapeMd(page.target.name || page.target.url)} | ${escapeMd(page.requestedPath || "")} | ${escapeMd(page.finalPath || "")} | ${escapeMd(page.target.stateName || "base")} | ${escapeMd(page.viewport.name)} ${page.viewport.width}x${page.viewport.height} | ${page.status ?? ""} | ${escapeMd(page.sourceBinding?.status || "unbound")} | ${page.cache?.hit ? "hit" : "miss"} | ${escapeMd(page.cleanup?.status || "unknown")} | ${page.durationMs ?? 0} ms | ${escapeMd(result)} | ${(page.findings || []).length} | ${page.screenshots?.viewport ? escapeMd(page.screenshots.viewport.path) : ""} | ${page.screenshots?.fullPage ? escapeMd(page.screenshots.fullPage.path) : ""} |`);
   }
+  lines.push("", "## Rendered Performance", "");
+  lines.push("Main-document navigation metrics are captured before the verifier's full-page scroll. LCP is document navigation LCP, not post-interaction latency.", "");
+  lines.push("| Cell | Target | Viewport | Local server | TTFB | TTFB threshold | TTFB status | LCP | LCP threshold | LCP status |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+  for (const page of report.pages) {
+    const performanceMetrics = page.metrics?.performance;
+    const ttfb = performanceMetrics?.ttfb;
+    const lcp = performanceMetrics?.lcp;
+    lines.push(`| ${escapeMd(page.cellId)} | ${escapeMd(page.target.name || page.target.url)} | ${escapeMd(page.viewport.name)} | ${performanceMetrics ? (performanceMetrics.localServer ? "yes" : "no") : ""} | ${ttfb?.valueMs ?? "unavailable"} | ${ttfb ? `< ${ttfb.thresholdMs} ms` : ""} | ${escapeMd(ttfb?.status || "not measured")} | ${lcp?.valueMs ?? "unavailable"} | ${lcp ? `< ${lcp.thresholdMs} ms` : ""} | ${escapeMd(lcp?.status || "not measured")} |`);
+  }
   lines.push("", "## Execution & Timing", "");
   if (report.authentication.length) {
     lines.push("| Authentication profile | Status | Duration | Error |");
@@ -5087,6 +5359,7 @@ function ensureTargets(config) {
       breakpointProfile: target.breakpointProfile || null,
       sourceBinding: target.sourceBinding || null,
       waitFor: target.waitFor || null,
+      performance: target.performance || null,
       allowFailure: target.allowFailure || "",
     });
     if (seen.has(signature)) continue;
@@ -5096,6 +5369,10 @@ function ensureTargets(config) {
       targetGroupId: target.targetGroupId || `discovered-target-${unique.length + 1}`,
       execution: normalizeExecution(target.execution, "target.execution", config.targetDefaults.execution),
       authProfile: target.authProfile ?? config.targetDefaults.authProfile,
+      performance: {
+        ...(config.targetDefaults.performance || {}),
+        ...(target.performance || {}),
+      },
     });
   }
   if (!unique.length) throw new Error("No targets to verify. Provide --url, --config targets, or --from-coordinator.");
@@ -5896,7 +6173,7 @@ async function main() {
   process.exit(exitCode);
 }
 
-export { executePlan };
+export { executePlan, isLocalServerUrl, performanceThresholdStatus };
 
 let isEntrypoint = false;
 if (process.argv[1]) {

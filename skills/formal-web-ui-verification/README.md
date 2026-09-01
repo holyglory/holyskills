@@ -3,7 +3,10 @@
 This skill runs a deterministic Playwright/Chromium heuristic over rendered
 web pages. It measures DOM geometry, computed visibility, clipping, occlusion,
 off-canvas controls, broken media, contrast risks, document overflow, and
-visible scrollbars with their same-axis nesting chains. Every horizontal
+visible scrollbars with their same-axis nesting chains. Before scrolling, it
+also measures browser navigation TTFB and document LCP. Defaults require local
+TTFB below 10 ms and LCP below 800 ms; global or per-target contracts may
+prescribe other strict thresholds. Every horizontal
 scrollbar is a warning; nested horizontal scrolling is blocking. Two vertical
 scroll layers warn and three or more block, with the document scrollbar
 counting as a layer and mixed axes kept separate. It also measures rendered
@@ -22,7 +25,8 @@ context, semantic rendered regions, light/dark/mixed theme, and
 repository-relative UI review inputs. The verifier rejects secondary workflows
 above primary content, offscreen or unfocused continuation, nested horizontal
 scrolling, triple vertical scroll nesting, WCAG text contrast failures, and
-large declared-theme contradictions. Palette-cohesion risks stay
+large declared-theme contradictions, plus applicable TTFB/LCP threshold
+breaches. Palette-cohesion risks stay
 explicit agent-review evidence rather than automatic aesthetic verdicts.
 
 Each checked cell automatically captures a redacted initial viewport and full
@@ -88,6 +92,7 @@ binding are configured together:
   }],
   "viewports": [{"name": "desktop", "width": 1440, "height": 900}],
   "execution": {"maxConcurrency": 4},
+  "performance": {"ttfbMs": 10, "lcpMs": 800, "ttfbLocalOnly": true},
   "maxPageCount": 12
 }
 ```

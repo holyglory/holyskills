@@ -1,6 +1,6 @@
 ---
 name: formal-web-ui-verification
-description: Run journey-aware browser verification of rendered web UI hierarchy, immediate interaction continuation, WCAG text contrast, declared-theme balance, palette risks, geometry, scroll topology, responsive samples, and truthful route/state/viewport evidence. Use when frontend work needs deterministic checks plus initial/full-page screenshots and changed-input-only agent review for displaced primary content, offscreen forms, unreadable colors, contradictory themes, nested scrolling, clipping, overlap, broken media, stale deployments, or incomplete coverage.
+description: Run journey-aware browser verification of rendered web UI hierarchy, navigation TTFB/LCP, immediate interaction continuation, WCAG text contrast, declared-theme balance, palette risks, geometry, scroll topology, responsive samples, and truthful route/state/viewport evidence. Use when frontend work needs deterministic performance and layout checks plus initial/full-page screenshots and changed-input-only agent review for slow response/rendering, displaced primary content, offscreen forms, unreadable colors, contradictory themes, nested scrolling, clipping, overlap, broken media, stale deployments, or incomplete coverage.
 ---
 
 # Formal Web UI Verification
@@ -36,6 +36,11 @@ without retaining the measured text or any entered value. Pages may opt
 important cards/forms into a minimum readable-content inset contract. Targets
 may also opt into exact breakpoint-minus-one/at/plus-one samples under a hard
 page-cell budget.
+Each checked final main document is also measured before verifier scrolling:
+local navigation TTFB must be strictly below 10 ms and document LCP strictly
+below 800 ms unless global or target-specific thresholds prescribe other
+values. Threshold breaches are critical; unavailable required metrics remain
+explicit warnings.
 
 Every target and interaction state also carries an explicit user-journey
 contract: one primary journey with frequency/risk context, semantic rendered
@@ -186,6 +191,13 @@ skill; callers can always provide explicit `--url` targets instead.
      or ready/error selector race, server readback, load state, or one/two render
      frames. Longer timeouts are failure ceilings. Deliberate delays and polling
      intervals above 100 ms are rejected.
+   - Rendered-navigation performance is measured from the browser's Navigation
+     Timing entry and a buffered LCP observer installed before navigation. The
+     defaults are `TTFB < 10 ms` for localhost/loopback targets and `LCP < 800
+     ms` for every final main document. Configure global `performance` values
+     or a target/state override when the product prescribes different limits;
+     set `ttfbLocalOnly: false` to apply its TTFB threshold to non-local targets.
+     LCP here is document navigation LCP, not post-interaction latency.
    - A target may declare `breakpointProfile` with `breakpoints`, `height`, and
      optional `name`/`baseViewport`. Each breakpoint adds exactly width−1,
      width, and width+1 for that target. Equivalent configured/profile cells
@@ -265,6 +277,10 @@ skill; callers can always provide explicit `--url` targets instead.
      authentication/readback expectations, declarative action values, typed
      values, placeholders, and selected labels are never
      included in the config hash input or control findings.
+   - Performance evidence retains only the metric value, strict threshold,
+     pass/fail/unavailable state, navigation type, LCP size, local-target flag,
+     and timing-entry source. It never retains the LCP element, its text, or a
+     resource URL.
    - Read only the specific finding rows or metrics needed for diagnosis; keep
      raw command output in a cold log file.
    - If no safe render path exists, report that formal verification is blocked
@@ -339,6 +355,10 @@ Critical findings by default:
 - A large opposite-brightness surface that contradicts a declared light or dark
   target (`declared-theme-contradiction`). Mixed themes and selector-specific
   reasoned exceptions retain measurements without this failure.
+- Browser-measured navigation TTFB at or above its applicable threshold
+  (`ttfb-above-threshold`) or document LCP at or above its threshold
+  (`lcp-above-threshold`). Defaults are strict `< 10 ms` local TTFB and `< 800
+  ms` LCP; equality fails.
 
 Warnings by default:
 
@@ -361,6 +381,9 @@ Warnings by default:
   line-clamp truncations), `metrics.hiddenTextLike` (text/controls present in
   the DOM but not rendered), and `metrics.pendingMedia` (media still loading at
   measurement time).
+- A required TTFB or LCP value that the browser could not expose
+  (`performance-metric-unavailable`). Non-local TTFB under the default
+  local-only scope is explicitly `not-applicable`, not unavailable or passed.
 - Fully hidden clipped content (`clipped-hidden`), fully offscreen
   fixed/static content (`fixed-offscreen-hidden`/`offcanvas-hidden` — the
   skip-link/visually-hidden pattern), and carousel-context cuts.
@@ -455,6 +478,7 @@ Use a config file when allowances are route-specific:
   "themeExceptions": [{"selector": ".document-preview", "reason": "preview preserves source colors"}],
   "screenshotMasks": [{"selector": ".customer-email", "reason": "sensitive fixture data"}],
   "maxPageCount": 18,
+  "performance": {"ttfbMs": 10, "lcpMs": 800, "ttfbLocalOnly": true},
   "scroll": true,
   "rules": {"failOn": "critical", "strictTruncation": false}
 }
@@ -484,6 +508,9 @@ native control text; an overflowing declared exception becomes an
   deployment/source binding.
 - Do not describe responsive width coverage as exhaustive. Report the exact
   sampled widths and retain the hard `maxPageCount` plan evidence.
+- Do not report a checked page as verified while it has an unresolved TTFB or
+  LCP threshold critical. Do not treat an unavailable required metric as a pass
+  or describe document LCP as interaction responsiveness.
 - Do not use a changed-input subset or any cache hit as readiness evidence.
   Readiness and visual completion require a fresh complete all-cell run.
 - Do not serialize an authentication storage snapshot. Reuse it only in memory
