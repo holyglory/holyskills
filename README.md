@@ -1,5 +1,10 @@
 # Holy Skills
 
+> **Archived:** Canonical development moved to
+> [DevCoordinator2](https://github.com/holyglory/DevCoordinator2). The final
+> source snapshot is tagged `holyskills-final-source-2026-09-01`; this
+> repository remains available only for historical inspection.
+
 Holy Skills is the canonical public source for six portable Codex and Claude
 Code skills. It contains audit, verification, and documentation tooling; it
 does not own or deploy local-service coordination products.
