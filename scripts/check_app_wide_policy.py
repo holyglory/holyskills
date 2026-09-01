@@ -17,6 +17,7 @@ REQUIRED_SECTIONS = (
     "Ground security-posture decisions in confirmed assumptions",
     "Keep decisions compact and usable",
     "Deliver the complete agreed scope",
+    "Parallelize independent work and first-failure fixing",
     "Finish diagnostic cycles before batch fixing",
     "Keep behavior truthful",
     "Prohibit unimplemented product behavior",
@@ -626,6 +627,52 @@ def find_policy_violations(text: str) -> list[str]:
             ),
         )
 
+    parallel = bodies["Parallelize independent work and first-failure fixing"]
+    if parallel:
+        _require_terms(
+            violations,
+            parallel,
+            "parallel-work contract",
+            (
+                "dependencies",
+                "mutable-state ownership",
+                "start every ready",
+                "concurrently",
+                "available runtime or tool support",
+                "do not invent CPU, memory, API, cost, or fixed-worker budgets",
+                "serialize only",
+                "concrete dependency",
+                "shared mutable-state conflict",
+                "actual runtime/tool limitation",
+                "all-settled sibling behavior",
+                "ordinary failure does not cancel",
+                "missing capability",
+                "improvement work",
+                "first ordinary failure",
+                "diagnosis and fixing begin immediately",
+                "separate isolated worktree",
+                "original sealed run continues unchanged",
+                "gathers the remaining failures",
+                "do not inject fixes",
+                "event-driven readiness",
+                "100 ms",
+                "failure deadline",
+            ),
+        )
+        _require_pattern(
+            violations,
+            parallel,
+            "ready independent work must start concurrently",
+            r"start\s+every\s+ready.{0,160}concurrently",
+        )
+        _require_pattern(
+            violations,
+            parallel,
+            "first-failure fixes must overlap the unchanged sealed run",
+            r"first\s+ordinary\s+failure.{0,220}fixing\s+begin\s+immediately"
+            r".{0,300}sealed\s+run\s+continues\s+unchanged",
+        )
+
     cycle = bodies["Finish diagnostic cycles before batch fixing"]
     if cycle:
         _require_terms(
@@ -994,6 +1041,11 @@ def find_policy_violations(text: str) -> list[str]:
         (r"(?i)\b(?:the\s+)?user\s+(?:must|should|needs?\s+to|has\s+to)\s+(?:repeat|copy|paste|type|transcribe|reply\s+with)\b.{0,140}\b(?:internal\s+identifier|digest|uuid|command|confirmation\s+(?:phrase|string)|technical\s+incantation|exact\s+phrase)\b", "users must never repeat internal identifiers or prescribed technical phrases"),
         (r"(?i)(?<!never )(?<!do not )(?<!must not )\bstop\s+(?:the\s+)?(?:test|suite|debug|audit|rehearsal|deployment|cycle|pass)\s+at\s+(?:the\s+)?first\b", "diagnostic cycles must not stop at the first ordinary failure"),
         (r"(?i)(?<!never )(?<!do not )(?<!must not )\bfix\s+each\s+(?:error|failure|gap).{0,100}\brestart\b", "diagnostic findings must be batch-fixed after the evidence pass"),
+        (r"(?i)(?<!do not )(?<!never )\b(?:set|define|require|allocate)\b.{0,100}\b(?:cpu|memory|api|cost)\s+(?:limit|budget)s?\b", "parallel scheduling must not invent resource or API budgets"),
+        (r"(?i)\b(?:always\s+use|use\s+exactly|require\s+exactly|limit\s+(?:the\s+)?(?:pool|run)\s+to)\s+\d+\s+(?:workers|agents)\b", "parallel scheduling must not impose a fixed worker count"),
+        (r"(?i)\bwait\s+until\b.{0,120}\b(?:test|suite|rig|run|audit)\b.{0,80}\b(?:finishes|completes|ends)\b.{0,120}\bbefore\b.{0,80}\b(?:diagnos|fix|repair)", "first-failure diagnosis and fixing must not wait for the run to finish"),
+        (r"(?i)\b(?:cancel|stop|abort)\b.{0,100}\b(?:siblings?|other\s+(?:safe|independent)\s+work)\b.{0,80}\b(?:after|when|on)\b.{0,60}\bfailure\b", "an ordinary failure must not cancel safe sibling work"),
+        (r"(?i)(?<!do not )(?<!never )\b(?:apply|inject|merge)\b.{0,80}\bfix(?:es)?\b.{0,100}\b(?:original|sealed|running)\b.{0,80}\b(?:test|suite|rig|run|surface)\b", "concurrent fixes must not alter the sealed running evidence surface"),
         (r"(?i)(?<!never )(?<!do not )(?<!must not )\b(?:implement|add|begin|proceed\s+with)\b.{0,100}\b(?:unrequested|hypothetical|agent-proposed|outside\s+(?:the\s+)?agreed\s+scope)\b.{0,140}\bwithout\s+(?:asking\b|asking\s+(?:the\s+)?user\b|(?:obtaining\s+)?(?:(?:the\s+)?user(?:['’]s)?\s+)?(?:approval|permission)\b)", "unrequested engineering must never proceed without informed approval"),
         (r"(?i)\b(?:under-engineering|implementation\s+gaps?)\s+(?:is|are)\s+(?:acceptable|less\s+serious|less\s+punishable)\b", "under-engineering and implementation gaps must remain the more serious failure"),
         (r"(?i)\breasonable\s+over-engineering\s+is\s+(?:more\s+serious|more\s+punishable)\s+than\s+(?:under-engineering|implementation\s+gaps?)\b", "under-engineering asymmetry must not be inverted"),

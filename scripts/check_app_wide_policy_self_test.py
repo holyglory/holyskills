@@ -317,6 +317,36 @@ def main() -> int:
             "must not stop at the first ordinary failure",
         ),
         (
+            "invented CPU budget",
+            policy + "\nDefine a CPU budget for every parallel task before scheduling it.\n",
+            "must not invent resource or API budgets",
+        ),
+        (
+            "invented API budget",
+            policy + "\nRequire an API budget for every concurrent diagnostic.\n",
+            "must not invent resource or API budgets",
+        ),
+        (
+            "fixed worker count",
+            policy + "\nAlways use exactly 3 workers for independent work.\n",
+            "must not impose a fixed worker count",
+        ),
+        (
+            "wait for rig before fixing",
+            policy + "\nWait until the test rig finishes before diagnosing or fixing its first failure.\n",
+            "must not wait for the run to finish",
+        ),
+        (
+            "cancel siblings after failure",
+            policy + "\nCancel all sibling work after an ordinary failure.\n",
+            "must not cancel safe sibling work",
+        ),
+        (
+            "inject fix into sealed run",
+            policy + "\nInject the fix into the original running test surface.\n",
+            "must not alter the sealed running evidence surface",
+        ),
+        (
             "automatic disposable-data preservation",
             policy + "\nAlways preserve disposable test data before every change.\n",
             "must not trigger automatic preservation work",
@@ -343,6 +373,15 @@ def main() -> int:
                 "- Stop on the first issue, fix it, and restart the suite.",
             ),
             "complete-cycle contract",
+        ),
+        (
+            "missing parallel-work behavior",
+            replace_section(
+                policy,
+                "Parallelize independent work and first-failure fixing",
+                "- Run work serially and wait for the suite to finish before investigating.",
+            ),
+            "parallel-work contract",
         ),
         (
             "missing database-only completion ledger",
@@ -1004,6 +1043,42 @@ def main() -> int:
     check(
         not MODULE.find_policy_violations(permanent_database_ledger),
         "an explicitly configured permanent database ledger must not be rejected as retained active history",
+    )
+
+    concrete_serial_edge = policy + (
+        "\nSerialize two operations only because they mutate the same database record; "
+        "start unrelated ready work concurrently.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(concrete_serial_edge),
+        "a concrete shared-state conflict must remain a valid serialization reason",
+    )
+
+    runtime_capacity_fact = policy + (
+        "\nUse every currently available runtime slot and submit newly ready work when "
+        "the runtime reports another slot; do not invent a worker count.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(runtime_capacity_fact),
+        "runtime-reported availability must remain valid without a synthetic resource budget",
+    )
+
+    isolated_first_failure_fix = policy + (
+        "\nOn the first ordinary failure, start the repair in an isolated worktree while "
+        "the sealed test continues unchanged and collects its remaining failures.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(isolated_first_failure_fix),
+        "isolated first-failure fixing alongside an unchanged run must remain valid",
+    )
+
+    event_deadline = policy + (
+        "\nA ten-second event deadline is a failure ceiling, while deliberate polling "
+        "remains at or below 100 ms.\n"
+    )
+    check(
+        not MODULE.find_policy_violations(event_deadline),
+        "a long event deadline must not be confused with a deliberate delay budget",
     )
 
     non_security_change = policy + (

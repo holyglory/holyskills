@@ -188,6 +188,28 @@
   technical detail. Do not make the user decode the table to understand where
   development is going.
 
+## Parallelize independent work and first-failure fixing
+
+- Before substantive multi-step work, identify the dependencies and
+  mutable-state ownership needed to distinguish ready work from conflicts.
+  Start every ready, non-conflicting item concurrently using the available
+  runtime or tool support, and start newly ready work as prior work finishes.
+  Do not invent CPU, memory, API, cost, or fixed-worker budgets. Serialize only
+  for a concrete dependency, a shared mutable-state conflict, or an actual
+  runtime/tool limitation, and state that reason.
+- Use all-settled sibling behavior: an ordinary failure does not cancel other
+  safe work. If the harness cannot express required safe concurrency, record
+  that missing capability as improvement work and continue with the best
+  supported execution without claiming concurrency that did not occur.
+- As soon as the first ordinary failure appears during a finite sealed test,
+  audit, rehearsal, or deployment run, diagnosis and fixing begin immediately
+  in a separate isolated worktree or equivalent isolated state. The original
+  sealed run continues unchanged in parallel and gathers the remaining
+  failures. Do not inject fixes into its running surface, restart it, or let
+  concurrent repair destroy its evidence.
+- Prefer event-driven readiness. A timeout may be a longer failure deadline,
+  but no deliberate sleep or polling interval may exceed 100 ms.
+
 ## Finish diagnostic cycles before batch fixing
 
 - For a finite full test, debug, reproduction, audit, migration-rehearsal, or
@@ -200,10 +222,12 @@
 - Stop or mitigate immediately only when continuing could cause security or
   safety harm, data loss, shared-state corruption, destruction of useful
   evidence, or results invalid enough to make the rest of the pass misleading.
-- After the complete evidence pass, group findings by cause, strengthen the
-  narrowest effective guardrails, fix the batch, and rerun the complete relevant
-  cycle. Focused checks may accelerate development between the two full passes,
-  but do not replace the final full pass.
+- Diagnosis and isolated fixing may already be underway after the first
+  ordinary failure. After the complete evidence pass, reconcile every finding,
+  group findings by cause, strengthen the narrowest effective guardrails, finish
+  and fix the batch, and rerun the complete relevant cycle. Focused checks may
+  accelerate development between the two full passes, but do not replace the
+  final full pass.
 - During a deployment already included in the agreed task, if a test server or
   other non-production target can be deployed safely and is useful despite
   known gaps, deploy it, tell the user what remains, and let their testing
